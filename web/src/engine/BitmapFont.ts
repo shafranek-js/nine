@@ -11,14 +11,37 @@ export function sliceTexture(sheet: Texture, x: number, y: number, w: number, h:
 
 const colorKeyCache = new Map<string, Texture>();
 
+export interface RgbRemapRule {
+  readonly from: readonly [number, number, number];
+  readonly to: readonly [number, number, number, number];
+}
+
+export interface MaskedSliceOptions {
+  /** Optional larger base frame drawn underneath `(x, y, w, h)` before masking (e.g. to preserve uncropped limbs). */
+  readonly baseRect?: { readonly x: number; readonly y: number; readonly w: number; readonly h: number };
+  /** Optional RGB remapping applied after the exterior black flood-fill (e.g. matching destination scene EGA palette). */
+  readonly remapRgb?: readonly RgbRemapRule[];
+}
+
 /**
  * Slices a sub-rectangle from a sprite sheet and makes exterior black `(0,0,0)`
  * background transparent via a 4-connected perimeter flood-fill so interior
  * black outlines and features (eyes, contours, bow tie) stay solid black.
  */
-export function sliceMaskedTexture(sheet: Texture, x: number, y: number, w: number, h: number): Texture {
+export function sliceMaskedTexture(
+  sheet: Texture,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  options?: MaskedSliceOptions,
+): Texture {
+  const outW = options?.baseRect?.w ?? w;
+  const outH = options?.baseRect?.h ?? h;
+  const baseKey = options?.baseRect ? `${options.baseRect.x},${options.baseRect.y},${outW},${outH}` : '';
+  const remapKey = options?.remapRgb?.map((r) => `${r.from.join(',')}->${r.to.join(',')}`).join(';') ?? '';
   const uid = sheet.source.uid;
-  const key = `${uid}:${x},${y},${w},${h}`;
+  const key = `${uid}:${x},${y},${w},${h}|${baseKey}|${remapKey}`;
   const existing = colorKeyCache.get(key);
   if (existing) return existing;
 
@@ -28,27 +51,32 @@ export function sliceMaskedTexture(sheet: Texture, x: number, y: number, w: numb
   }
 
   const canvas = document.createElement('canvas');
-  canvas.width = w;
-  canvas.height = h;
+  canvas.width = outW;
+  canvas.height = outH;
   const ctx = canvas.getContext('2d');
   if (!ctx) {
     return sliceTexture(sheet, x, y, w, h);
   }
 
+  if (options?.baseRect) {
+    const b = options.baseRect;
+    ctx.drawImage(resource, b.x, b.y, b.w, b.h, 0, 0, b.w, b.h);
+  }
   ctx.drawImage(resource, x, y, w, h, 0, 0, w, h);
-  const imgData = ctx.getImageData(0, 0, w, h);
+
+  const imgData = ctx.getImageData(0, 0, outW, outH);
   const d = imgData.data;
 
   // 4-connected BFS from the bounding-box edges clears only exterior black background
   // and stops at 1px diagonal contours instead of punching holes inside sprites.
-  const total = w * h;
+  const total = outW * outH;
   const visited = new Uint8Array(total);
   const queue = new Int32Array(total);
   let head = 0;
   let tail = 0;
 
   const trySeed = (px: number, py: number): void => {
-    const idx = py * w + px;
+    const idx = py * outW + px;
     if (visited[idx]) return;
     const di = idx * 4;
     if (d[di] === 0 && d[di + 1] === 0 && d[di + 2] === 0) {
@@ -57,25 +85,41 @@ export function sliceMaskedTexture(sheet: Texture, x: number, y: number, w: numb
     }
   };
 
-  for (let px = 0; px < w; px++) {
+  for (let px = 0; px < outW; px++) {
     trySeed(px, 0);
-    trySeed(px, h - 1);
+    trySeed(px, outH - 1);
   }
-  for (let py = 0; py < h; py++) {
+  for (let py = 0; py < outH; py++) {
     trySeed(0, py);
-    trySeed(w - 1, py);
+    trySeed(outW - 1, py);
   }
 
   while (head < tail) {
     const idx = queue[head++];
     d[idx * 4 + 3] = 0;
 
-    const px = idx % w;
-    const py = (idx - px) / w;
+    const px = idx % outW;
+    const py = (idx - px) / outW;
     if (px > 0) trySeed(px - 1, py);
-    if (px + 1 < w) trySeed(px + 1, py);
+    if (px + 1 < outW) trySeed(px + 1, py);
     if (py > 0) trySeed(px, py - 1);
-    if (py + 1 < h) trySeed(px, py + 1);
+    if (py + 1 < outH) trySeed(px, py + 1);
+  }
+
+  const remapRules = options?.remapRgb;
+  if (remapRules && remapRules.length > 0) {
+    for (let i = 0; i < d.length; i += 4) {
+      if (d[i + 3] === 0) continue;
+      for (const rule of remapRules) {
+        if (d[i] === rule.from[0] && d[i + 1] === rule.from[1] && d[i + 2] === rule.from[2]) {
+          d[i] = rule.to[0];
+          d[i + 1] = rule.to[1];
+          d[i + 2] = rule.to[2];
+          d[i + 3] = rule.to[3];
+          break;
+        }
+      }
+    }
   }
 
   ctx.putImageData(imgData, 0, 0);

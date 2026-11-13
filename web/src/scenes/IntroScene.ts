@@ -1,5 +1,5 @@
 import { Container, Sprite, type Texture } from 'pixi.js';
-import { sliceMaskedTexture, sliceTexture } from '../engine/BitmapFont';
+import { sliceTexture } from '../engine/BitmapFont';
 import type { GameContext, Scene } from './SceneManager';
 
 interface TrumpeterSlot {
@@ -15,16 +15,13 @@ const TRUMPETERS: readonly TrumpeterSlot[] = [
   { col: 3, x: 523, y: 169 },
 ];
 
-// Pong cycle raising and lowering the trumpets
+// Pong cycle raising and lowering the trumpets (`CS:43B1..46E5`)
 const TRUMPET_SEQUENCE = [0, 1, 2, 3, 4, 4, 3, 2, 1, 0];
-const DEALER_SEQUENCE = [0, 1, 2, 3, 4, 5, 6, 5, 4, 3, 2, 1];
 
 export class IntroScene implements Scene {
   private ctx: GameContext | null = null;
   private trumpetSprites: Sprite[] = [];
   private trumpetFrames: Texture[][] = [];
-  private dealerSprite: Sprite | null = null;
-  private dealerFrames: Texture[] = [];
   private elapsedMs = 0;
   private skipDone = false;
   private unbindKey: (() => void) | null = null;
@@ -55,28 +52,16 @@ export class IntroScene implements Scene {
       this.trumpetSprites.push(spr);
     }
 
-    // Center red dealer hat-raise sprite at exact DOS coords (265, 130) from CS:5A00
-    this.dealerFrames = [sliceMaskedTexture(zr, 547, 167, 92, 60)];
-    for (let r = 0; r < 2; r++) {
-      for (let c = 0; c < 3; c++) {
-        this.dealerFrames.push(sliceMaskedTexture(zr, 403 + c * 79, 228 + r * 61, 78, 60));
-      }
-    }
-
-    this.dealerSprite = new Sprite(this.dealerFrames[0]);
-    this.dealerSprite.position.set(265, 130);
-    parent.addChild(this.dealerSprite);
-
     ctx.audio.music.play('intro');
 
     this.unbindKey = ctx.input.onKeyDown((e) => {
       if (e.key === 'Escape' || e.key === 'Enter' || e.key === ' ' || e.key.startsWith('F') || e.key.length === 1) {
         e.preventDefault();
-        this.skipToMenu();
+        this.advanceToDealer();
       }
     });
     this.unbindPtr = ctx.input.onPointerDown(() => {
-      this.skipToMenu();
+      this.advanceToDealer();
     });
   }
 
@@ -89,22 +74,16 @@ export class IntroScene implements Scene {
       this.trumpetSprites[i].texture = this.trumpetFrames[i][tIdx];
     }
 
-    if (this.dealerSprite) {
-      const dStep = Math.floor(this.elapsedMs / 180) % (DEALER_SEQUENCE.length + 6);
-      const dIdx = dStep < DEALER_SEQUENCE.length ? DEALER_SEQUENCE[dStep] : 0;
-      this.dealerSprite.texture = this.dealerFrames[dIdx];
-    }
-
-    // Auto-advance after full ~15.6s fanfare
+    // Auto-advance after full ~15.6s fanfare (`CS:43B1` 70-beat loop -> `CS:5B14`)
     if (this.elapsedMs >= 15800) {
-      this.skipToMenu();
+      this.advanceToDealer();
     }
   }
 
-  private skipToMenu(): void {
+  private advanceToDealer(): void {
     if (this.skipDone || !this.ctx) return;
     this.skipDone = true;
-    this.ctx.goTo('menu', 220);
+    this.ctx.goTo('dealer', 300);
   }
 
   unmount(): void {

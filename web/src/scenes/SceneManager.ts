@@ -16,7 +16,7 @@ import { HudDigitFont, MenuBitmapFont } from '../engine/BitmapFont';
 import type { InputController } from '../engine/InputController';
 import type { StageApp } from '../engine/StageApp';
 
-export type SceneId = 'intro' | 'menu' | 'table';
+export type SceneId = 'intro' | 'dealer' | 'menu' | 'table';
 
 export interface SessionPlayer {
   loggedIn: boolean;

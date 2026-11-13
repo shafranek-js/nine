@@ -4,6 +4,7 @@ import { loadGameAssets } from './engine/AssetManager';
 import { InputController } from './engine/InputController';
 import { StageApp } from './engine/StageApp';
 import { ClubMenuScene } from './scenes/ClubMenuScene';
+import { DealerTransitionScene } from './scenes/DealerTransitionScene';
 import { GameTableScene } from './scenes/GameTableScene';
 import { IntroScene } from './scenes/IntroScene';
 import { SceneManager } from './scenes/SceneManager';
@@ -31,6 +32,7 @@ async function bootstrap(): Promise<void> {
   const input = new InputController(canvas);
   const scenes = new SceneManager({ stage, assets, input, audio });
   scenes.register('intro', () => new IntroScene());
+  scenes.register('dealer', () => new DealerTransitionScene());
   scenes.register('menu', () => new ClubMenuScene());
   scenes.register('table', () => new GameTableScene());
 
