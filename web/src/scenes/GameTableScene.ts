@@ -1315,7 +1315,7 @@ export class GameTableScene implements Scene {
         const fIdx = Math.floor(this.phaseTimerMs / 95) % this.dealerWagFrames.length;
         this.dealerSpr.texture = this.dealerWagFrames[fIdx];
       }
-      if (this.phaseTimerMs >= 450) {
+      if (this.phaseTimerMs >= (isHd ? 900 : 450)) {
         if (this.dealerSpr) this.dealerSpr.texture = this.dealerIdleTex;
         this.phase = 'waitingTurn';
         this.phaseTimerMs = 0;
@@ -1330,7 +1330,7 @@ export class GameTableScene implements Scene {
         const bIdx = Math.floor(this.phaseTimerMs / 100) % this.dealerBellFrames.length;
         this.dealerSpr.texture = this.dealerBellFrames[bIdx];
       }
-      if (this.phaseTimerMs >= 420) {
+      if (this.phaseTimerMs >= (isHd ? 850 : 420)) {
         this.passingSeat = null;
         if (this.dealerSpr) this.dealerSpr.texture = this.dealerIdleTex;
         this.enterNextTurn();

@@ -441,9 +441,207 @@ export interface HdDealerController {
   setHatTipProgress(progress01: number): void;
 }
 
+let hdDealerArtMap: Map<string, HTMLImageElement> = new Map();
+
+/** Registers preloaded illustrated HD dealer body/hat/animation artwork overlays. */
+export function setHdDealerArt(artMap: Map<string, HTMLImageElement>): void {
+  hdDealerArtMap = artMap;
+}
+
+function isLoadedImage(img: HTMLImageElement | undefined): img is HTMLImageElement {
+  return Boolean(img && img.complete && img.naturalWidth > 0);
+}
+
+function sliceSheet4x4(img: HTMLImageElement): { frames: Texture[]; cw: number; ch: number } {
+  const baseTex = Texture.from(img);
+  baseTex.source.scaleMode = 'linear';
+  const cw = Math.floor(img.naturalWidth / 4);
+  const ch = Math.floor(img.naturalHeight / 4);
+  const frames: Texture[] = [];
+  for (let idx = 0; idx < 16; idx++) {
+    const col = idx % 4;
+    const row = Math.floor(idx / 4);
+    frames.push(new Texture({ source: baseTex.source, frame: new Rectangle(col * cw, row * ch, cw, ch) }));
+  }
+  return { frames, cw, ch };
+}
+
+function createLinearEyelidTexture(topColor: string, midColor: string, botColor: string, rimColor: string): Texture {
+  return createHdTexture(14, 12, (ctx) => {
+    const g = ctx.createLinearGradient(0, 0, 0, 11);
+    g.addColorStop(0, topColor);
+    g.addColorStop(0.75, midColor);
+    g.addColorStop(1, botColor);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 14, 11);
+    ctx.fillStyle = rimColor;
+    ctx.fillRect(0, 10.7, 14, 1.3);
+  });
+}
+
+function createGlossyPupilTexture(radius: number): Texture {
+  return createHdTexture(8, 8, (ctx) => {
+    ctx.fillStyle = '#0c0c12';
+    ctx.beginPath();
+    ctx.arc(4, 4, radius, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(4 - radius * 0.38, 4 - radius * 0.4, radius * 0.36, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
 export function createHdDealer(scale = 1): HdDealerController {
   const container = new Container();
   container.scale.set(scale);
+
+  const bodyImg = hdDealerArtMap.get('body');
+  const hatImg = hdDealerArtMap.get('hat');
+  const wagSheetImg = hdDealerArtMap.get('wag_sheet');
+  const bellSheetImg = hdDealerArtMap.get('bell_sheet');
+
+  if (isLoadedImage(bodyImg)) {
+    const bodyPivot = new Container();
+    bodyPivot.position.set(30, 44);
+    container.addChild(bodyPivot);
+
+    const bodyW = 62.7;
+    const bodyH = bodyW * (bodyImg.naturalHeight / bodyImg.naturalWidth);
+    const torsoTex = Texture.from(bodyImg);
+    torsoTex.source.scaleMode = 'linear';
+    const bodySpr = new Sprite(torsoTex);
+    bodySpr.anchor.set(0.5, 1);
+    bodySpr.position.set(0, 0);
+    bodySpr.width = bodyW;
+    bodySpr.height = bodyH;
+    bodyPivot.addChild(bodySpr);
+
+    // Live glossy pupils + raster gradient eyelids clipped neatly inside illustrated sclera
+    const dealerEyes = [
+      { x: -0.083 * bodyW, y: -0.8122 * bodyH, rx: 0.077 * bodyW, ry: 0.068 * bodyH, gazeX: 0.9 },
+      { x: 0.0908 * bodyW, y: -0.8108 * bodyH, rx: 0.073 * bodyW, ry: 0.067 * bodyH, gazeX: -0.9 },
+    ];
+    const pupilTex = createGlossyPupilTexture(2.05);
+    const lidTex = createLinearEyelidTexture('#b80404', '#ea1414', '#8e0202', '#180303');
+    const eyelids: { spr: Sprite; closedY: number; openY: number }[] = [];
+
+    for (const eye of dealerEyes) {
+      const eyeC = new Container();
+      eyeC.position.set(eye.x, eye.y);
+      const maskGfx = new Graphics().ellipse(0, 0, eye.rx * 0.96, eye.ry * 0.92).fill(0xffffff);
+      eyeC.addChild(maskGfx);
+      eyeC.mask = maskGfx;
+
+      const pupilSpr = new Sprite(pupilTex);
+      pupilSpr.anchor.set(0.5);
+      pupilSpr.position.set(eye.gazeX, 0.45);
+      eyeC.addChild(pupilSpr);
+
+      const lidSpr = new Sprite(lidTex);
+      lidSpr.anchor.set(0.5, 0);
+      lidSpr.width = eye.rx * 2.2;
+      lidSpr.height = eye.ry * 2.2;
+      const openY = -eye.ry * 2.2;
+      const closedY = -eye.ry * 0.98;
+      lidSpr.position.set(0, openY);
+      eyeC.addChild(lidSpr);
+      eyelids.push({ spr: lidSpr, closedY, openY });
+
+      bodyPivot.addChild(eyeC);
+    }
+
+    const hatBaseY = -37.2;
+    const hatPivot = new Container();
+    hatPivot.position.set(0, hatBaseY);
+    if (isLoadedImage(hatImg)) {
+      const hatTex = Texture.from(hatImg);
+      hatTex.source.scaleMode = 'linear';
+      const hatSpr = new Sprite(hatTex);
+      hatSpr.anchor.set(0.5, 0.72);
+      const hatW = bodyW * 0.78;
+      hatSpr.width = hatW;
+      hatSpr.height = hatW * (hatImg.naturalHeight / hatImg.naturalWidth);
+      hatPivot.addChild(hatSpr);
+    }
+    bodyPivot.addChild(hatPivot);
+
+    let wagFrames: Texture[] = [];
+    let wagSpr: Sprite | null = null;
+    if (isLoadedImage(wagSheetImg)) {
+      const sliced = sliceSheet4x4(wagSheetImg);
+      wagFrames = sliced.frames;
+      wagSpr = new Sprite(wagFrames[0]);
+      const sc = 54 / 244;
+      wagSpr.width = sliced.cw * sc;
+      wagSpr.height = sliced.ch * sc;
+      wagSpr.anchor.set(0.5367, 1.0);
+      wagSpr.position.set(30, 44);
+      wagSpr.visible = false;
+      container.addChild(wagSpr);
+    }
+
+    let bellFrames: Texture[] = [];
+    let bellSpr: Sprite | null = null;
+    if (isLoadedImage(bellSheetImg)) {
+      const sliced = sliceSheet4x4(bellSheetImg);
+      bellFrames = sliced.frames;
+      bellSpr = new Sprite(bellFrames[0]);
+      const sc = 54 / 218;
+      bellSpr.width = sliced.cw * sc;
+      bellSpr.height = sliced.ch * sc;
+      bellSpr.anchor.set(0.5414, 0.9547);
+      bellSpr.position.set(30, 44);
+      bellSpr.visible = false;
+      container.addChild(bellSpr);
+    }
+
+    return {
+      container,
+      setTableExpression(mode, elapsedMs) {
+        const showWag = Boolean(wagSpr && wagFrames.length === 16 && mode === 'wag');
+        const showBell = Boolean(bellSpr && bellFrames.length === 16 && mode === 'bell');
+        bodyPivot.visible = !showWag && !showBell;
+
+        if (wagSpr) {
+          wagSpr.visible = showWag;
+          if (showWag) {
+            const idx = Math.min(15, Math.floor(Math.max(0, elapsedMs) / 55));
+            wagSpr.texture = wagFrames[idx];
+          }
+        }
+        if (bellSpr) {
+          bellSpr.visible = showBell;
+          if (showBell) {
+            const idx = Math.min(15, Math.floor(Math.max(0, elapsedMs) / 55));
+            bellSpr.texture = bellFrames[idx];
+          }
+        }
+
+        if (bodyPivot.visible) {
+          const isBlink = mode === 'blink';
+          for (const lid of eyelids) {
+            lid.spr.position.y = isBlink ? lid.closedY : lid.openY;
+          }
+          hatPivot.position.set(0, hatBaseY + Math.sin(elapsedMs * 0.004) * 0.35);
+          hatPivot.rotation = 0;
+        }
+      },
+      setHatTipProgress(progress01: number) {
+        if (wagSpr) wagSpr.visible = false;
+        if (bellSpr) bellSpr.visible = false;
+        bodyPivot.visible = true;
+        const p = Math.min(1, Math.max(0, progress01));
+        const lift = Math.sin(p * Math.PI);
+        const isBlink = p > 0.42 && p < 0.6;
+        for (const lid of eyelids) {
+          lid.spr.position.y = isBlink ? lid.closedY : lid.openY;
+        }
+        hatPivot.position.set(-lift * 12, hatBaseY - lift * 15);
+        hatPivot.rotation = -lift * 0.36;
+      },
+    };
+  }
 
   const makeBodyTex = (blinking: boolean) =>
     createHdTexture(66, 46, (ctx) => {
@@ -885,16 +1083,7 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   const brows: Graphics[] = [];
 
   const customLidTex = hasCustomBody
-    ? createHdTexture(14, 12, (ctx) => {
-        const g = ctx.createLinearGradient(0, 0, 0, 11);
-        g.addColorStop(0, '#c80396');
-        g.addColorStop(0.75, '#e80ab4');
-        g.addColorStop(1, '#9e0174');
-        ctx.fillStyle = g;
-        ctx.fillRect(0, 0, 14, 11);
-        ctx.fillStyle = '#140318';
-        ctx.fillRect(0, 10.7, 14, 1.3);
-      })
+    ? createLinearEyelidTexture('#c80396', '#e80ab4', '#9e0174', '#140318')
     : null;
 
   const scleraTex = createHdTexture(10, 10, (ctx) => {
@@ -907,17 +1096,7 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
     ctx.stroke();
   });
 
-  const pupilTex = createHdTexture(8, 8, (ctx) => {
-    const r = hasCustomBody ? 2.15 : 1.55;
-    ctx.fillStyle = '#0c0c12';
-    ctx.beginPath();
-    ctx.arc(4, 4, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.arc(4 - r * 0.38, 4 - r * 0.4, r * 0.36, 0, Math.PI * 2);
-    ctx.fill();
-  });
+  const pupilTex = createGlossyPupilTexture(hasCustomBody ? 2.15 : 1.55);
 
   for (let i = 0; i < 2; i++) {
     const eyeC = new Container();
@@ -1085,19 +1264,12 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   const playFrames: Texture[] = [];
   let playSpr: Sprite | null = null;
   if (hasPlaySheet && playSheetImg) {
-    const baseTex = Texture.from(playSheetImg);
-    baseTex.source.scaleMode = 'linear';
-    const cw = Math.floor(playSheetImg.naturalWidth / 4);
-    const ch = Math.floor(playSheetImg.naturalHeight / 4);
-    for (let idx = 0; idx < 16; idx++) {
-      const col = idx % 4;
-      const row = Math.floor(idx / 4);
-      playFrames.push(new Texture({ source: baseTex.source, frame: new Rectangle(col * cw, row * ch, cw, ch) }));
-    }
+    const sliced = sliceSheet4x4(playSheetImg);
+    playFrames.push(...sliced.frames);
     playSpr = new Sprite(playFrames[1]);
     const scaleToIdle = isLeft ? 64 / 273 : 64 / 248;
-    playSpr.width = cw * scaleToIdle;
-    playSpr.height = ch * scaleToIdle;
+    playSpr.width = sliced.cw * scaleToIdle;
+    playSpr.height = sliced.ch * scaleToIdle;
     playSpr.anchor.set(isLeft ? 0.4968 : 0.5582, isLeft ? 0.9866 : 0.9883);
     playSpr.position.set(38, 42.5);
     playSpr.visible = false;
@@ -1112,19 +1284,12 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   const impatientFrames: Texture[] = [];
   let impatientSpr: Sprite | null = null;
   if (hasImpatientSheet && impatientSheetImg) {
-    const baseTex = Texture.from(impatientSheetImg);
-    baseTex.source.scaleMode = 'linear';
-    const cw = Math.floor(impatientSheetImg.naturalWidth / 4);
-    const ch = Math.floor(impatientSheetImg.naturalHeight / 4);
-    for (let idx = 0; idx < 16; idx++) {
-      const col = idx % 4;
-      const row = Math.floor(idx / 4);
-      impatientFrames.push(new Texture({ source: baseTex.source, frame: new Rectangle(col * cw, row * ch, cw, ch) }));
-    }
+    const sliced = sliceSheet4x4(impatientSheetImg);
+    impatientFrames.push(...sliced.frames);
     impatientSpr = new Sprite(impatientFrames[0]);
     const scaleToIdle = isLeft ? 64 / 258 : 64 / 241;
-    impatientSpr.width = cw * scaleToIdle;
-    impatientSpr.height = ch * scaleToIdle;
+    impatientSpr.width = sliced.cw * scaleToIdle;
+    impatientSpr.height = sliced.ch * scaleToIdle;
     impatientSpr.anchor.set(isLeft ? 0.5034 : 0.5375, isLeft ? 0.9824 : 0.996);
     impatientSpr.position.set(38, 42.5);
     impatientSpr.visible = false;

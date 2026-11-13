@@ -2,7 +2,7 @@ import { parseNineMsc } from './audio/mscParser';
 import { createAudioController } from './audio/opl2Engine';
 import { loadGameAssets } from './engine/AssetManager';
 import { setHdCourtArt } from './engine/hdCards';
-import { setHdRivalArt } from './engine/hdCharacters';
+import { setHdDealerArt, setHdRivalArt } from './engine/hdCharacters';
 import { InputController } from './engine/InputController';
 import { StageApp } from './engine/StageApp';
 import { ClubMenuScene } from './scenes/ClubMenuScene';
@@ -19,6 +19,7 @@ async function bootstrap(): Promise<void> {
   const assets = await loadGameAssets();
   setHdCourtArt(assets.hdCourtArt);
   setHdRivalArt(assets.hdRivalArt);
+  setHdDealerArt(assets.hdDealerArt);
   const tracks = parseNineMsc(assets.mscBytes);
 
   appEl.innerHTML = '';
