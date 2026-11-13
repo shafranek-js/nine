@@ -539,19 +539,20 @@ export function createHdDealer(scale = 1): HdDealerController {
       eyeC.addChild(pupilSpr);
 
       const lidSpr = new Sprite(lidTex);
-      lidSpr.anchor.set(0.5, 0);
+      lidSpr.anchor.set(0.5, 1);
       lidSpr.width = eye.rx * 2.2;
       lidSpr.height = eye.ry * 2.2;
-      const openY = -eye.ry * 2.2;
-      const closedY = -eye.ry * 0.98;
+      const openY = -eye.ry * 1.15;
+      const closedY = eye.ry * 1.1;
       lidSpr.position.set(0, openY);
+      lidSpr.visible = false;
       eyeC.addChild(lidSpr);
       eyelids.push({ spr: lidSpr, closedY, openY });
 
       bodyPivot.addChild(eyeC);
     }
 
-    const hatBaseY = -37.2;
+    const hatBaseY = -43.5;
     const hatPivot = new Container();
     hatPivot.position.set(0, hatBaseY);
     if (isLoadedImage(hatImg)) {
@@ -559,7 +560,7 @@ export function createHdDealer(scale = 1): HdDealerController {
       hatTex.source.scaleMode = 'linear';
       const hatSpr = new Sprite(hatTex);
       hatSpr.anchor.set(0.5, 0.72);
-      const hatW = bodyW * 0.78;
+      const hatW = bodyW * 0.76;
       hatSpr.width = hatW;
       hatSpr.height = hatW * (hatImg.naturalHeight / hatImg.naturalWidth);
       hatPivot.addChild(hatSpr);
@@ -621,6 +622,7 @@ export function createHdDealer(scale = 1): HdDealerController {
         if (bodyPivot.visible) {
           const isBlink = mode === 'blink';
           for (const lid of eyelids) {
+            lid.spr.visible = isBlink;
             lid.spr.position.y = isBlink ? lid.closedY : lid.openY;
           }
           hatPivot.position.set(0, hatBaseY + Math.sin(elapsedMs * 0.004) * 0.35);
@@ -635,6 +637,7 @@ export function createHdDealer(scale = 1): HdDealerController {
         const lift = Math.sin(p * Math.PI);
         const isBlink = p > 0.42 && p < 0.6;
         for (const lid of eyelids) {
+          lid.spr.visible = isBlink;
           lid.spr.position.y = isBlink ? lid.closedY : lid.openY;
         }
         hatPivot.position.set(-lift * 12, hatBaseY - lift * 15);
@@ -1174,7 +1177,7 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   // Articulated Top Hat on top of kolobok head (lifts on celebration, tilts on think, dips on pass)
   const hatPivot = new Container();
   const baseHatRot = hasCustomHat ? 0 : dir * 0.045;
-  const hatBaseY = hasCustomHat ? -38.0 : -29;
+  const hatBaseY = hasCustomHat ? -42.5 : -29;
   hatPivot.position.set(0, hatBaseY);
   hatPivot.rotation = baseHatRot;
 
@@ -1192,7 +1195,7 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   const hatSpr = new Sprite(hatTex);
   hatSpr.anchor.set(0.5, hasCustomHat ? 0.92 : 0.88);
   if (hasCustomHat && hatImg) {
-    const hatW = 53;
+    const hatW = 45.5;
     hatSpr.width = hatW;
     hatSpr.height = hatW * (hatImg.naturalHeight / hatImg.naturalWidth);
   }
