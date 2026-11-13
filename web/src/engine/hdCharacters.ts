@@ -868,8 +868,8 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   const eyeRadiusX = hasCustomBody ? 5.1 : 3.2;
   const eyeRadiusY = hasCustomBody ? 5.0 : 3.5;
   const customEyes = [
-    { x: -0.083 * bodyW, y: 2 - 0.7737 * bodyH, rx: 0.077 * bodyW, ry: 0.11 * bodyH },
-    { x: 0.0889 * bodyW, y: 2 - 0.7645 * bodyH, rx: 0.087 * bodyW, ry: 0.104 * bodyH },
+    { x: -0.0844 * bodyW, y: 2 - 0.789 * bodyH, rx: 0.078 * bodyW, ry: 0.087 * bodyH },
+    { x: 0.090 * bodyW, y: 2 - 0.788 * bodyH, rx: 0.083 * bodyW, ry: 0.085 * bodyH },
   ];
   const eyeOffsets = [-3.9, 3.9];
   const pupils: Sprite[] = [];
@@ -966,7 +966,7 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   // Articulated Top Hat on top of kolobok head (lifts on celebration, tilts on think, dips on pass)
   const hatPivot = new Container();
   const baseHatRot = hasCustomHat ? 0 : dir * 0.045;
-  const hatBaseY = hasCustomHat ? -36.5 : -29;
+  const hatBaseY = hasCustomHat ? -38.0 : -29;
   hatPivot.position.set(0, hatBaseY);
   hatPivot.rotation = baseHatRot;
 
