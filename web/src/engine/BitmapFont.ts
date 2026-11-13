@@ -12,8 +12,9 @@ export function sliceTexture(sheet: Texture, x: number, y: number, w: number, h:
 const colorKeyCache = new Map<string, Texture>();
 
 /**
- * Slices a sub-rectangle from a sprite sheet and turns exact black `(0,0,0)`
- * pixels transparent (matching EGA `PutMaskedImage4Plane` where color 0 is transparent).
+ * Slices a sub-rectangle from a sprite sheet and makes exterior black `(0,0,0)`
+ * background transparent via a 4-connected perimeter flood-fill so interior
+ * black outlines and features (eyes, contours, bow tie) stay solid black.
  */
 export function sliceMaskedTexture(sheet: Texture, x: number, y: number, w: number, h: number): Texture {
   const uid = sheet.source.uid;
@@ -37,11 +38,46 @@ export function sliceMaskedTexture(sheet: Texture, x: number, y: number, w: numb
   ctx.drawImage(resource, x, y, w, h, 0, 0, w, h);
   const imgData = ctx.getImageData(0, 0, w, h);
   const d = imgData.data;
-  for (let i = 0; i < d.length; i += 4) {
-    if (d[i] === 0 && d[i + 1] === 0 && d[i + 2] === 0) {
-      d[i + 3] = 0;
+
+  // 4-connected BFS from the bounding-box edges clears only exterior black background
+  // and stops at 1px diagonal contours instead of punching holes inside sprites.
+  const total = w * h;
+  const visited = new Uint8Array(total);
+  const queue = new Int32Array(total);
+  let head = 0;
+  let tail = 0;
+
+  const trySeed = (px: number, py: number): void => {
+    const idx = py * w + px;
+    if (visited[idx]) return;
+    const di = idx * 4;
+    if (d[di] === 0 && d[di + 1] === 0 && d[di + 2] === 0) {
+      visited[idx] = 1;
+      queue[tail++] = idx;
     }
+  };
+
+  for (let px = 0; px < w; px++) {
+    trySeed(px, 0);
+    trySeed(px, h - 1);
   }
+  for (let py = 0; py < h; py++) {
+    trySeed(0, py);
+    trySeed(w - 1, py);
+  }
+
+  while (head < tail) {
+    const idx = queue[head++];
+    d[idx * 4 + 3] = 0;
+
+    const px = idx % w;
+    const py = (idx - px) / w;
+    if (px > 0) trySeed(px - 1, py);
+    if (px + 1 < w) trySeed(px + 1, py);
+    if (py > 0) trySeed(px, py - 1);
+    if (py + 1 < h) trySeed(px, py + 1);
+  }
+
   ctx.putImageData(imgData, 0, 0);
 
   const tex = Texture.from(canvas);

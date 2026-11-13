@@ -55,7 +55,7 @@ export class IntroScene implements Scene {
       this.trumpetSprites.push(spr);
     }
 
-    // Center red dealer hat-raise sprite (mask black transparent so it sits cleanly behind table/logo)
+    // Center red dealer hat-raise sprite at exact DOS coords (265, 130) from CS:5A00
     this.dealerFrames = [sliceMaskedTexture(zr, 547, 167, 92, 60)];
     for (let r = 0; r < 2; r++) {
       for (let c = 0; c < 3; c++) {
@@ -64,7 +64,7 @@ export class IntroScene implements Scene {
     }
 
     this.dealerSprite = new Sprite(this.dealerFrames[0]);
-    this.dealerSprite.position.set(277, 86);
+    this.dealerSprite.position.set(265, 130);
     parent.addChild(this.dealerSprite);
 
     ctx.audio.music.play('intro');
@@ -93,7 +93,6 @@ export class IntroScene implements Scene {
       const dStep = Math.floor(this.elapsedMs / 180) % (DEALER_SEQUENCE.length + 6);
       const dIdx = dStep < DEALER_SEQUENCE.length ? DEALER_SEQUENCE[dStep] : 0;
       this.dealerSprite.texture = this.dealerFrames[dIdx];
-      this.dealerSprite.position.set(dIdx === 0 ? 270 : 284, 86);
     }
 
     // Auto-advance after full ~15.6s fanfare
