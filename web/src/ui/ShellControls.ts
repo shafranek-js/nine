@@ -4,6 +4,7 @@ export class ShellControls {
   private readonly bar = document.createElement('div');
   private readonly manager: SceneManager;
   private soundBtn!: HTMLButtonElement;
+  private musicModeBtn!: HTMLButtonElement;
   private aspectBtn!: HTMLButtonElement;
   private scanlineBtn!: HTMLButtonElement;
   private statusSpan!: HTMLSpanElement;
@@ -19,6 +20,14 @@ export class ShellControls {
       this.manager.ctx.config.soundMusicEnabled = next;
       this.manager.ctx.audio.setEnabled(next);
       this.manager.ctx.persistConfig();
+      this.sync();
+    });
+
+    this.musicModeBtn = this.makeButton('', () => {
+      void this.manager.ctx.audio.unlock();
+      const music = this.manager.ctx.audio.music;
+      const next = music.getMusicMode() === 'suno' ? 'adlib' : 'suno';
+      music.setMusicMode(next);
       this.sync();
     });
 
@@ -76,6 +85,7 @@ export class ShellControls {
 
     this.bar.append(
       this.soundBtn,
+      this.musicModeBtn,
       this.aspectBtn,
       this.scanlineBtn,
       exportBtn,
@@ -102,6 +112,7 @@ export class ShellControls {
     const sndOn = config.soundMusicEnabled;
     const unlocked = audio.isUnlocked();
     this.soundBtn.textContent = sndOn ? (unlocked ? 'Audio: ON' : 'Audio: ON (click to wake)') : 'Audio: OFF';
+    this.musicModeBtn.textContent = audio.music.getMusicMode() === 'suno' ? 'Music: Suno MP3' : 'Music: AdLib OPL2';
     this.aspectBtn.textContent =
       this.manager.ctx.stage.getAspectMode() === '1:1' ? 'Aspect: PAR 1:1 (640x350)' : 'Aspect: 4:3 EGA CRT';
     this.scanlineBtn.textContent = this.manager.ctx.stage.isScanlinesEnabled() ? 'CRT Scanlines: ON' : 'CRT Scanlines: OFF';

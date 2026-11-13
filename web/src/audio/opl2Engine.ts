@@ -40,15 +40,31 @@ class NineOpl2Processor extends AudioWorkletProcessor {
 registerProcessor('nine-opl2-processor', NineOpl2Processor);
 `;
 
+export type MusicSourceMode = 'suno' | 'adlib';
+
+const ASSET_BASE = (import.meta.env?.BASE_URL ?? '/').replace(/\/$/, '');
+const SUNO_TRACK_URLS: Record<MscTrackId, string> = {
+  intro: `${ASSET_BASE}/assets/audio/01_intro_fanfare.mp3`,
+  menu: `${ASSET_BASE}/assets/audio/02_club_menu_piano.mp3`,
+  table: `${ASSET_BASE}/assets/audio/03_card_table_theme.mp3`,
+};
+
 export class Opl2MusicEngine {
   private ctx: AudioContext | null = null;
   private workletNode: AudioWorkletNode | null = null;
   private initPromise: Promise<void> | null = null;
   private tracks: Record<MscTrackId, MscTrack> | null = null;
   private enabled = true;
+  private musicMode: MusicSourceMode = 'suno';
   private currentTrack: MscTrackId | null = null;
   private pendingTrack: MscTrackId | null = null;
   private gainValue = 0.72;
+  private playSerial = 0;
+
+  private sunoGain: GainNode | null = null;
+  private sunoSource: AudioBufferSourceNode | null = null;
+  private sunoBuffers = new Map<MscTrackId, AudioBuffer>();
+  private sunoLoads = new Map<MscTrackId, Promise<AudioBuffer | null>>();
 
   // Fallback timer-driven synth when AudioWorklet is unavailable
   private fallbackTimer: number | null = null;
@@ -64,37 +80,61 @@ export class Opl2MusicEngine {
     }
   }
 
+  setMusicMode(mode: MusicSourceMode): void {
+    if (this.musicMode === mode) return;
+    this.musicMode = mode;
+    if (!this.enabled) return;
+    const active = this.currentTrack ?? this.pendingTrack;
+    if (active) {
+      this.play(active);
+    }
+  }
+
+  getMusicMode(): MusicSourceMode {
+    return this.musicMode;
+  }
+
   async ensureInitialized(ctx: AudioContext): Promise<void> {
     this.ctx = ctx;
+    if (!this.sunoGain) {
+      const g = ctx.createGain();
+      g.gain.value = 0.55;
+      g.connect(ctx.destination);
+      this.sunoGain = g;
+    }
+    if (this.musicMode === 'suno') {
+      void this.loadSunoBuffer('intro');
+    }
     if (this.workletNode) return;
     if (this.initPromise) return this.initPromise;
 
     this.initPromise = (async () => {
-      if (!ctx.audioWorklet) return;
-      try {
-        const blob = new Blob([WORKLET_CODE], { type: 'application/javascript' });
-        const url = URL.createObjectURL(blob);
+      if (ctx.audioWorklet) {
         try {
-          await ctx.audioWorklet.addModule(url);
-        } finally {
-          URL.revokeObjectURL(url);
+          const blob = new Blob([WORKLET_CODE], { type: 'application/javascript' });
+          const url = URL.createObjectURL(blob);
+          try {
+            await ctx.audioWorklet.addModule(url);
+          } finally {
+            URL.revokeObjectURL(url);
+          }
+          const node = new AudioWorkletNode(ctx, 'nine-opl2-processor', {
+            numberOfInputs: 0,
+            numberOfOutputs: 1,
+            outputChannelCount: [1],
+          });
+          node.connect(ctx.destination);
+          node.port.postMessage({ type: 'volume', gain: this.gainValue });
+          this.workletNode = node;
+        } catch {
+          // Leave workletNode null; fallback scheduler handles playback cleanly.
         }
-        const node = new AudioWorkletNode(ctx, 'nine-opl2-processor', {
-          numberOfInputs: 0,
-          numberOfOutputs: 1,
-          outputChannelCount: [1],
-        });
-        node.connect(ctx.destination);
-        node.port.postMessage({ type: 'volume', gain: this.gainValue });
-        this.workletNode = node;
+      }
 
-        if (this.enabled && (this.pendingTrack || this.currentTrack)) {
-          const target = this.pendingTrack ?? this.currentTrack;
-          this.pendingTrack = null;
-          if (target) this.startWorkletTrack(target);
-        }
-      } catch {
-        // Leave workletNode null; fallback scheduler handles playback cleanly.
+      if (this.enabled && (this.pendingTrack || this.currentTrack)) {
+        const target = this.pendingTrack ?? this.currentTrack;
+        this.pendingTrack = null;
+        if (target) this.play(target);
       }
     })();
 
@@ -104,6 +144,7 @@ export class Opl2MusicEngine {
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
     if (!enabled) {
+      ++this.playSerial;
       this.stopPlaybackOnly();
     } else if (this.currentTrack) {
       this.play(this.currentTrack);
@@ -120,16 +161,62 @@ export class Opl2MusicEngine {
 
   play(trackId: MscTrackId): void {
     this.currentTrack = trackId;
+    const serial = ++this.playSerial;
     if (!this.enabled) return;
-    if (!this.tracks) {
+
+    if (!this.ctx) {
       this.pendingTrack = trackId;
       return;
     }
 
-    if (this.ctx && this.ctx.state === 'suspended') {
+    if (this.ctx.state === 'suspended') {
       void this.ctx.resume();
     }
 
+    if (this.musicMode === 'suno') {
+      this.stopOpl2Only();
+      void this.startSunoTrack(trackId, serial);
+      return;
+    }
+
+    this.stopSunoSource();
+    this.startOpl2Track(trackId);
+  }
+
+  stop(): void {
+    ++this.playSerial;
+    this.currentTrack = null;
+    this.pendingTrack = null;
+    this.stopPlaybackOnly();
+  }
+
+  private stopSunoSource(): void {
+    if (this.sunoSource) {
+      try {
+        this.sunoSource.stop();
+      } catch {
+        // Ignore already-stopped source
+      }
+      this.sunoSource.disconnect();
+      this.sunoSource = null;
+    }
+  }
+
+  private stopOpl2Only(): void {
+    this.workletNode?.port.postMessage({ type: 'stop' });
+    this.stopFallback();
+  }
+
+  private stopPlaybackOnly(): void {
+    this.stopSunoSource();
+    this.stopOpl2Only();
+  }
+
+  private startOpl2Track(trackId: MscTrackId): void {
+    if (!this.tracks) {
+      this.pendingTrack = trackId;
+      return;
+    }
     if (this.workletNode) {
       this.stopFallback();
       this.startWorkletTrack(trackId);
@@ -141,15 +228,59 @@ export class Opl2MusicEngine {
     }
   }
 
-  stop(): void {
-    this.currentTrack = null;
-    this.pendingTrack = null;
-    this.stopPlaybackOnly();
+  private loadSunoBuffer(trackId: MscTrackId): Promise<AudioBuffer | null> {
+    const cached = this.sunoBuffers.get(trackId);
+    if (cached) return Promise.resolve(cached);
+    const inflight = this.sunoLoads.get(trackId);
+    if (inflight) return inflight;
+
+    const p = (async () => {
+      if (!this.ctx) return null;
+      try {
+        const res = await fetch(SUNO_TRACK_URLS[trackId]);
+        if (!res.ok) return null;
+        const arr = await res.arrayBuffer();
+        const decoded = await this.ctx.decodeAudioData(arr);
+        this.sunoBuffers.set(trackId, decoded);
+        return decoded;
+      } catch {
+        return null;
+      } finally {
+        this.sunoLoads.delete(trackId);
+      }
+    })();
+    this.sunoLoads.set(trackId, p);
+    return p;
   }
 
-  private stopPlaybackOnly(): void {
-    this.workletNode?.port.postMessage({ type: 'stop' });
-    this.stopFallback();
+  private async startSunoTrack(trackId: MscTrackId, serial: number): Promise<void> {
+    const buf = await this.loadSunoBuffer(trackId);
+    if (
+      serial !== this.playSerial ||
+      !this.enabled ||
+      this.currentTrack !== trackId ||
+      this.musicMode !== 'suno'
+    ) {
+      return;
+    }
+    if (!buf || !this.ctx || !this.sunoGain) {
+      this.startOpl2Track(trackId);
+      return;
+    }
+    this.stopSunoSource();
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    src.connect(this.sunoGain);
+    src.start(0);
+    this.sunoSource = src;
+
+    // Warm remaining Suno tracks in background so scene changes start instantaneously
+    for (const nextId of ['intro', 'menu', 'table'] as const) {
+      if (nextId !== trackId && !this.sunoBuffers.has(nextId)) {
+        void this.loadSunoBuffer(nextId);
+      }
+    }
   }
 
   private startWorkletTrack(trackId: MscTrackId): void {
