@@ -11,10 +11,22 @@ import {
   type HighScoreTables,
 } from '../core/persistence';
 import { SCREEN_HEIGHT, SCREEN_WIDTH, type NineConfig } from '../core/types';
-import type { LoadedAssets } from '../engine/AssetManager';
+import type { GraphicsMode, LoadedAssets } from '../engine/AssetManager';
 import { HudDigitFont, MenuBitmapFont } from '../engine/BitmapFont';
 import type { InputController } from '../engine/InputController';
 import type { StageApp } from '../engine/StageApp';
+
+const GRAPHICS_STORAGE_KEY = 'nine_graphics_mode_v1';
+
+function loadStoredGraphicsMode(): GraphicsMode {
+  try {
+    const raw = localStorage.getItem(GRAPHICS_STORAGE_KEY);
+    if (raw === 'ega' || raw === 'hd') return raw;
+  } catch {
+    // Ignore storage restriction
+  }
+  return 'hd';
+}
 
 export type SceneId = 'intro' | 'dealer' | 'menu' | 'table';
 
@@ -37,6 +49,8 @@ export interface GameContext {
   sessionPlayer: SessionPlayer;
   persistConfig(): void;
   persistHighScores(): void;
+  getGraphicsMode(): GraphicsMode;
+  setGraphicsMode(mode: GraphicsMode): void;
   goTo(scene: SceneId, fadeMs?: number): void;
   onStateChange?: () => void;
 }
@@ -45,6 +59,7 @@ export interface Scene {
   mount(parent: Container, ctx: GameContext): void;
   update(dtMs: number): void;
   unmount(): void;
+  onGraphicsModeChanged?(mode: GraphicsMode): void;
 }
 
 export class SceneManager {
@@ -72,6 +87,8 @@ export class SceneManager {
 
     const config = loadStoredConfig() ?? decodeNineCfg(assets.cfgBytes);
     const highScores = loadStoredHighScores() ?? decodeNineRes(assets.resBytes);
+    const initialGraphics = loadStoredGraphicsMode();
+    stage.setGraphicsMode(initialGraphics);
     audio.setEnabled(config.soundMusicEnabled);
 
     this.fadeOverlay.rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT).fill(0x000000);
@@ -102,6 +119,18 @@ export class SceneManager {
       },
       persistHighScores: () => {
         saveStoredHighScores(this.ctx.highScores);
+        this.ctx.onStateChange?.();
+      },
+      getGraphicsMode: () => this.ctx.stage.getGraphicsMode(),
+      setGraphicsMode: (mode: GraphicsMode) => {
+        if (this.ctx.stage.getGraphicsMode() === mode) return;
+        this.ctx.stage.setGraphicsMode(mode);
+        try {
+          localStorage.setItem(GRAPHICS_STORAGE_KEY, mode);
+        } catch {
+          // Ignore storage errors
+        }
+        this.activeScene?.onGraphicsModeChanged?.(mode);
         this.ctx.onStateChange?.();
       },
       goTo: (scene, fadeMs = 220) => {

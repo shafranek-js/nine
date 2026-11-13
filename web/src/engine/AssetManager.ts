@@ -2,6 +2,8 @@ import { Assets, Texture } from 'pixi.js';
 import { cardKey } from '../core/rules';
 import type { Rank, Suit } from '../core/types';
 
+export type GraphicsMode = 'hd' | 'ega';
+
 export interface AssetManifest {
   screen: { width: number; height: number };
   backgrounds: Record<'ZF_NINE' | 'TF_NINE' | 'GF_NINE', string>;
@@ -14,6 +16,7 @@ export interface AssetManifest {
 export interface LoadedAssets {
   manifest: AssetManifest;
   backgrounds: Record<'ZF_NINE' | 'TF_NINE' | 'GF_NINE', Texture>;
+  hdBackgrounds: Record<'intro' | 'menu' | 'table', Texture>;
   sheets: Record<'ZR_NINE' | 'TR_NINE' | 'GR_NINE' | 'VR_NINE', Texture>;
   cards: Map<string, Texture>;
   miniCards: Map<string, Texture>;
@@ -36,6 +39,12 @@ async function loadNearestTexture(url: string): Promise<Texture> {
   return tex;
 }
 
+async function loadLinearTexture(url: string): Promise<Texture> {
+  const tex = await Assets.load<Texture>(url);
+  tex.source.scaleMode = 'linear';
+  return tex;
+}
+
 export async function loadGameAssets(basePath = `${import.meta.env.BASE_URL}assets`): Promise<LoadedAssets> {
   const normalizedBase = basePath.endsWith('/') ? basePath.slice(0, -1) : basePath;
   const manifestRes = await fetch(`${normalizedBase}/manifest.json`);
@@ -44,10 +53,13 @@ export async function loadGameAssets(basePath = `${import.meta.env.BASE_URL}asse
   }
   const manifest = (await manifestRes.json()) as AssetManifest;
 
-  const [zf, tf, gf, zr, tr, gr, vr, mscBytes, resBytes, cfgBytes] = await Promise.all([
+  const [zf, tf, gf, hdIntro, hdMenu, hdTable, zr, tr, gr, vr, mscBytes, resBytes, cfgBytes] = await Promise.all([
     loadNearestTexture(`${normalizedBase}/${manifest.backgrounds.ZF_NINE}`),
     loadNearestTexture(`${normalizedBase}/${manifest.backgrounds.TF_NINE}`),
     loadNearestTexture(`${normalizedBase}/${manifest.backgrounds.GF_NINE}`),
+    loadLinearTexture(`${normalizedBase}/hd/intro_bg_hd.jpg`),
+    loadLinearTexture(`${normalizedBase}/hd/menu_bg_hd.jpg`),
+    loadLinearTexture(`${normalizedBase}/hd/table_bg_hd.jpg`),
     loadNearestTexture(`${normalizedBase}/${manifest.sheets.ZR_NINE}`),
     loadNearestTexture(`${normalizedBase}/${manifest.sheets.TR_NINE}`),
     loadNearestTexture(`${normalizedBase}/${manifest.sheets.GR_NINE}`),
@@ -74,6 +86,7 @@ export async function loadGameAssets(basePath = `${import.meta.env.BASE_URL}asse
   return {
     manifest,
     backgrounds: { ZF_NINE: zf, TF_NINE: tf, GF_NINE: gf },
+    hdBackgrounds: { intro: hdIntro, menu: hdMenu, table: hdTable },
     sheets: { ZR_NINE: zr, TR_NINE: tr, GR_NINE: gr, VR_NINE: vr },
     cards: new Map(cardEntries),
     miniCards: new Map(miniEntries),
