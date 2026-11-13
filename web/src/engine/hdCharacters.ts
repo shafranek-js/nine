@@ -1317,8 +1317,8 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
     setState(mode, elapsedMs, lookTarget, dtMs = 16.6) {
       if (playSpr && playFrames.length === 16 && mode === 'play') {
         playTimerMs += dtMs;
-        // Play frames #1..#15 smoothly at ~60ms/frame (~900ms total throw + follow-through)
-        const stepMs = 60;
+        // Play frames #1..#15 smoothly at ~45ms/frame (~675ms throw + follow-through synced with 520ms card flight)
+        const stepMs = 45;
         const idx = Math.min(15, 1 + Math.floor(playTimerMs / stepMs));
         playSpr.texture = playFrames[idx];
         playSpr.visible = true;

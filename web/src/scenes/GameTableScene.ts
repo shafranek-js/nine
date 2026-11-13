@@ -810,7 +810,7 @@ export class GameTableScene implements Scene {
     this.ctx.audio.sfx.cardSlide();
     this.activeFlightSeat = seat;
     if ((seat === 1 || seat === 2) && this.ctx.getGraphicsMode() === 'hd') {
-      this.rivalPlayAnimMs[seat] = 920;
+      this.rivalPlayAnimMs[seat] = 700;
     }
     this.pendingMoveCard = card;
     this.hoveredCardKey = null;
@@ -863,7 +863,7 @@ export class GameTableScene implements Scene {
       endX,
       endY,
       elapsed: 0,
-      durationMs: isHd ? 230 : 165,
+      durationMs: isHd ? (seat === 3 ? 380 : 520) : 165,
       onLand: () => this.finishCardFlight(),
     };
   }
@@ -1288,8 +1288,8 @@ export class GameTableScene implements Scene {
     if (this.phase === 'movingCard' && this.flyingCard) {
       this.flyingCard.elapsed += dtMs;
       const t = Math.min(1, this.flyingCard.elapsed / this.flyingCard.durationMs);
-      const ease = isHd ? 1 - Math.pow(1 - t, 3) : t;
-      const arcLift = isHd ? Math.sin(t * Math.PI) * 16 : 0;
+      const ease = isHd ? t * t * (3 - 2 * t) : t;
+      const arcLift = isHd ? Math.sin(t * Math.PI) * 18 : 0;
       const curX = this.flyingCard.startX + (this.flyingCard.endX - this.flyingCard.startX) * ease;
       const curY = this.flyingCard.startY + (this.flyingCard.endY - this.flyingCard.startY) * ease;
 
