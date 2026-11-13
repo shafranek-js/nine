@@ -89,6 +89,7 @@ export class SceneManager {
     const highScores = loadStoredHighScores() ?? decodeNineRes(assets.resBytes);
     const initialGraphics = loadStoredGraphicsMode();
     stage.setGraphicsMode(initialGraphics);
+    audio.sfx.setSoundProfile(initialGraphics);
     audio.setEnabled(config.soundMusicEnabled);
 
     this.fadeOverlay.rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT).fill(0x000000);
@@ -125,6 +126,7 @@ export class SceneManager {
       setGraphicsMode: (mode: GraphicsMode) => {
         if (this.ctx.stage.getGraphicsMode() === mode) return;
         this.ctx.stage.setGraphicsMode(mode);
+        this.ctx.audio.sfx.setSoundProfile(mode);
         try {
           localStorage.setItem(GRAPHICS_STORAGE_KEY, mode);
         } catch {

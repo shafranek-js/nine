@@ -1114,7 +1114,7 @@ export class GameTableScene implements Scene {
     if (isLegalMove(hit.card, round.tableBounds, round.isFirstTurnOfRound)) {
       this.startCardFlight(3, hit.card, hit.x + 25, hit.y);
     } else {
-      this.ctx?.audio.sfx.passAlert();
+      this.ctx?.audio.sfx.illegalMove();
       this.phase = 'illegalShake';
       this.phaseTimerMs = 0;
     }
