@@ -235,6 +235,7 @@ export class GameTableScene implements Scene {
   private activeFlightSeat: SeatIndex | null = null;
   private passingSeat: SeatIndex | null = null;
   private humanWaitMs = 0;
+  private rivalPlayAnimMs: Record<1 | 2, number> = { 1: 0, 2: 0 };
   private pendingMoveCard: Card | null = null;
   private flyingCard: FlyingCard | null = null;
   private flyingCoins: FlyingCoin[] = [];
@@ -256,6 +257,7 @@ export class GameTableScene implements Scene {
     this.activeFlightSeat = null;
     this.passingSeat = null;
     this.humanWaitMs = 0;
+    this.rivalPlayAnimMs = { 1: 0, 2: 0 };
     this.flyingCard = null;
     this.flyingCoins = [];
     this.sparkParticles = [];
@@ -550,6 +552,7 @@ export class GameTableScene implements Scene {
     this.activeFlightSeat = null;
     this.passingSeat = null;
     this.humanWaitMs = 0;
+    this.rivalPlayAnimMs = { 1: 0, 2: 0 };
     this.statusBanner = '';
     this.renderRivalCardBacks();
     this.renderCashAndBankHud();
@@ -806,6 +809,9 @@ export class GameTableScene implements Scene {
 
     this.ctx.audio.sfx.cardSlide();
     this.activeFlightSeat = seat;
+    if ((seat === 1 || seat === 2) && this.ctx.getGraphicsMode() === 'hd') {
+      this.rivalPlayAnimMs[seat] = 920;
+    }
     this.pendingMoveCard = card;
     this.hoveredCardKey = null;
 
@@ -857,7 +863,7 @@ export class GameTableScene implements Scene {
       endX,
       endY,
       elapsed: 0,
-      durationMs: isHd ? (seat === 3 ? 210 : 380) : 165,
+      durationMs: isHd ? 230 : 165,
       onLand: () => this.finishCardFlight(),
     };
   }
@@ -1231,6 +1237,8 @@ export class GameTableScene implements Scene {
     } else {
       this.humanWaitMs = 0;
     }
+    this.rivalPlayAnimMs[1] = Math.max(0, this.rivalPlayAnimMs[1] - dtMs);
+    this.rivalPlayAnimMs[2] = Math.max(0, this.rivalPlayAnimMs[2] - dtMs);
 
     if (this.hdLeftRival && this.hdRightRival) {
       const lookTarget =
@@ -1247,6 +1255,9 @@ export class GameTableScene implements Scene {
       const resolveRivalMode = (seat: 1 | 2): RivalAnimMode => {
         if (this.phase === 'roundEnd') {
           return this.roundWinner === seat ? 'winRound' : 'loseRound';
+        }
+        if (this.rivalPlayAnimMs[seat] > 0) {
+          return 'play';
         }
         if (this.phase === 'movingCard' && this.activeFlightSeat === seat) {
           return 'play';

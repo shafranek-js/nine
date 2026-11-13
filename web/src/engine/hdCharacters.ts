@@ -704,26 +704,29 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
         rim: 'rgba(255, 200, 248, 0.28)',
       };
 
-  // Fixed emerald felt & brass pedestal rail at bottom (y = 40..46)
-  const ledgeTex = createHdTexture(84, 9, (ctx) => {
-    const g = ctx.createLinearGradient(0, 1, 0, 6);
-    g.addColorStop(0, '#229648');
-    g.addColorStop(0.55, '#156830');
-    g.addColorStop(1, '#0c3f1d');
-    ctx.fillStyle = g;
-    ctx.strokeStyle = '#071f0e';
-    ctx.lineWidth = 0.8;
-    ctx.beginPath();
-    ctx.roundRect(2, 1, 80, 5, 2);
-    ctx.fill();
-    ctx.stroke();
+  // Pedestal rail is omitted whenever custom illustrated rival art is active
+  if (!hasCustomBody) {
+    const ledgeTex = createHdTexture(84, 9, (ctx) => {
+      const g = ctx.createLinearGradient(0, 1, 0, 6);
+      g.addColorStop(0, '#229648');
+      g.addColorStop(0.55, '#156830');
+      g.addColorStop(1, '#0c3f1d');
+      ctx.fillStyle = g;
+      ctx.strokeStyle = '#071f0e';
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.roundRect(2, 1, 80, 5, 2);
+      ctx.fill();
+      ctx.stroke();
 
-    ctx.fillStyle = '#d4a33b';
-    ctx.fillRect(3, 6.2, 78, 1.8);
-  });
-  const ledgeSpr = new Sprite(ledgeTex);
-  ledgeSpr.anchor.set(0.5, 0);
-  ledgeSpr.position.set(38, 39);
+      ctx.fillStyle = '#d4a33b';
+      ctx.fillRect(3, 6.2, 78, 1.8);
+    });
+    const ledgeSpr = new Sprite(ledgeTex);
+    ledgeSpr.anchor.set(0.5, 0);
+    ledgeSpr.position.set(38, 39);
+    container.addChild(ledgeSpr);
+  }
 
   // Body pivot anchored cleanly on the rail center (38, 41) for natural tilt, lean & squash/stretch
   const bodyPivot = new Container();
@@ -877,8 +880,22 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   ];
   const eyeOffsets = [-3.9, 3.9];
   const pupils: Sprite[] = [];
+  const eyelidSprites: Sprite[] = [];
   const eyelidTops: Graphics[] = [];
   const brows: Graphics[] = [];
+
+  const customLidTex = hasCustomBody
+    ? createHdTexture(14, 12, (ctx) => {
+        const g = ctx.createLinearGradient(0, 0, 0, 11);
+        g.addColorStop(0, '#c80396');
+        g.addColorStop(0.75, '#e80ab4');
+        g.addColorStop(1, '#9e0174');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, 14, 11);
+        ctx.fillStyle = '#140318';
+        ctx.fillRect(0, 10.7, 14, 1.3);
+      })
+    : null;
 
   const scleraTex = createHdTexture(10, 10, (ctx) => {
     ctx.fillStyle = '#ffffff';
@@ -891,14 +908,14 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   });
 
   const pupilTex = createHdTexture(8, 8, (ctx) => {
-    const r = hasCustomBody ? 2.1 : 1.55;
+    const r = hasCustomBody ? 2.15 : 1.55;
     ctx.fillStyle = '#0c0c12';
     ctx.beginPath();
     ctx.arc(4, 4, r, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = '#ffffff';
     ctx.beginPath();
-    ctx.arc(4 - r * 0.4, 4 - r * 0.42, r * 0.36, 0, Math.PI * 2);
+    ctx.arc(4 - r * 0.38, 4 - r * 0.4, r * 0.36, 0, Math.PI * 2);
     ctx.fill();
   });
 
@@ -924,11 +941,19 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
     eyeC.addChild(pupilSpr);
     pupils.push(pupilSpr);
 
-    const lid = new Graphics();
-    eyeC.addChild(lid);
-    eyelidTops.push(lid);
+    if (hasCustomBody && customLidTex) {
+      const lidSpr = new Sprite(customLidTex);
+      lidSpr.anchor.set(0.5, 0);
+      lidSpr.width = rx * 2.2;
+      lidSpr.height = ry * 2.2;
+      lidSpr.position.set(0, -ry * 2.2);
+      eyeC.addChild(lidSpr);
+      eyelidSprites.push(lidSpr);
+    } else {
+      const lid = new Graphics();
+      eyeC.addChild(lid);
+      eyelidTops.push(lid);
 
-    if (!hasCustomBody) {
       const brow = new Graphics();
       brow.moveTo(-3.2, -4.6).quadraticCurveTo(0, -5.8, 3.2, -4.4).stroke({ color: '#1a0621', width: 1.1 });
       eyeC.addChild(brow);
@@ -995,21 +1020,22 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   hatPivot.addChild(hatSpr);
   bodyPivot.addChild(hatPivot);
 
-  // Skin-matched hand & 4 articulated drumming fingers (magenta kolobok skin + white shirt cuff when custom art is used)
-  const outerHandTex = createHdTexture(16, 14, (ctx) => {
-    ctx.fillStyle = hasCustomBody ? '#e816bf' : '#fcf8ef';
-    ctx.strokeStyle = '#18091e';
-    ctx.lineWidth = 0.95;
-    ctx.beginPath();
-    ctx.ellipse(8, 7, 5.2, 3.6, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    if (hasCustomBody) {
-      ctx.fillStyle = 'rgba(255, 220, 255, 0.45)';
+  // Procedural arms & drumming fingers only used when falling back without custom illustrated rival sprites
+  let outerArmRig: Container | null = null;
+  let innerArmRig: Container | null = null;
+  const fingers: Sprite[] = [];
+  const restArmX = 38 + dir * 26.5;
+  const restArmY = 39.2;
+
+  if (!hasCustomBody) {
+    const outerHandTex = createHdTexture(16, 14, (ctx) => {
+      ctx.fillStyle = '#fcf8ef';
+      ctx.strokeStyle = '#18091e';
+      ctx.lineWidth = 0.95;
       ctx.beginPath();
-      ctx.ellipse(7.2, 5.7, 2.2, 1.0, -0.2, 0, Math.PI * 2);
+      ctx.ellipse(8, 7, 5.2, 3.6, 0, 0, Math.PI * 2);
       ctx.fill();
-    } else {
+      ctx.stroke();
       ctx.strokeStyle = 'rgba(130, 115, 140, 0.55)';
       ctx.lineWidth = 0.6;
       ctx.beginPath();
@@ -1018,64 +1044,42 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
       ctx.moveTo(6.5, 7.8);
       ctx.lineTo(9.5, 8);
       ctx.stroke();
-    }
-  });
-  const outerArmRig = new Container();
-  outerArmRig.position.set(-dir * 16, -6);
-  const outerHandSpr = new Sprite(outerHandTex);
-  outerHandSpr.anchor.set(0.5);
-  outerArmRig.addChild(outerHandSpr);
-  outerArmRig.visible = !hasCustomBody;
-  bodyPivot.addChild(outerArmRig);
+    });
+    outerArmRig = new Container();
+    outerArmRig.position.set(-dir * 16, -6);
+    const outerHandSpr = new Sprite(outerHandTex);
+    outerHandSpr.anchor.set(0.5);
+    outerArmRig.addChild(outerHandSpr);
+    bodyPivot.addChild(outerArmRig);
 
-  // Inner Table Arm + 4 Individually Articulated Drumming Fingers on the green rail (homage to 1993 frames 2..5)
-  const innerArmRig = new Container();
-  const restArmX = 38 + dir * 26.5;
-  const restArmY = 39.2;
-  innerArmRig.position.set(restArmX, restArmY);
+    innerArmRig = new Container();
+    innerArmRig.position.set(restArmX, restArmY);
 
-  if (hasCustomBody) {
-    // Crisp white shirt cuff peeking from sleeve behind palm
-    const cuffTex = createHdTexture(8, 10, (ctx) => {
-      ctx.fillStyle = '#fcfaf2';
+    const palmSpr = new Sprite(outerHandTex);
+    palmSpr.anchor.set(0.5);
+    palmSpr.scale.set(0.88, 0.8);
+    palmSpr.position.set(-dir * 3, -1);
+    innerArmRig.addChild(palmSpr);
+
+    const fingerTex = createHdTexture(6, 8, (ctx) => {
+      ctx.fillStyle = '#fcf8ef';
       ctx.strokeStyle = '#18091e';
       ctx.lineWidth = 0.85;
       ctx.beginPath();
-      ctx.roundRect(1, 1.5, 5.5, 6.8, 1.8);
+      ctx.roundRect(1, 0.8, 3.6, 6.2, 1.8);
       ctx.fill();
       ctx.stroke();
     });
-    const cuffSpr = new Sprite(cuffTex);
-    cuffSpr.anchor.set(0.5);
-    cuffSpr.position.set(-dir * 6.8, -0.5);
-    innerArmRig.addChild(cuffSpr);
+    for (let f = 0; f < 4; f++) {
+      const fspr = new Sprite(fingerTex);
+      fspr.anchor.set(0.5, 0.15);
+      fspr.position.set(dir * (1.2 + f * 2.5), -1.8);
+      innerArmRig.addChild(fspr);
+      fingers.push(fspr);
+    }
   }
 
-  const palmSpr = new Sprite(outerHandTex);
-  palmSpr.anchor.set(0.5);
-  palmSpr.scale.set(0.88, 0.8);
-  palmSpr.position.set(-dir * 3, -1);
-  innerArmRig.addChild(palmSpr);
-
-  const fingerTex = createHdTexture(6, 8, (ctx) => {
-    ctx.fillStyle = hasCustomBody ? '#ef26cb' : '#fcf8ef';
-    ctx.strokeStyle = '#18091e';
-    ctx.lineWidth = 0.85;
-    ctx.beginPath();
-    ctx.roundRect(1, 0.8, 3.6, 6.2, 1.8);
-    ctx.fill();
-    ctx.stroke();
-  });
-  const fingers: Sprite[] = [];
-  for (let f = 0; f < 4; f++) {
-    const fspr = new Sprite(fingerTex);
-    fspr.anchor.set(0.5, 0.15);
-    fspr.position.set(dir * (1.2 + f * 2.5), -1.8);
-    innerArmRig.addChild(fspr);
-    fingers.push(fspr);
-  }
-
-  // Layer order: body & toss behind ledge rail, tapping inner hand/impatient sheet on top of ledge rail
+  // Layer order: body & sprite sheets cleanly positioned above rival card racks
   container.addChild(bodyPivot);
 
   const playFrames: Texture[] = [];
@@ -1090,18 +1094,19 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
       const row = Math.floor(idx / 4);
       playFrames.push(new Texture({ source: baseTex.source, frame: new Rectangle(col * cw, row * ch, cw, ch) }));
     }
-    playSpr = new Sprite(playFrames[3]);
+    playSpr = new Sprite(playFrames[1]);
     const scaleToIdle = isLeft ? 64 / 273 : 64 / 248;
     playSpr.width = cw * scaleToIdle;
     playSpr.height = ch * scaleToIdle;
     playSpr.anchor.set(isLeft ? 0.4968 : 0.5582, isLeft ? 0.9866 : 0.9883);
-    playSpr.position.set(38, 41.8);
+    playSpr.position.set(38, 42.5);
     playSpr.visible = false;
     container.addChild(playSpr);
   }
 
-  container.addChild(ledgeSpr);
-  container.addChild(innerArmRig);
+  if (innerArmRig) {
+    container.addChild(innerArmRig);
+  }
 
   // Optional 16-frame AI sprite sheet for the signature impatient finger-drumming animation
   const impatientFrames: Texture[] = [];
@@ -1121,7 +1126,7 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
     impatientSpr.width = cw * scaleToIdle;
     impatientSpr.height = ch * scaleToIdle;
     impatientSpr.anchor.set(isLeft ? 0.5034 : 0.5375, isLeft ? 0.9824 : 0.996);
-    impatientSpr.position.set(38, 43.2);
+    impatientSpr.position.set(38, 42.5);
     impatientSpr.visible = false;
     container.addChild(impatientSpr);
   }
@@ -1136,7 +1141,6 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   let curHatLift = 0;
   let curHatRot = baseHatRot;
   let curPlayReach = 0;
-  let curArmShow = hasCustomBody ? 0 : 1;
   let impatientTimerMs = 0;
   let playTimerMs = 0;
 
@@ -1145,14 +1149,14 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
     setState(mode, elapsedMs, lookTarget, dtMs = 16.6) {
       if (playSpr && playFrames.length === 16 && mode === 'play') {
         playTimerMs += dtMs;
-        // Play active card-toss frames #2..#14 cleanly over ~380ms
-        const stepMs = 29;
-        const idx = Math.min(14, 2 + Math.floor(playTimerMs / stepMs));
+        // Play frames #1..#15 smoothly at ~60ms/frame (~900ms total throw + follow-through)
+        const stepMs = 60;
+        const idx = Math.min(15, 1 + Math.floor(playTimerMs / stepMs));
         playSpr.texture = playFrames[idx];
         playSpr.visible = true;
         if (impatientSpr) impatientSpr.visible = false;
         bodyPivot.visible = false;
-        innerArmRig.visible = false;
+        if (innerArmRig) innerArmRig.visible = false;
         impatientTimerMs = 0;
         return;
       }
@@ -1174,7 +1178,7 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
         impatientSpr.texture = impatientFrames[frameIdx];
         impatientSpr.visible = true;
         bodyPivot.visible = false;
-        innerArmRig.visible = false;
+        if (innerArmRig) innerArmRig.visible = false;
         return;
       }
 
@@ -1267,9 +1271,6 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
         targetSquint = 1;
       }
 
-      const targetArmShow =
-        !hasCustomBody || mode === 'impatient' || mode === 'think' || mode === 'play' || mode === 'winRound' ? 1 : 0;
-
       curSquint += (targetSquint - curSquint) * Math.min(1, dtMs / 45);
       curBodyY += (targetBodyY - curBodyY) * lerpFactor;
       curBodyRot += (targetBodyRot - curBodyRot) * lerpFactor;
@@ -1277,7 +1278,6 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
       curHatLift += (targetHatLift - curHatLift) * lerpFactor;
       curHatRot += (targetHatRot - curHatRot) * lerpFactor;
       curPlayReach += (targetPlayReach - curPlayReach) * Math.min(1, dtMs / 55);
-      curArmShow += (targetArmShow - curArmShow) * Math.min(1, dtMs / 90);
 
       bodyPivot.position.set(38, 41 + curBodyY);
       bodyPivot.rotation = curBodyRot;
@@ -1296,19 +1296,26 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
 
         const rx = hasCustomBody ? customEyes[i].rx : eyeRadiusX;
         const ry = hasCustomBody ? customEyes[i].ry : eyeRadiusY;
-        const lid = eyelidTops[i];
-        lid.clear();
-        if (curSquint > 0.04) {
-          const coverH = ry * 2 * Math.min(1, curSquint);
-          lid
-            .rect(-rx - 0.6, -ry - 0.4, rx * 2 + 1.2, coverH)
-            .fill(hasCustomBody ? '#d404a0' : palette.main)
-            .stroke({ color: '#16061b', width: 0.75 });
+        if (hasCustomBody && eyelidSprites[i]) {
+          const lidSpr = eyelidSprites[i];
+          const lidOffset = -ry * 2.1 + Math.min(1, curSquint) * (ry * 2.0);
+          lidSpr.position.y = lidOffset;
+          lidSpr.visible = curSquint > 0.04;
+        } else if (eyelidTops[i]) {
+          const lid = eyelidTops[i];
+          lid.clear();
+          if (curSquint > 0.04) {
+            const coverH = ry * 2 * Math.min(1, curSquint);
+            lid
+              .rect(-rx - 0.6, -ry - 0.4, rx * 2 + 1.2, coverH)
+              .fill(palette.main)
+              .stroke({ color: '#16061b', width: 0.75 });
+          }
         }
       }
 
-      // Outer bow-tie/lapel hand pose (procedural fallback only)
-      if (!hasCustomBody) {
+      // Procedural arms & fingers (fallback only when custom art is absent)
+      if (!hasCustomBody && outerArmRig && innerArmRig) {
         if (mode === 'think' || mode === 'impatient') {
           outerArmRig.position.set(
             -dir * 11 + Math.sin(elapsedMs * 0.015) * 1.4,
@@ -1326,33 +1333,31 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
           outerArmRig.position.set(-dir * 17, -6);
           outerArmRig.rotation = 0;
         }
-      }
 
-      // Inner rail hand & 4 drumming fingers (homage to 1993 frames 2-5!)
-      innerArmRig.alpha = curArmShow;
-      innerArmRig.visible = curArmShow > 0.02;
-      innerArmRig.position.set(
-        restArmX - dir * (1 - curArmShow) * 6 + dir * curPlayReach * 11 - (mode === 'pass' ? dir * 4 : 0),
-        restArmY + (1 - curArmShow) * 3 - curPlayReach * 8 + (mode === 'winRound' ? -Math.abs(Math.sin(elapsedMs * 0.012)) * 4 : 0),
-      );
-      innerArmRig.rotation = -dir * curPlayReach * 0.28;
+        innerArmRig.alpha = 1;
+        innerArmRig.visible = true;
+        innerArmRig.position.set(
+          restArmX + dir * curPlayReach * 11 - (mode === 'pass' ? dir * 4 : 0),
+          restArmY - curPlayReach * 8 + (mode === 'winRound' ? -Math.abs(Math.sin(elapsedMs * 0.012)) * 4 : 0),
+        );
+        innerArmRig.rotation = -dir * curPlayReach * 0.28;
 
-      for (let f = 0; f < fingers.length; f++) {
-        if (mode === 'impatient') {
-          // Rolling 4-finger wave drum on the emerald rail
-          const wave = Math.max(0, Math.sin(elapsedMs * 0.015 - f * 0.95));
-          fingers[f].position.y = -1.8 - wave * 3.1;
-          fingers[f].rotation = -dir * wave * 0.32;
-        } else if (mode === 'think') {
-          const fidget = Math.max(0, Math.sin(elapsedMs * 0.01 - f * 1.1));
-          fingers[f].position.y = -1.8 - fidget * 1.4;
-          fingers[f].rotation = -dir * fidget * 0.12;
-        } else if (mode === 'play') {
-          fingers[f].position.y = -2.2;
-          fingers[f].rotation = dir * 0.22;
-        } else {
-          fingers[f].position.y = -1.8;
-          fingers[f].rotation = 0;
+        for (let f = 0; f < fingers.length; f++) {
+          if (mode === 'impatient') {
+            const wave = Math.max(0, Math.sin(elapsedMs * 0.015 - f * 0.95));
+            fingers[f].position.y = -1.8 - wave * 3.1;
+            fingers[f].rotation = -dir * wave * 0.32;
+          } else if (mode === 'think') {
+            const fidget = Math.max(0, Math.sin(elapsedMs * 0.01 - f * 1.1));
+            fingers[f].position.y = -1.8 - fidget * 1.4;
+            fingers[f].rotation = -dir * fidget * 0.12;
+          } else if (mode === 'play') {
+            fingers[f].position.y = -2.2;
+            fingers[f].rotation = dir * 0.22;
+          } else {
+            fingers[f].position.y = -1.8;
+            fingers[f].rotation = 0;
+          }
         }
       }
     },
