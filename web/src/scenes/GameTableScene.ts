@@ -205,6 +205,8 @@ export class GameTableScene implements Scene {
       this.rng,
     );
 
+    ctx.audio.music.play('table');
+
     this.beginRoundPresentation();
 
     this.unbindKey = ctx.input.onKeyDown(this.handleKeyDown);
@@ -414,7 +416,7 @@ export class GameTableScene implements Scene {
     const humanWonMatch = humanCash > 0 && (botsOut || (humanCash >= this.match.cash[1] && humanCash >= this.match.cash[2]));
 
     if (humanWonMatch) {
-      this.ctx.audio.music.play('win_game');
+      this.ctx.audio.sfx.victoryBeep();
     } else {
       this.ctx.audio.sfx.passAlert();
     }

@@ -1,4 +1,4 @@
-export type MscTrackId = 'intro' | 'win_game' | 'menu';
+export type MscTrackId = 'intro' | 'menu' | 'table';
 
 export interface OplOperatorParams {
   readonly ksl: number;
@@ -38,17 +38,19 @@ export interface MscTrack {
   readonly tickBeat: number;
   readonly bpm: number;
   readonly totalTicks: number;
+  readonly percussionMode: boolean;
+  readonly pitchBendRange: number;
   readonly instruments: readonly TimInstrument[];
   readonly events: readonly MusEvent[];
 }
 
 /**
  * Exact 6-chunk layout inside original DOS `NINE.MSC` (10,825 bytes, CS:53FC..5573):
- * - Track index 0 (CS:5569, ZF_Nine): 0x060D MUS + 0x024F TIM -> 'intro'
- * - Track index 1 (CS:3F57/5EFE, victory): 0x09E0 MUS + 0x018C TIM -> 'win_game'
- * - Track index 2 (CS:351E, TF_Nine club menu): 0x136F MUS + 0x0312 TIM -> 'menu'
+ * - Track index 0 (CS:5569, ZF_Nine intro): 0x060D MUS + 0x024F TIM -> 'intro'
+ * - Track index 1 (CS:5EFE / CS:3F57, TF_Nine club menu): 0x09E0 MUS + 0x018C TIM -> 'menu'
+ * - Track index 2 (CS:351E, GR_Nine / GF_Nine card table): 0x136F MUS + 0x0312 TIM -> 'table'
  */
-const TRACK_ORDER: readonly MscTrackId[] = ['intro', 'win_game', 'menu'];
+const TRACK_ORDER: readonly MscTrackId[] = ['intro', 'menu', 'table'];
 
 const MUS_HEADER_SIZE = 0x46;
 
@@ -129,6 +131,8 @@ function parseSingleTrack(
   const tickBeat = bytes[musOffset + 0x24] || 240;
   const totalTicksHeader = readUint32LE(view, musOffset + 0x26);
   const streamLen = readUint32LE(view, musOffset + 0x2a);
+  const percussionMode = (bytes[musOffset + 0x3a] ?? 0) !== 0;
+  const pitchBendRange = Math.max(1, Math.min(12, bytes[musOffset + 0x3b] || 1));
   const bpm = readUint16LE(view, musOffset + 0x3c) || 120;
 
   const streamStart = musOffset + MUS_HEADER_SIZE;
@@ -240,6 +244,8 @@ function parseSingleTrack(
       tickBeat,
       bpm,
       totalTicks: Math.max(tick, totalTicksHeader),
+      percussionMode,
+      pitchBendRange,
       instruments,
       events,
     },

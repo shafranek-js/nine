@@ -43,6 +43,7 @@ export class DealerTransitionScene implements Scene {
     this.beatIndex = 0;
     this.beatElapsedMs = 0;
     this.finished = false;
+    ctx.audio.music.stop();
 
     const bg = new Graphics();
     bg.rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT).fill(0x000000);
