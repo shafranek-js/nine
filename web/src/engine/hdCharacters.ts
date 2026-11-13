@@ -1,4 +1,4 @@
-import { Container, Graphics, Sprite, Texture } from 'pixi.js';
+import { Container, Graphics, Rectangle, Sprite, Texture } from 'pixi.js';
 import { createHdTexture } from './hdCards';
 
 export interface HdTextOptions {
@@ -675,8 +675,10 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
 
   const bodyImg = hdRivalArtMap.get(`${side}_body`) ?? hdRivalArtMap.get(side);
   const hatImg = hdRivalArtMap.get(`${side}_hat`);
+  const impatientSheetImg = hdRivalArtMap.get(`${side}_impatient_sheet`);
   const hasCustomBody = Boolean(bodyImg && bodyImg.complete && bodyImg.naturalWidth > 0);
   const hasCustomHat = Boolean(hatImg && hatImg.complete && hatImg.naturalWidth > 0);
+  const hasImpatientSheet = Boolean(impatientSheetImg && impatientSheetImg.complete && impatientSheetImg.naturalWidth > 0);
 
   const palette = isLeft
     ? {
@@ -1076,6 +1078,29 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   container.addChild(ledgeSpr);
   container.addChild(innerArmRig);
 
+  // Optional 16-frame AI sprite sheet for the signature impatient finger-drumming animation
+  const impatientFrames: Texture[] = [];
+  let impatientSpr: Sprite | null = null;
+  if (hasImpatientSheet && impatientSheetImg) {
+    const baseTex = Texture.from(impatientSheetImg);
+    baseTex.source.scaleMode = 'linear';
+    const cw = Math.floor(impatientSheetImg.naturalWidth / 4);
+    const ch = Math.floor(impatientSheetImg.naturalHeight / 4);
+    for (let idx = 0; idx < 16; idx++) {
+      const col = idx % 4;
+      const row = Math.floor(idx / 4);
+      impatientFrames.push(new Texture({ source: baseTex.source, frame: new Rectangle(col * cw, row * ch, cw, ch) }));
+    }
+    impatientSpr = new Sprite(impatientFrames[0]);
+    const scaleToIdle = isLeft ? 64 / 258 : 64 / 241;
+    impatientSpr.width = cw * scaleToIdle;
+    impatientSpr.height = ch * scaleToIdle;
+    impatientSpr.anchor.set(isLeft ? 0.5034 : 0.5375, isLeft ? 0.9824 : 0.996);
+    impatientSpr.position.set(38, 43.2);
+    impatientSpr.visible = false;
+    container.addChild(impatientSpr);
+  }
+
   // Smooth spring state for 60fps interpolation
   let curPupilX = dir * 0.8;
   let curPupilY = 0;
@@ -1087,10 +1112,32 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   let curHatRot = baseHatRot;
   let curPlayReach = 0;
   let curArmShow = hasCustomBody ? 0 : 1;
+  let impatientTimerMs = 0;
 
   return {
     container,
     setState(mode, elapsedMs, lookTarget, dtMs = 16.6) {
+      if (impatientSpr && impatientFrames.length === 16 && mode === 'impatient') {
+        impatientTimerMs += dtMs;
+        const introFrameMs = 130;
+        const loopFrameMs = 155;
+        const introTotalMs = 5 * introFrameMs;
+        const frameIdx =
+          impatientTimerMs < introTotalMs
+            ? Math.min(4, Math.floor(impatientTimerMs / introFrameMs))
+            : 5 + (Math.floor((impatientTimerMs - introTotalMs) / loopFrameMs) % 11);
+        impatientSpr.texture = impatientFrames[frameIdx];
+        impatientSpr.visible = true;
+        bodyPivot.visible = false;
+        innerArmRig.visible = false;
+        return;
+      }
+
+      impatientTimerMs = 0;
+      if (impatientSpr) {
+        impatientSpr.visible = false;
+      }
+      bodyPivot.visible = true;
       const lerpFactor = Math.min(1, dtMs / 75);
 
       // Compute pupil aim vector toward target on table

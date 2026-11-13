@@ -25,6 +25,8 @@ export const HD_RIVAL_ART_ENTRIES: readonly { key: string; file: string }[] = [
   { key: 'right_body', file: 'rival_right_body.png' },
   { key: 'left_hat', file: 'rival_left_hat.png' },
   { key: 'right_hat', file: 'rival_right_hat.png' },
+  { key: 'left_impatient_sheet', file: 'rival_left_impatient_sheet.png' },
+  { key: 'right_impatient_sheet', file: 'rival_right_impatient_sheet.png' },
 ];
 
 export interface AssetManifest {
