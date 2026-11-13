@@ -1,4 +1,4 @@
-import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
+import { Container, Graphics, Sprite, Texture } from 'pixi.js';
 import { createHdTexture } from './hdCards';
 
 export interface HdTextOptions {
@@ -659,10 +659,10 @@ export interface HdRivalController {
   ): void;
 }
 
-let hdRivalArtMap: Map<'left' | 'right', HTMLImageElement> = new Map();
+let hdRivalArtMap: Map<string, HTMLImageElement> = new Map();
 
-/** Registers optional custom illustrated HD rival torso artwork overlays. */
-export function setHdRivalArt(artMap: Map<'left' | 'right', HTMLImageElement>): void {
+/** Registers preloaded illustrated HD rival body/hat artwork overlays. */
+export function setHdRivalArt(artMap: Map<string, HTMLImageElement>): void {
   hdRivalArtMap = artMap;
 }
 
@@ -672,6 +672,11 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   const isLeft = side === 'left';
   const anchorScreenX = isLeft ? 57 : 569;
   const anchorScreenY = 122;
+
+  const bodyImg = hdRivalArtMap.get(`${side}_body`) ?? hdRivalArtMap.get(side);
+  const hatImg = hdRivalArtMap.get(`${side}_hat`);
+  const hasCustomBody = Boolean(bodyImg && bodyImg.complete && bodyImg.naturalWidth > 0);
+  const hasCustomHat = Boolean(hatImg && hatImg.complete && hatImg.naturalWidth > 0);
 
   const palette = isLeft
     ? {
@@ -720,143 +725,152 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   const bodyPivot = new Container();
   bodyPivot.position.set(38, 41);
 
-  const customImg = hdRivalArtMap.get(side);
-  const torsoTex = createHdTexture(80, 52, (ctx) => {
-    if (customImg && customImg.complete && customImg.naturalWidth > 0) {
-      ctx.imageSmoothingEnabled = true;
-      ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(customImg, 6, 2, 68, 48);
-      return;
-    }
+  const bodyW = hasCustomBody && bodyImg ? 64 : 80;
+  const bodyH = hasCustomBody && bodyImg ? bodyW * (bodyImg.naturalHeight / bodyImg.naturalWidth) : 52;
 
-    const cx = 40;
-    const cy = 32;
+  const torsoTex =
+    hasCustomBody && bodyImg
+      ? Texture.from(bodyImg)
+      : createHdTexture(80, 52, (ctx) => {
+          const cx = 40;
+          const cy = 32;
 
-    // Tailored kolobok velvet tuxedo silhouette (rich painterly shading + dark ink outline)
-    const suitG = ctx.createRadialGradient(cx - dir * 6, cy - 8, 4, cx, cy + 4, 32);
-    suitG.addColorStop(0, palette.light);
-    suitG.addColorStop(0.52, palette.main);
-    suitG.addColorStop(1, palette.dark);
-    ctx.fillStyle = suitG;
-    ctx.strokeStyle = '#140619';
-    ctx.lineWidth = 1.3;
-    ctx.beginPath();
-    ctx.moveTo(cx - 29, 49);
-    ctx.bezierCurveTo(cx - 29, 25, cx - 17, 13, cx, 13);
-    ctx.bezierCurveTo(cx + 17, 13, cx + 29, 25, cx + 29, 49);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
+          // Tailored kolobok velvet tuxedo silhouette (rich painterly shading + dark ink outline)
+          const suitG = ctx.createRadialGradient(cx - dir * 6, cy - 8, 4, cx, cy + 4, 32);
+          suitG.addColorStop(0, palette.light);
+          suitG.addColorStop(0.52, palette.main);
+          suitG.addColorStop(1, palette.dark);
+          ctx.fillStyle = suitG;
+          ctx.strokeStyle = '#140619';
+          ctx.lineWidth = 1.3;
+          ctx.beginPath();
+          ctx.moveTo(cx - 29, 49);
+          ctx.bezierCurveTo(cx - 29, 25, cx - 17, 13, cx, 13);
+          ctx.bezierCurveTo(cx + 17, 13, cx + 29, 25, cx + 29, 49);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
 
-    // Soft top rim highlight
-    ctx.strokeStyle = palette.rim;
-    ctx.lineWidth = 1.4;
-    ctx.beginPath();
-    ctx.arc(cx, 31, 18.5, -2.35, -0.78);
-    ctx.stroke();
+          // Soft top rim highlight
+          ctx.strokeStyle = palette.rim;
+          ctx.lineWidth = 1.4;
+          ctx.beginPath();
+          ctx.arc(cx, 31, 18.5, -2.35, -0.78);
+          ctx.stroke();
 
-    // Crisp pleated white tuxedo shirt V + waistcoat border
-    ctx.fillStyle = '#fcfaf2';
-    ctx.strokeStyle = '#1b1622';
-    ctx.lineWidth = 0.7;
-    ctx.beginPath();
-    ctx.moveTo(cx - 7.5, 31);
-    ctx.lineTo(cx, 48);
-    ctx.lineTo(cx + 7.5, 31);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
+          // Crisp pleated white tuxedo shirt V + waistcoat border
+          ctx.fillStyle = '#fcfaf2';
+          ctx.strokeStyle = '#1b1622';
+          ctx.lineWidth = 0.7;
+          ctx.beginPath();
+          ctx.moveTo(cx - 7.5, 31);
+          ctx.lineTo(cx, 48);
+          ctx.lineTo(cx + 7.5, 31);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
 
-    // Silk tuxedo lapels flanking the shirt V
-    ctx.fillStyle = palette.lapel;
-    ctx.strokeStyle = palette.lapelTrim;
-    ctx.lineWidth = 0.75;
-    for (const sx of [-1, 1]) {
-      ctx.beginPath();
-      ctx.moveTo(cx + sx * 12.5, 31.5);
-      ctx.lineTo(cx + sx * 7, 30.5);
-      ctx.lineTo(cx, 48);
-      ctx.lineTo(cx + sx * 10, 46);
-      ctx.closePath();
-      ctx.fill();
-      ctx.stroke();
-    }
+          // Silk tuxedo lapels flanking the shirt V
+          ctx.fillStyle = palette.lapel;
+          ctx.strokeStyle = palette.lapelTrim;
+          ctx.lineWidth = 0.75;
+          for (const sx of [-1, 1]) {
+            ctx.beginPath();
+            ctx.moveTo(cx + sx * 12.5, 31.5);
+            ctx.lineTo(cx + sx * 7, 30.5);
+            ctx.lineTo(cx, 48);
+            ctx.lineTo(cx + sx * 10, 46);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+          }
 
-    // Silk bow tie + pearl/ruby pin
-    ctx.fillStyle = palette.tie;
-    ctx.strokeStyle = '#0e0812';
-    ctx.lineWidth = 0.7;
-    ctx.beginPath();
-    ctx.moveTo(cx - 7.5, 30);
-    ctx.lineTo(cx, 33);
-    ctx.lineTo(cx - 7.5, 36.2);
-    ctx.closePath();
-    ctx.moveTo(cx + 7.5, 30);
-    ctx.lineTo(cx, 33);
-    ctx.lineTo(cx + 7.5, 36.2);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
+          // Silk bow tie + pearl/ruby pin
+          ctx.fillStyle = palette.tie;
+          ctx.strokeStyle = '#0e0812';
+          ctx.lineWidth = 0.7;
+          ctx.beginPath();
+          ctx.moveTo(cx - 7.5, 30);
+          ctx.lineTo(cx, 33);
+          ctx.lineTo(cx - 7.5, 36.2);
+          ctx.closePath();
+          ctx.moveTo(cx + 7.5, 30);
+          ctx.lineTo(cx, 33);
+          ctx.lineTo(cx + 7.5, 36.2);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
 
-    ctx.fillStyle = palette.tieAccent;
-    ctx.beginPath();
-    ctx.arc(cx, 33.1, 1.8, 0, Math.PI * 2);
-    ctx.fill();
+          ctx.fillStyle = palette.tieAccent;
+          ctx.beginPath();
+          ctx.arc(cx, 33.1, 1.8, 0, Math.PI * 2);
+          ctx.fill();
 
-    // Subtle mischievous smile & nose shadow
-    ctx.strokeStyle = '#2d0638';
-    ctx.lineWidth = 0.9;
-    ctx.beginPath();
-    ctx.arc(cx + dir * 0.6, 27.6, 5.2, 0.25, Math.PI - 0.25);
-    ctx.stroke();
+          // Subtle mischievous smile & nose shadow
+          ctx.strokeStyle = '#2d0638';
+          ctx.lineWidth = 0.9;
+          ctx.beginPath();
+          ctx.arc(cx + dir * 0.6, 27.6, 5.2, 0.25, Math.PI - 0.25);
+          ctx.stroke();
 
-    // Right rival's distinguished curled mustache
-    if (!isLeft) {
-      ctx.fillStyle = '#33083d';
-      ctx.strokeStyle = '#15041a';
-      ctx.lineWidth = 0.7;
-      for (const sx of [-1, 1]) {
-        ctx.beginPath();
-        ctx.moveTo(cx, 27);
-        ctx.quadraticCurveTo(cx + sx * 5.5, 25, cx + sx * 9.5, 28.2);
-        ctx.quadraticCurveTo(cx + sx * 11, 26.8, cx + sx * 10.2, 25.4);
-        ctx.quadraticCurveTo(cx + sx * 5.5, 29.2, cx, 28.5);
-        ctx.closePath();
-        ctx.fill();
-        ctx.stroke();
-      }
-    }
+          // Right rival's distinguished curled mustache
+          if (!isLeft) {
+            ctx.fillStyle = '#33083d';
+            ctx.strokeStyle = '#15041a';
+            ctx.lineWidth = 0.7;
+            for (const sx of [-1, 1]) {
+              ctx.beginPath();
+              ctx.moveTo(cx, 27);
+              ctx.quadraticCurveTo(cx + sx * 5.5, 25, cx + sx * 9.5, 28.2);
+              ctx.quadraticCurveTo(cx + sx * 11, 26.8, cx + sx * 10.2, 25.4);
+              ctx.quadraticCurveTo(cx + sx * 5.5, 29.2, cx, 28.5);
+              ctx.closePath();
+              ctx.fill();
+              ctx.stroke();
+            }
+          }
 
-    // Glossy kolobok button nose
-    const noseG = ctx.createRadialGradient(cx + dir * 0.2 - 1, 24.4, 0.6, cx + dir * 0.5, 25.3, 4.4);
-    noseG.addColorStop(0, '#ffb0ff');
-    noseG.addColorStop(0.55, palette.light);
-    noseG.addColorStop(1, palette.dark);
-    ctx.fillStyle = noseG;
-    ctx.strokeStyle = '#16061b';
-    ctx.lineWidth = 0.85;
-    ctx.beginPath();
-    ctx.ellipse(cx + dir * 0.5, 25.3, 3.8, 2.5, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = 'rgba(255,255,255,0.65)';
-    ctx.beginPath();
-    ctx.ellipse(cx + dir * 0.5 - 1.1, 24.5, 1.1, 0.55, -0.3, 0, Math.PI * 2);
-    ctx.fill();
-  });
+          // Glossy kolobok button nose
+          const noseG = ctx.createRadialGradient(cx + dir * 0.2 - 1, 24.4, 0.6, cx + dir * 0.5, 25.3, 4.4);
+          noseG.addColorStop(0, '#ffb0ff');
+          noseG.addColorStop(0.55, palette.light);
+          noseG.addColorStop(1, palette.dark);
+          ctx.fillStyle = noseG;
+          ctx.strokeStyle = '#16061b';
+          ctx.lineWidth = 0.85;
+          ctx.beginPath();
+          ctx.ellipse(cx + dir * 0.5, 25.3, 3.8, 2.5, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.fillStyle = 'rgba(255,255,255,0.65)';
+          ctx.beginPath();
+          ctx.ellipse(cx + dir * 0.5 - 1.1, 24.5, 1.1, 0.55, -0.3, 0, Math.PI * 2);
+          ctx.fill();
+        });
 
+  if (hasCustomBody) {
+    torsoTex.source.scaleMode = 'linear';
+  }
   const torsoSpr = new Sprite(torsoTex);
   torsoSpr.anchor.set(0.5, 1);
   torsoSpr.position.set(0, 2);
+  if (hasCustomBody) {
+    torsoSpr.width = bodyW;
+    torsoSpr.height = bodyH;
+  }
   bodyPivot.addChild(torsoSpr);
 
-  // Expressive Eye & Brow Rig (independent pupils track cards, eyelids blink/squint, brows convey emotion)
+  // Expressive Eye & Brow Rig (tracks flying cards/players, blinks & squints inside illustrated sclera)
   const faceRig = new Container();
-  faceRig.position.set(0, -24);
+  faceRig.position.set(0, hasCustomBody ? 0 : -24);
   bodyPivot.addChild(faceRig);
 
-  const eyeRadiusX = 3.2;
-  const eyeRadiusY = 3.5;
+  const eyeRadiusX = hasCustomBody ? 5.1 : 3.2;
+  const eyeRadiusY = hasCustomBody ? 5.0 : 3.5;
+  const customEyes = [
+    { x: -0.083 * bodyW, y: 2 - 0.7737 * bodyH, rx: 0.077 * bodyW, ry: 0.11 * bodyH },
+    { x: 0.0889 * bodyW, y: 2 - 0.7645 * bodyH, rx: 0.087 * bodyW, ry: 0.104 * bodyH },
+  ];
   const eyeOffsets = [-3.9, 3.9];
   const pupils: Sprite[] = [];
   const eyelidTops: Graphics[] = [];
@@ -867,30 +881,39 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
     ctx.strokeStyle = '#16061b';
     ctx.lineWidth = 0.9;
     ctx.beginPath();
-    ctx.ellipse(5, 5, eyeRadiusX, eyeRadiusY, 0, 0, Math.PI * 2);
+    ctx.ellipse(5, 5, 3.2, 3.5, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
   });
 
-  const pupilTex = createHdTexture(6, 6, (ctx) => {
-    ctx.fillStyle = '#111420';
+  const pupilTex = createHdTexture(8, 8, (ctx) => {
+    const r = hasCustomBody ? 2.1 : 1.55;
+    ctx.fillStyle = '#0c0c12';
     ctx.beginPath();
-    ctx.arc(3, 3, 1.55, 0, Math.PI * 2);
+    ctx.arc(4, 4, r, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = '#ffffff';
     ctx.beginPath();
-    ctx.arc(2.35, 2.25, 0.55, 0, Math.PI * 2);
+    ctx.arc(4 - r * 0.4, 4 - r * 0.42, r * 0.36, 0, Math.PI * 2);
     ctx.fill();
   });
 
   for (let i = 0; i < 2; i++) {
-    const ex = eyeOffsets[i] + dir * 0.5;
     const eyeC = new Container();
-    eyeC.position.set(ex, 0);
+    const rx = hasCustomBody ? customEyes[i].rx : eyeRadiusX;
+    const ry = hasCustomBody ? customEyes[i].ry : eyeRadiusY;
 
-    const scleraSpr = new Sprite(scleraTex);
-    scleraSpr.anchor.set(0.5);
-    eyeC.addChild(scleraSpr);
+    if (hasCustomBody) {
+      eyeC.position.set(customEyes[i].x, customEyes[i].y);
+      const maskGfx = new Graphics().ellipse(0, 0, rx * 0.96, ry * 0.92).fill(0xffffff);
+      eyeC.addChild(maskGfx);
+      eyeC.mask = maskGfx;
+    } else {
+      eyeC.position.set(eyeOffsets[i] + dir * 0.5, 0);
+      const scleraSpr = new Sprite(scleraTex);
+      scleraSpr.anchor.set(0.5);
+      eyeC.addChild(scleraSpr);
+    }
 
     const pupilSpr = new Sprite(pupilTex);
     pupilSpr.anchor.set(0.5);
@@ -901,16 +924,18 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
     eyeC.addChild(lid);
     eyelidTops.push(lid);
 
-    const brow = new Graphics();
-    brow.moveTo(-3.2, -4.6).quadraticCurveTo(0, -5.8, 3.2, -4.4).stroke({ color: '#1a0621', width: 1.1 });
-    eyeC.addChild(brow);
-    brows.push(brow);
+    if (!hasCustomBody) {
+      const brow = new Graphics();
+      brow.moveTo(-3.2, -4.6).quadraticCurveTo(0, -5.8, 3.2, -4.4).stroke({ color: '#1a0621', width: 1.1 });
+      eyeC.addChild(brow);
+      brows.push(brow);
+    }
 
     faceRig.addChild(eyeC);
   }
 
-  // Left rival's gleaming golden monocle + fine chain
-  if (isLeft) {
+  // Procedural monocle only when falling back to procedural torso
+  if (isLeft && !hasCustomBody) {
     const monocleTex = createHdTexture(16, 20, (ctx) => {
       ctx.strokeStyle = '#d4a33b';
       ctx.lineWidth = 1.05;
@@ -919,14 +944,12 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
       ctx.arc(6, 6, 4.3, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-      // Diagonal glass shine
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
       ctx.lineWidth = 0.7;
       ctx.beginPath();
       ctx.moveTo(3.6, 4.2);
       ctx.lineTo(5.6, 2.5);
       ctx.stroke();
-      // Fine gold chain hanging down to lapel
       ctx.strokeStyle = '#caa042';
       ctx.lineWidth = 0.7;
       ctx.setLineDash([1.1, 0.9]);
@@ -942,51 +965,87 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
 
   // Articulated Top Hat on top of kolobok head (lifts on celebration, tilts on think, dips on pass)
   const hatPivot = new Container();
-  const baseHatRot = dir * 0.045;
-  hatPivot.position.set(0, -29);
+  const baseHatRot = hasCustomHat ? 0 : dir * 0.045;
+  const hatBaseY = hasCustomHat ? -36.5 : -29;
+  hatPivot.position.set(0, hatBaseY);
   hatPivot.rotation = baseHatRot;
-  const hatTex = createHdTexture(56, 34, (ctx) => {
-    drawTopHat(ctx, 28, 30, 0.92);
-    // Custom hatband tint
-    ctx.fillStyle = isLeft ? '#d4a33b' : '#9c1c3e';
-    ctx.fillRect(15.2, 22, 25.6, 3.2);
-  });
+
+  const hatTex =
+    hasCustomHat && hatImg
+      ? Texture.from(hatImg)
+      : createHdTexture(56, 34, (ctx) => {
+          drawTopHat(ctx, 28, 30, 0.92);
+          ctx.fillStyle = isLeft ? '#d4a33b' : '#9c1c3e';
+          ctx.fillRect(15.2, 22, 25.6, 3.2);
+        });
+  if (hasCustomHat) {
+    hatTex.source.scaleMode = 'linear';
+  }
   const hatSpr = new Sprite(hatTex);
-  hatSpr.anchor.set(0.5, 0.88);
+  hatSpr.anchor.set(0.5, hasCustomHat ? 0.92 : 0.88);
+  if (hasCustomHat && hatImg) {
+    const hatW = 53;
+    hatSpr.width = hatW;
+    hatSpr.height = hatW * (hatImg.naturalHeight / hatImg.naturalWidth);
+  }
   hatPivot.addChild(hatSpr);
   bodyPivot.addChild(hatPivot);
 
-  // Outer / Bow-tie hand (frames 2-5 in original: rests by lapel/bowtie, fiddles on think)
+  // Skin-matched hand & 4 articulated drumming fingers (magenta kolobok skin + white shirt cuff when custom art is used)
   const outerHandTex = createHdTexture(16, 14, (ctx) => {
-    ctx.fillStyle = '#fcf8ef';
+    ctx.fillStyle = hasCustomBody ? '#e816bf' : '#fcf8ef';
     ctx.strokeStyle = '#18091e';
     ctx.lineWidth = 0.95;
     ctx.beginPath();
     ctx.ellipse(8, 7, 5.2, 3.6, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
-    // Subtle glove crease lines
-    ctx.strokeStyle = 'rgba(130, 115, 140, 0.55)';
-    ctx.lineWidth = 0.6;
-    ctx.beginPath();
-    ctx.moveTo(6.5, 5.2);
-    ctx.lineTo(9.5, 5.8);
-    ctx.moveTo(6.5, 7.8);
-    ctx.lineTo(9.5, 8);
-    ctx.stroke();
+    if (hasCustomBody) {
+      ctx.fillStyle = 'rgba(255, 220, 255, 0.45)';
+      ctx.beginPath();
+      ctx.ellipse(7.2, 5.7, 2.2, 1.0, -0.2, 0, Math.PI * 2);
+      ctx.fill();
+    } else {
+      ctx.strokeStyle = 'rgba(130, 115, 140, 0.55)';
+      ctx.lineWidth = 0.6;
+      ctx.beginPath();
+      ctx.moveTo(6.5, 5.2);
+      ctx.lineTo(9.5, 5.8);
+      ctx.moveTo(6.5, 7.8);
+      ctx.lineTo(9.5, 8);
+      ctx.stroke();
+    }
   });
   const outerArmRig = new Container();
   outerArmRig.position.set(-dir * 16, -6);
   const outerHandSpr = new Sprite(outerHandTex);
   outerHandSpr.anchor.set(0.5);
   outerArmRig.addChild(outerHandSpr);
+  outerArmRig.visible = !hasCustomBody;
   bodyPivot.addChild(outerArmRig);
 
-  // Inner Table Arm + 4 Individually Articulated Drumming Fingers on the green rail (frames 2..5 homage!)
+  // Inner Table Arm + 4 Individually Articulated Drumming Fingers on the green rail (homage to 1993 frames 2..5)
   const innerArmRig = new Container();
-  const restArmX = 38 + dir * 27;
-  const restArmY = 39.5;
+  const restArmX = 38 + dir * 26.5;
+  const restArmY = 39.2;
   innerArmRig.position.set(restArmX, restArmY);
+
+  if (hasCustomBody) {
+    // Crisp white shirt cuff peeking from sleeve behind palm
+    const cuffTex = createHdTexture(8, 10, (ctx) => {
+      ctx.fillStyle = '#fcfaf2';
+      ctx.strokeStyle = '#18091e';
+      ctx.lineWidth = 0.85;
+      ctx.beginPath();
+      ctx.roundRect(1, 1.5, 5.5, 6.8, 1.8);
+      ctx.fill();
+      ctx.stroke();
+    });
+    const cuffSpr = new Sprite(cuffTex);
+    cuffSpr.anchor.set(0.5);
+    cuffSpr.position.set(-dir * 6.8, -0.5);
+    innerArmRig.addChild(cuffSpr);
+  }
 
   const palmSpr = new Sprite(outerHandTex);
   palmSpr.anchor.set(0.5);
@@ -995,9 +1054,9 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   innerArmRig.addChild(palmSpr);
 
   const fingerTex = createHdTexture(6, 8, (ctx) => {
-    ctx.fillStyle = '#fcf8ef';
+    ctx.fillStyle = hasCustomBody ? '#ef26cb' : '#fcf8ef';
     ctx.strokeStyle = '#18091e';
-    ctx.lineWidth = 0.8;
+    ctx.lineWidth = 0.85;
     ctx.beginPath();
     ctx.roundRect(1, 0.8, 3.6, 6.2, 1.8);
     ctx.fill();
@@ -1027,6 +1086,7 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   let curHatLift = 0;
   let curHatRot = baseHatRot;
   let curPlayReach = 0;
+  let curArmShow = hasCustomBody ? 0 : 1;
 
   return {
     container,
@@ -1034,20 +1094,22 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
       const lerpFactor = Math.min(1, dtMs / 75);
 
       // Compute pupil aim vector toward target on table
-      let targetPX = dir * 0.85;
+      const maxPupilX = hasCustomBody ? 2.1 : 1.45;
+      const maxPupilY = hasCustomBody ? 1.55 : 1.25;
+      let targetPX = dir * (hasCustomBody ? 1.05 : 0.85);
       let targetPY = 0.15;
       if (lookTarget) {
         const dx = lookTarget.x - anchorScreenX;
         const dy = lookTarget.y - anchorScreenY;
         const len = Math.hypot(dx, dy) || 1;
-        targetPX = Math.max(-1.45, Math.min(1.45, (dx / len) * 1.45));
-        targetPY = Math.max(-1.0, Math.min(1.25, (dy / len) * 1.25));
+        targetPX = Math.max(-maxPupilX, Math.min(maxPupilX, (dx / len) * maxPupilX));
+        targetPY = Math.max(-maxPupilY * 0.8, Math.min(maxPupilY, (dy / len) * maxPupilY));
       } else if (mode === 'think') {
-        targetPX = Math.sin(elapsedMs * 0.008) * 1.2;
-        targetPY = -0.45;
+        targetPX = Math.sin(elapsedMs * 0.008) * (maxPupilX * 0.85);
+        targetPY = -0.5;
       } else if (mode === 'impatient') {
-        targetPX = dir * 0.9;
-        targetPY = 0.85;
+        targetPX = dir * (maxPupilX * 0.65);
+        targetPY = maxPupilY * 0.72;
       }
       curPupilX += (targetPX - curPupilX) * lerpFactor;
       curPupilY += (targetPY - curPupilY) * lerpFactor;
@@ -1066,13 +1128,13 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
       let browLift = 0;
 
       if (mode === 'think') {
-        targetSquint = 0.38;
+        targetSquint = 0.34;
         targetBodyRot = dir * 0.04;
         targetHatRot = baseHatRot - dir * 0.07 + Math.sin(elapsedMs * 0.012) * 0.04;
         browTilt = 0.16;
         browLift = -0.3;
       } else if (mode === 'impatient') {
-        targetSquint = 0.18;
+        targetSquint = 0.22;
         targetBodyY = Math.sin(elapsedMs * 0.005) * 0.5;
         targetBodyRot = dir * 0.03;
         browTilt = 0.22;
@@ -1098,7 +1160,7 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
         const bounce = Math.abs(Math.sin(elapsedMs * 0.012));
         targetBodyY = -bounce * 6;
         targetScaleY = 0.96 + bounce * 0.08;
-        targetHatLift = bounce * 11;
+        targetHatLift = bounce * 10;
         targetHatRot = -dir * 0.28 * bounce;
         browLift = -1.8;
       } else if (mode === 'loseRound') {
@@ -1113,6 +1175,9 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
         targetSquint = 1;
       }
 
+      const targetArmShow =
+        !hasCustomBody || mode === 'impatient' || mode === 'think' || mode === 'play' || mode === 'winRound' ? 1 : 0;
+
       curSquint += (targetSquint - curSquint) * Math.min(1, dtMs / 45);
       curBodyY += (targetBodyY - curBodyY) * lerpFactor;
       curBodyRot += (targetBodyRot - curBodyRot) * lerpFactor;
@@ -1120,54 +1185,63 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
       curHatLift += (targetHatLift - curHatLift) * lerpFactor;
       curHatRot += (targetHatRot - curHatRot) * lerpFactor;
       curPlayReach += (targetPlayReach - curPlayReach) * Math.min(1, dtMs / 55);
+      curArmShow += (targetArmShow - curArmShow) * Math.min(1, dtMs / 90);
 
       bodyPivot.position.set(38, 41 + curBodyY);
       bodyPivot.rotation = curBodyRot;
       bodyPivot.scale.set(2 - curScaleY, curScaleY);
 
-      hatPivot.position.set(0, -29 - curHatLift);
+      hatPivot.position.set(0, hatBaseY - curHatLift);
       hatPivot.rotation = curHatRot;
 
       for (let i = 0; i < 2; i++) {
         pupils[i].position.set(curPupilX, curPupilY);
-        const browSign = i === 0 ? 1 : -1;
-        brows[i].rotation = browSign * browTilt;
-        brows[i].position.y = browLift;
+        if (brows[i]) {
+          const browSign = i === 0 ? 1 : -1;
+          brows[i].rotation = browSign * browTilt;
+          brows[i].position.y = browLift;
+        }
 
+        const rx = hasCustomBody ? customEyes[i].rx : eyeRadiusX;
+        const ry = hasCustomBody ? customEyes[i].ry : eyeRadiusY;
         const lid = eyelidTops[i];
         lid.clear();
         if (curSquint > 0.04) {
-          const coverH = eyeRadiusY * 2 * Math.min(1, curSquint);
+          const coverH = ry * 2 * Math.min(1, curSquint);
           lid
-            .rect(-eyeRadiusX - 0.5, -eyeRadiusY - 0.3, eyeRadiusX * 2 + 1, coverH)
-            .fill(palette.main)
+            .rect(-rx - 0.6, -ry - 0.4, rx * 2 + 1.2, coverH)
+            .fill(hasCustomBody ? '#d404a0' : palette.main)
             .stroke({ color: '#16061b', width: 0.75 });
         }
       }
 
-      // Outer bow-tie/lapel hand pose
-      if (mode === 'think' || mode === 'impatient') {
-        outerArmRig.position.set(
-          -dir * 11 + Math.sin(elapsedMs * 0.015) * 1.4,
-          -9 + Math.cos(elapsedMs * 0.015) * 1.1,
-        );
-        outerArmRig.rotation = Math.sin(elapsedMs * 0.015) * 0.14;
-      } else if (mode === 'winRound') {
-        const wave = Math.sin(elapsedMs * 0.02);
-        outerArmRig.position.set(-dir * 20, -18 + wave * 4);
-        outerArmRig.rotation = -dir * 0.3 + wave * 0.25;
-      } else if (mode === 'pass') {
-        outerArmRig.position.set(-dir * 18, -3);
-        outerArmRig.rotation = dir * 0.1;
-      } else {
-        outerArmRig.position.set(-dir * 17, -6);
-        outerArmRig.rotation = 0;
+      // Outer bow-tie/lapel hand pose (procedural fallback only)
+      if (!hasCustomBody) {
+        if (mode === 'think' || mode === 'impatient') {
+          outerArmRig.position.set(
+            -dir * 11 + Math.sin(elapsedMs * 0.015) * 1.4,
+            -9 + Math.cos(elapsedMs * 0.015) * 1.1,
+          );
+          outerArmRig.rotation = Math.sin(elapsedMs * 0.015) * 0.14;
+        } else if (mode === 'winRound') {
+          const wave = Math.sin(elapsedMs * 0.02);
+          outerArmRig.position.set(-dir * 20, -18 + wave * 4);
+          outerArmRig.rotation = -dir * 0.3 + wave * 0.25;
+        } else if (mode === 'pass') {
+          outerArmRig.position.set(-dir * 18, -3);
+          outerArmRig.rotation = dir * 0.1;
+        } else {
+          outerArmRig.position.set(-dir * 17, -6);
+          outerArmRig.rotation = 0;
+        }
       }
 
       // Inner rail hand & 4 drumming fingers (homage to 1993 frames 2-5!)
+      innerArmRig.alpha = curArmShow;
+      innerArmRig.visible = curArmShow > 0.02;
       innerArmRig.position.set(
-        restArmX + dir * curPlayReach * 11 - (mode === 'pass' ? dir * 4 : 0),
-        restArmY - curPlayReach * 8 + (mode === 'winRound' ? -Math.abs(Math.sin(elapsedMs * 0.012)) * 4 : 0),
+        restArmX - dir * (1 - curArmShow) * 6 + dir * curPlayReach * 11 - (mode === 'pass' ? dir * 4 : 0),
+        restArmY + (1 - curArmShow) * 3 - curPlayReach * 8 + (mode === 'winRound' ? -Math.abs(Math.sin(elapsedMs * 0.012)) * 4 : 0),
       );
       innerArmRig.rotation = -dir * curPlayReach * 0.28;
 

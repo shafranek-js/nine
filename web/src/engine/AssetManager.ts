@@ -20,6 +20,13 @@ export const HD_COURT_ART_ENTRIES: readonly { suit: Suit; rank: Rank }[] = [
   { suit: 4, rank: 13 },
 ];
 
+export const HD_RIVAL_ART_ENTRIES: readonly { key: string; file: string }[] = [
+  { key: 'left_body', file: 'rival_left_body.png' },
+  { key: 'right_body', file: 'rival_right_body.png' },
+  { key: 'left_hat', file: 'rival_left_hat.png' },
+  { key: 'right_hat', file: 'rival_right_hat.png' },
+];
+
 export interface AssetManifest {
   screen: { width: number; height: number };
   backgrounds: Record<'ZF_NINE' | 'TF_NINE' | 'GF_NINE', string>;
@@ -34,6 +41,7 @@ export interface LoadedAssets {
   backgrounds: Record<'ZF_NINE' | 'TF_NINE' | 'GF_NINE', Texture>;
   hdBackgrounds: Record<'intro' | 'menu' | 'table', Texture>;
   hdCourtArt: Map<string, HTMLImageElement>;
+  hdRivalArt: Map<string, HTMLImageElement>;
   sheets: Record<'ZR_NINE' | 'TR_NINE' | 'GR_NINE' | 'VR_NINE', Texture>;
   cards: Map<string, Texture>;
   miniCards: Map<string, Texture>;
@@ -118,11 +126,19 @@ export async function loadGameAssets(basePath = `${import.meta.env.BASE_URL}asse
     }),
   );
 
+  const hdRivalEntries = await Promise.all(
+    HD_RIVAL_ART_ENTRIES.map(async ({ key, file }) => {
+      const img = await loadHtmlImage(`${normalizedBase}/hd/characters/${file}`);
+      return [key, img] as const;
+    }),
+  );
+
   return {
     manifest,
     backgrounds: { ZF_NINE: zf, TF_NINE: tf, GF_NINE: gf },
     hdBackgrounds: { intro: hdIntro, menu: hdMenu, table: hdTable },
     hdCourtArt: new Map(hdCourtEntries),
+    hdRivalArt: new Map(hdRivalEntries),
     sheets: { ZR_NINE: zr, TR_NINE: tr, GR_NINE: gr, VR_NINE: vr },
     cards: new Map(cardEntries),
     miniCards: new Map(miniEntries),
