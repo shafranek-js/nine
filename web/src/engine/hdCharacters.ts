@@ -676,9 +676,11 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   const bodyImg = hdRivalArtMap.get(`${side}_body`) ?? hdRivalArtMap.get(side);
   const hatImg = hdRivalArtMap.get(`${side}_hat`);
   const impatientSheetImg = hdRivalArtMap.get(`${side}_impatient_sheet`);
+  const playSheetImg = hdRivalArtMap.get(`${side}_play_sheet`);
   const hasCustomBody = Boolean(bodyImg && bodyImg.complete && bodyImg.naturalWidth > 0);
   const hasCustomHat = Boolean(hatImg && hatImg.complete && hatImg.naturalWidth > 0);
   const hasImpatientSheet = Boolean(impatientSheetImg && impatientSheetImg.complete && impatientSheetImg.naturalWidth > 0);
+  const hasPlaySheet = Boolean(playSheetImg && playSheetImg.complete && playSheetImg.naturalWidth > 0);
 
   const palette = isLeft
     ? {
@@ -1073,8 +1075,31 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
     fingers.push(fspr);
   }
 
-  // Layer order: body behind ledge rail, tapping inner hand & fingers resting right ON TOP of ledge rail
+  // Layer order: body & toss behind ledge rail, tapping inner hand/impatient sheet on top of ledge rail
   container.addChild(bodyPivot);
+
+  const playFrames: Texture[] = [];
+  let playSpr: Sprite | null = null;
+  if (hasPlaySheet && playSheetImg) {
+    const baseTex = Texture.from(playSheetImg);
+    baseTex.source.scaleMode = 'linear';
+    const cw = Math.floor(playSheetImg.naturalWidth / 4);
+    const ch = Math.floor(playSheetImg.naturalHeight / 4);
+    for (let idx = 0; idx < 16; idx++) {
+      const col = idx % 4;
+      const row = Math.floor(idx / 4);
+      playFrames.push(new Texture({ source: baseTex.source, frame: new Rectangle(col * cw, row * ch, cw, ch) }));
+    }
+    playSpr = new Sprite(playFrames[3]);
+    const scaleToIdle = isLeft ? 64 / 273 : 64 / 248;
+    playSpr.width = cw * scaleToIdle;
+    playSpr.height = ch * scaleToIdle;
+    playSpr.anchor.set(isLeft ? 0.4968 : 0.5582, isLeft ? 0.9866 : 0.9883);
+    playSpr.position.set(38, 41.8);
+    playSpr.visible = false;
+    container.addChild(playSpr);
+  }
+
   container.addChild(ledgeSpr);
   container.addChild(innerArmRig);
 
@@ -1113,10 +1138,30 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   let curPlayReach = 0;
   let curArmShow = hasCustomBody ? 0 : 1;
   let impatientTimerMs = 0;
+  let playTimerMs = 0;
 
   return {
     container,
     setState(mode, elapsedMs, lookTarget, dtMs = 16.6) {
+      if (playSpr && playFrames.length === 16 && mode === 'play') {
+        playTimerMs += dtMs;
+        // Play active card-toss frames #2..#14 cleanly over ~380ms
+        const stepMs = 29;
+        const idx = Math.min(14, 2 + Math.floor(playTimerMs / stepMs));
+        playSpr.texture = playFrames[idx];
+        playSpr.visible = true;
+        if (impatientSpr) impatientSpr.visible = false;
+        bodyPivot.visible = false;
+        innerArmRig.visible = false;
+        impatientTimerMs = 0;
+        return;
+      }
+
+      playTimerMs = 0;
+      if (playSpr) {
+        playSpr.visible = false;
+      }
+
       if (impatientSpr && impatientFrames.length === 16 && mode === 'impatient') {
         impatientTimerMs += dtMs;
         const introFrameMs = 130;

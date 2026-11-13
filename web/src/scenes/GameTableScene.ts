@@ -857,7 +857,7 @@ export class GameTableScene implements Scene {
       endX,
       endY,
       elapsed: 0,
-      durationMs: isHd ? 210 : 165,
+      durationMs: isHd ? (seat === 3 ? 210 : 380) : 165,
       onLand: () => this.finishCardFlight(),
     };
   }
