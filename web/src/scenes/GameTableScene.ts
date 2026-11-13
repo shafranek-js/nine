@@ -75,12 +75,14 @@ export class GameTableScene implements Scene {
   private dealerSpr!: Sprite;
   private leftBotSpr!: Sprite;
   private rightBotSpr!: Sprite;
+  private flameSprites: Sprite[] = [];
 
   private dealerIdleTex!: Texture;
   private dealerBlinkTex!: Texture;
   private dealerBellFrames: Texture[] = [];
   private dealerWagFrames: Texture[] = [];
   private botFrames: Texture[] = [];
+  private flameFrames: Texture[] = [];
   private thermoTextures: Texture[] = [];
   private coinFrames: Texture[] = [];
 
@@ -117,6 +119,28 @@ export class GameTableScene implements Scene {
     this.botFrames = [0, 1, 2, 3, 4, 5].map((i) => sliceTexture(gr, 118, 1 + i * 43, 73, 42));
 
     this.coinFrames = [204, 230, 256].map((y) => sliceMaskedTexture(gr, 84, y, 24, 23));
+    this.flameFrames = [0, 1, 2].map((i) => sliceTexture(gr, 39 + i * 8, 176, 7, 10));
+
+    // Six candelabra flames (exact matches verified against GF_NINE pixels)
+    const candlePositions: readonly { x: number; y: number }[] = [
+      { x: 150, y: 15 },
+      { x: 165, y: 9 },
+      { x: 180, y: 15 },
+      { x: 452, y: 15 },
+      { x: 467, y: 9 },
+      { x: 482, y: 15 },
+    ];
+    const flameErase = new Graphics();
+    for (const pos of candlePositions) {
+      flameErase.rect(pos.x - 1, pos.y - 4, 9, 14).fill(0x000000);
+    }
+    this.root.addChild(flameErase);
+    this.flameSprites = candlePositions.map((pos, idx) => {
+      const spr = new Sprite(this.flameFrames[idx % this.flameFrames.length]);
+      spr.position.set(pos.x, pos.y);
+      this.root.addChild(spr);
+      return spr;
+    });
 
     // Thermometer 33 segments (DrawScoreThermometer: y=332, 338, 344; x=119 + col*33)
     this.thermoTextures = [];
@@ -538,8 +562,13 @@ export class GameTableScene implements Scene {
       }
     }
 
-    // Idle blinking of red dealer
+    // Idle blinking of red dealer and candelabra candle flicker
     this.idleBlinkMs += dtMs;
+    const flameStep = Math.floor(this.idleBlinkMs / 130);
+    const flameSeq = [0, 1, 2, 1, 0, 2];
+    for (let i = 0; i < this.flameSprites.length; i++) {
+      this.flameSprites[i].texture = this.flameFrames[flameSeq[(flameStep + i * 2) % flameSeq.length]];
+    }
     if (this.phase === 'waitingTurn' || this.phase === 'anteIntro') {
       const cycle = this.idleBlinkMs % 3200;
       this.dealerSpr.texture = cycle > 2950 ? this.dealerBlinkTex : this.dealerIdleTex;
