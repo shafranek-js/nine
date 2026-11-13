@@ -1,6 +1,6 @@
 import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
 import { lookupPlayer } from '../core/persistence';
-import type { ClubTableId } from '../core/types';
+import { SCREEN_HEIGHT, SCREEN_WIDTH, type ClubTableId } from '../core/types';
 import { sliceTexture } from '../engine/BitmapFont';
 import type { GameContext, Scene } from './SceneManager';
 
@@ -34,6 +34,7 @@ export class ClubMenuScene implements Scene {
   private f3Spr!: Sprite;
   private f4Spr!: Sprite;
   private f5Spr!: Sprite;
+  private dealBackdropGfx!: Graphics;
   private f1HeadSpr!: Sprite;
   private f1FanSpr!: Sprite;
 
@@ -110,7 +111,7 @@ export class ClubMenuScene implements Scene {
     // Bottom icon sprites F2, F3, F4, F5
     this.f2Frames = [0, 1, 2].map((i) => sliceTexture(tr, 578, 209 + i * 47, 61, 46));
     this.f3Frames = [0, 1, 2].map((i) => sliceTexture(tr, 469, 230 + i * 40, 55, 39));
-    this.f4IdleTex = sliceTexture(tr, 333, 275, 64, 34);
+    this.f4IdleTex = sliceTexture(tr, 333, 280, 64, 34);
     this.f4ActiveTex = sliceTexture(tr, 333, 315, 64, 34);
     this.f5Frames = [0, 1, 2].map((i) => sliceTexture(tr, 525, 230 + i * 40, 55, 39));
 
@@ -130,7 +131,22 @@ export class ClubMenuScene implements Scene {
     this.f5Spr.position.set(547, 302);
     this.root.addChild(this.f5Spr);
 
-    // F1 start-game deal overlay sprites (hidden until F1 launches)
+    // F4 Login prompt banner & white text input box
+    this.bannerNewPlayerTex = sliceTexture(tr, 400, 199, 88, 9);
+    this.bannerPasswordTex = sliceTexture(tr, 400, 209, 88, 9);
+
+    this.bannerSpr = new Sprite(this.bannerNewPlayerTex);
+    this.bannerSpr.position.set(192, 228);
+    this.root.addChild(this.bannerSpr);
+
+    this.root.addChild(this.inputLayer);
+    this.root.addChild(this.cursorGfx);
+
+    // F1 start-game clean black screen + dealer card-shuffling sprites (CS:38fa..39df)
+    this.dealBackdropGfx = new Graphics().rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT).fill(0x000000);
+    this.dealBackdropGfx.visible = false;
+    this.root.addChild(this.dealBackdropGfx);
+
     this.f1HeadTex = sliceTexture(tr, 150, 290, 76, 41);
     this.f1Col1Frames = Array.from({ length: 11 }, (_, r) => sliceTexture(tr, 150, 1 + r * 26, 72, 25));
     this.f1Col2Frames = Array.from({ length: 11 }, (_, r) => sliceTexture(tr, 223, 1 + r * 26, 72, 25));
@@ -144,17 +160,6 @@ export class ClubMenuScene implements Scene {
     this.f1FanSpr.position.set(283, 171);
     this.f1FanSpr.visible = false;
     this.root.addChild(this.f1FanSpr);
-
-    // F4 Login prompt banner & white text input box
-    this.bannerNewPlayerTex = sliceTexture(tr, 400, 199, 88, 9);
-    this.bannerPasswordTex = sliceTexture(tr, 400, 209, 88, 9);
-
-    this.bannerSpr = new Sprite(this.bannerNewPlayerTex);
-    this.bannerSpr.position.set(192, 228);
-    this.root.addChild(this.bannerSpr);
-
-    this.root.addChild(this.inputLayer);
-    this.root.addChild(this.cursorGfx);
 
     this.renderLeaderboard();
     this.renderPromptInput();
@@ -303,6 +308,7 @@ export class ClubMenuScene implements Scene {
       return;
     }
     this.inputBlocked = true;
+    this.dealBackdropGfx.visible = true;
     this.f1HeadSpr.visible = true;
     this.f1FanSpr.visible = false;
     this.dealStage = { step: 'head', timer: 0, frameIdx: 0 };
