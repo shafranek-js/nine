@@ -579,3 +579,59 @@ export function getHdCardLibrary(): HdCardLibrary {
   };
   return cachedLibrary;
 }
+
+let cachedRivalCardBack: Texture | null = null;
+
+/** Crisp 14x16 Art-Deco miniature card back displayed in each rival's 2x6 table reserve. */
+export function getHdRivalCardBackTexture(): Texture {
+  if (cachedRivalCardBack) return cachedRivalCardBack;
+  cachedRivalCardBack = createHdTexture(14, 16, (ctx, w, h) => {
+    roundRectPath(ctx, 0.4, 0.4, w - 0.8, h - 0.8, 2.2);
+    ctx.fillStyle = '#faf2e1';
+    ctx.fill();
+    ctx.lineWidth = 0.7;
+    ctx.strokeStyle = '#33291b';
+    ctx.stroke();
+
+    roundRectPath(ctx, 1.6, 1.6, w - 3.2, h - 3.2, 1.3);
+    const g = ctx.createLinearGradient(0, 0, w, h);
+    g.addColorStop(0, '#851627');
+    g.addColorStop(0.55, '#590d19');
+    g.addColorStop(1, '#39070f');
+    ctx.fillStyle = g;
+    ctx.fill();
+    ctx.lineWidth = 0.75;
+    ctx.strokeStyle = '#dfb85c';
+    ctx.stroke();
+
+    // Fine diagonal sheen & center diamond emblem
+    ctx.save();
+    ctx.beginPath();
+    roundRectPath(ctx, 2.2, 2.2, w - 4.4, h - 4.4, 1);
+    ctx.clip();
+    ctx.strokeStyle = 'rgba(235, 198, 108, 0.28)';
+    ctx.lineWidth = 0.55;
+    for (let d = -h; d < w + h; d += 4) {
+      ctx.beginPath();
+      ctx.moveTo(d, 0);
+      ctx.lineTo(d + h, h);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(d, h);
+      ctx.lineTo(d + h, 0);
+      ctx.stroke();
+    }
+    const cx = w * 0.5;
+    const cy = h * 0.5;
+    ctx.fillStyle = '#e2be62';
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - 2.6);
+    ctx.lineTo(cx + 2.1, cy);
+    ctx.lineTo(cx, cy + 2.6);
+    ctx.lineTo(cx - 2.1, cy);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  });
+  return cachedRivalCardBack;
+}

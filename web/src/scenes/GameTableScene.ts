@@ -26,7 +26,7 @@ import {
   type SeatIndex,
 } from '../core/types';
 import { sliceMaskedTexture, sliceTexture } from '../engine/BitmapFont';
-import { drawSuitShape, getHdCardLibrary } from '../engine/hdCards';
+import { createHdTexture, drawSuitShape, getHdCardLibrary, getHdRivalCardBackTexture } from '../engine/hdCards';
 import {
   createHdDealer,
   createHdRival,
@@ -37,7 +37,6 @@ import {
   type HdDealerController,
   type HdRivalController,
 } from '../engine/hdCharacters';
-import { createHdTexture } from '../engine/hdCards';
 import type { GameContext, Scene } from './SceneManager';
 
 type TablePhase =
@@ -203,6 +202,8 @@ export class GameTableScene implements Scene {
   private leftCashLayer = new Container();
   private rightCashLayer = new Container();
   private humanCashLayer = new Container();
+  private rivalCardsLayer = new Container();
+  private egaMiniBackTex: Texture | null = null;
   private thermoSpr: Sprite | null = null;
   private dealerSpr: Sprite | null = null;
   private leftBotSpr: Sprite | null = null;
@@ -285,6 +286,7 @@ export class GameTableScene implements Scene {
   onGraphicsModeChanged(): void {
     this.buildVisuals();
     this.restoreBoardFromMatch();
+    this.renderRivalCardBacks();
     this.renderCashAndBankHud();
     this.renderHumanHand();
     this.renderStatusBanner();
@@ -303,6 +305,7 @@ export class GameTableScene implements Scene {
     this.leftCashLayer.removeChildren();
     this.rightCashLayer.removeChildren();
     this.humanCashLayer.removeChildren();
+    this.rivalCardsLayer.removeChildren();
     this.leftCashLayer.position.set(0, 0);
     this.rightCashLayer.position.set(0, 0);
     this.humanCashLayer.position.set(0, 0);
@@ -314,6 +317,7 @@ export class GameTableScene implements Scene {
     this.dealerSpr = null;
     this.leftBotSpr = null;
     this.rightBotSpr = null;
+    this.egaMiniBackTex = null;
     this.hdDealer = null;
     this.hdLeftRival = null;
     this.hdRightRival = null;
@@ -338,6 +342,7 @@ export class GameTableScene implements Scene {
     this.botFrames = [0, 1, 2, 3, 4, 5].map((i) => sliceTexture(gr, 118, 1 + i * 43, 73, 42));
     this.coinFrames = [204, 230, 256].map((y) => sliceMaskedTexture(gr, 84, y, 24, 23));
     this.flameFrames = [0, 1, 2].map((i) => sliceTexture(gr, 39 + i * 8, 176, 7, 10));
+    this.egaMiniBackTex = sliceTexture(gr, 478, 318, 14, 16);
 
     const flameErase = new Graphics();
     for (const pos of CANDLE_POSITIONS) {
@@ -393,6 +398,7 @@ export class GameTableScene implements Scene {
     this.hudLayer.addChild(this.leftCashLayer);
     this.hudLayer.addChild(this.rightCashLayer);
     this.hudLayer.addChild(this.humanCashLayer);
+    this.hudLayer.addChild(this.rivalCardsLayer);
   }
 
   private buildHdVisuals(ctx: GameContext): void {
@@ -514,6 +520,7 @@ export class GameTableScene implements Scene {
     this.hudLayer.addChild(this.leftCashLayer);
     this.hudLayer.addChild(this.rightCashLayer);
     this.hudLayer.addChild(this.humanCashLayer);
+    this.hudLayer.addChild(this.rivalCardsLayer);
     this.hudLayer.addChild(this.hdBannerLayer);
   }
 
@@ -534,6 +541,7 @@ export class GameTableScene implements Scene {
     this.tableCardsLayer.removeChildren();
     this.overlayLayer.removeChildren();
     this.statusBanner = '';
+    this.renderRivalCardBacks();
     this.renderCashAndBankHud();
     this.renderHumanHand();
     this.renderStatusBanner();
@@ -546,6 +554,41 @@ export class GameTableScene implements Scene {
 
     this.phase = 'anteIntro';
     this.phaseTimerMs = 0;
+  }
+
+  private getRivalCardSlotPos(seat: 1 | 2, index: number): { x: number; y: number } {
+    const col = index % 6;
+    const row = Math.floor(index / 6);
+    const baseX = seat === 1 ? 14 : 526;
+    const baseY = this.ctx?.getGraphicsMode() === 'hd' ? 144 : 145;
+    return { x: baseX + col * 17, y: baseY + row * 18 };
+  }
+
+  private renderRivalCardBacks(): void {
+    this.rivalCardsLayer.removeChildren();
+    if (!this.ctx || !this.match.round) return;
+
+    const isHd = this.ctx.getGraphicsMode() === 'hd';
+    const tex = isHd ? getHdRivalCardBackTexture() : this.egaMiniBackTex;
+    if (!tex) return;
+
+    const shadowGfx = isHd ? new Graphics() : null;
+    if (shadowGfx) {
+      this.rivalCardsLayer.addChild(shadowGfx);
+    }
+
+    for (const seat of [1, 2] as const) {
+      const count = Math.min(12, this.match.round.hands[seat].length);
+      for (let i = 0; i < count; i++) {
+        const { x, y } = this.getRivalCardSlotPos(seat, i);
+        if (shadowGfx) {
+          shadowGfx.roundRect(x + 1, y + 1.5, 14, 16, 2.2).fill({ color: 0x000000, alpha: 0.42 });
+        }
+        const spr = new Sprite(tex);
+        spr.position.set(x, y);
+        this.rivalCardsLayer.addChild(spr);
+      }
+    }
   }
 
   private renderCashAndBankHud(): void {
@@ -744,8 +787,12 @@ export class GameTableScene implements Scene {
     const miniTex = this.getActiveMiniTexture(card);
     const endX = 145 + (card.rank - 6) * 39;
     const endY = 71 + (card.suit - 1) * 38;
-    const startX = originX ?? (seat === 1 ? 65 : seat === 2 ? 545 : 300);
-    const startY = originY ?? (seat === 3 ? HAND_TOP_Y : 120);
+    const rivalSlot =
+      seat === 1 || seat === 2
+        ? this.getRivalCardSlotPos(seat, Math.max(0, Math.min(11, (this.match.round?.hands[seat].length ?? 1) - 1)))
+        : null;
+    const startX = originX ?? (rivalSlot ? rivalSlot.x : 300);
+    const startY = originY ?? (seat === 3 ? HAND_TOP_Y : rivalSlot ? rivalSlot.y : 120);
 
     this.ctx.audio.sfx.cardSlide();
     this.pendingMoveCard = card;
@@ -763,9 +810,12 @@ export class GameTableScene implements Scene {
 
     if (seat === 3) {
       this.renderHumanHand();
-    } else if (this.ctx.getGraphicsMode() === 'ega') {
-      if (seat === 1 && this.leftBotSpr) this.leftBotSpr.texture = this.botFrames[2];
-      else if (seat === 2 && this.rightBotSpr) this.rightBotSpr.texture = this.botFrames[2];
+    } else {
+      this.renderRivalCardBacks();
+      if (this.ctx.getGraphicsMode() === 'ega') {
+        if (seat === 1 && this.leftBotSpr) this.leftBotSpr.texture = this.botFrames[2];
+        else if (seat === 2 && this.rightBotSpr) this.rightBotSpr.texture = this.botFrames[2];
+      }
     }
 
     if (!miniTex) {
