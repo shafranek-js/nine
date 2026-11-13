@@ -9,7 +9,7 @@ import {
 } from './types.js';
 
 const STORAGE_RES_KEY = 'nine_club_res_b64_v1';
-const STORAGE_CFG_KEY = 'nine_club_cfg_v1';
+const STORAGE_CFG_KEY = 'nine_club_cfg_v2';
 
 export type HighScoreTables = Record<ClubTableId, HighScoreRow[]>;
 

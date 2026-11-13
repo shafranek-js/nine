@@ -18,6 +18,7 @@ export class InputController {
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
     window.addEventListener('keydown', this.handleKeyDown);
+    window.addEventListener('pointerdown', this.handleWindowPointerDown, true);
     canvas.addEventListener('pointerdown', this.handlePointerDown);
     canvas.addEventListener('pointermove', this.handlePointerMove);
   }
@@ -56,6 +57,10 @@ export class InputController {
     }
   };
 
+  private handleWindowPointerDown = (): void => {
+    this.unlockCallback?.();
+  };
+
   private handlePointerDown = (e: PointerEvent): void => {
     this.unlockCallback?.();
     this.canvas.focus();
@@ -74,6 +79,7 @@ export class InputController {
 
   destroy(): void {
     window.removeEventListener('keydown', this.handleKeyDown);
+    window.removeEventListener('pointerdown', this.handleWindowPointerDown, true);
     this.canvas.removeEventListener('pointerdown', this.handlePointerDown);
     this.canvas.removeEventListener('pointermove', this.handlePointerMove);
     this.keyHandlers.clear();

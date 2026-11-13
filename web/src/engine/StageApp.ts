@@ -7,7 +7,7 @@ export class StageApp {
   readonly app: Application;
   readonly root: Container;
   private host: HTMLElement | null = null;
-  private aspectMode: AspectMode = '1:1';
+  private aspectMode: AspectMode = '4:3';
   private scanlinesEnabled = false;
   private scanlineOverlay: HTMLDivElement | null = null;
 

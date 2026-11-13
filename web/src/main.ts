@@ -42,6 +42,9 @@ async function bootstrap(): Promise<void> {
   input.onFirstGesture(() => {
     void audio.unlock().then(() => shell.sync());
   });
+  if (scenes.ctx.config.soundMusicEnabled) {
+    void audio.unlock().then(() => shell.sync());
+  }
 
   scenes.ctx.goTo('intro', 0);
 }
