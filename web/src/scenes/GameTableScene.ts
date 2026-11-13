@@ -36,6 +36,7 @@ import {
   getWarmGlowTexture,
   type HdDealerController,
   type HdRivalController,
+  type RivalAnimMode,
 } from '../engine/hdCharacters';
 import type { GameContext, Scene } from './SceneManager';
 
@@ -231,6 +232,9 @@ export class GameTableScene implements Scene {
   private phase: TablePhase = 'anteIntro';
   private phaseTimerMs = 0;
   private idleBlinkMs = 0;
+  private activeFlightSeat: SeatIndex | null = null;
+  private passingSeat: SeatIndex | null = null;
+  private humanWaitMs = 0;
   private pendingMoveCard: Card | null = null;
   private flyingCard: FlyingCard | null = null;
   private flyingCoins: FlyingCoin[] = [];
@@ -249,6 +253,9 @@ export class GameTableScene implements Scene {
   mount(parent: Container, ctx: GameContext): void {
     this.ctx = ctx;
     this.rng = createDefaultRng();
+    this.activeFlightSeat = null;
+    this.passingSeat = null;
+    this.humanWaitMs = 0;
     this.flyingCard = null;
     this.flyingCoins = [];
     this.sparkParticles = [];
@@ -540,6 +547,9 @@ export class GameTableScene implements Scene {
   private beginRoundPresentation(): void {
     this.tableCardsLayer.removeChildren();
     this.overlayLayer.removeChildren();
+    this.activeFlightSeat = null;
+    this.passingSeat = null;
+    this.humanWaitMs = 0;
     this.statusBanner = '';
     this.renderRivalCardBacks();
     this.renderCashAndBankHud();
@@ -795,6 +805,7 @@ export class GameTableScene implements Scene {
     const startY = originY ?? (seat === 3 ? HAND_TOP_Y : rivalSlot ? rivalSlot.y : 120);
 
     this.ctx.audio.sfx.cardSlide();
+    this.activeFlightSeat = seat;
     this.pendingMoveCard = card;
     this.hoveredCardKey = null;
 
@@ -852,6 +863,7 @@ export class GameTableScene implements Scene {
   }
 
   private finishCardFlight(): void {
+    this.activeFlightSeat = null;
     if (this.flyingCard) {
       this.spawnSparkBurst(this.flyingCard.endX + 19, this.flyingCard.endY + 18, 6, 0xffe48a);
       this.fxLayer.removeChild(this.flyingCard.sprite);
@@ -887,6 +899,7 @@ export class GameTableScene implements Scene {
       this.spawnCoinFlight(316, 232, 170, 42, 380);
     }
 
+    this.passingSeat = seat;
     this.phase = 'passing';
     this.phaseTimerMs = 0;
   }
@@ -1213,16 +1226,43 @@ export class GameTableScene implements Scene {
       }
     }
 
+    if (this.phase === 'waitingTurn' && round && !round.roundOver && round.currentTurn === 3) {
+      this.humanWaitMs += dtMs;
+    } else {
+      this.humanWaitMs = 0;
+    }
+
     if (this.hdLeftRival && this.hdRightRival) {
-      const botTurn = this.phase === 'waitingTurn' && round ? round.currentTurn : null;
-      this.hdLeftRival.setState(
-        this.phase === 'movingCard' && botTurn === 1 ? 'play' : botTurn === 1 ? 'think' : 'idle',
-        this.idleBlinkMs,
-      );
-      this.hdRightRival.setState(
-        this.phase === 'movingCard' && botTurn === 2 ? 'play' : botTurn === 2 ? 'think' : 'idle',
-        this.idleBlinkMs,
-      );
+      const lookTarget =
+        this.phase === 'movingCard' && this.flyingCard
+          ? { x: this.flyingCard.sprite.x + 19, y: this.flyingCard.sprite.y + 18 }
+          : round && !round.roundOver
+            ? round.currentTurn === 1
+              ? { x: 75, y: 140 }
+              : round.currentTurn === 2
+                ? { x: 550, y: 140 }
+                : { x: 320, y: 245 }
+            : null;
+
+      const resolveRivalMode = (seat: 1 | 2): RivalAnimMode => {
+        if (this.phase === 'roundEnd') {
+          return this.roundWinner === seat ? 'winRound' : 'loseRound';
+        }
+        if (this.phase === 'movingCard' && this.activeFlightSeat === seat) {
+          return 'play';
+        }
+        if (this.phase === 'passing' && this.passingSeat === seat) {
+          return 'pass';
+        }
+        if (this.phase === 'waitingTurn' && round && !round.roundOver) {
+          if (round.currentTurn === seat) return 'think';
+          if (round.currentTurn === 3 && this.humanWaitMs >= 3500) return 'impatient';
+        }
+        return 'idle';
+      };
+
+      this.hdLeftRival.setState(resolveRivalMode(1), this.idleBlinkMs, lookTarget, dtMs);
+      this.hdRightRival.setState(resolveRivalMode(2), this.idleBlinkMs, lookTarget, dtMs);
     }
 
     this.phaseTimerMs += dtMs;
@@ -1280,6 +1320,7 @@ export class GameTableScene implements Scene {
         this.dealerSpr.texture = this.dealerBellFrames[bIdx];
       }
       if (this.phaseTimerMs >= 420) {
+        this.passingSeat = null;
         if (this.dealerSpr) this.dealerSpr.texture = this.dealerIdleTex;
         this.enterNextTurn();
       }

@@ -647,122 +647,547 @@ export function createHdDealer(scale = 1): HdDealerController {
   };
 }
 
+export type RivalAnimMode = 'idle' | 'impatient' | 'think' | 'play' | 'pass' | 'winRound' | 'loseRound';
+
 export interface HdRivalController {
   readonly container: Container;
-  setState(mode: 'idle' | 'think' | 'play', elapsedMs: number): void;
+  setState(
+    mode: RivalAnimMode,
+    elapsedMs: number,
+    lookTarget?: { x: number; y: number } | null,
+    dtMs?: number,
+  ): void;
+}
+
+let hdRivalArtMap: Map<'left' | 'right', HTMLImageElement> = new Map();
+
+/** Registers optional custom illustrated HD rival torso artwork overlays. */
+export function setHdRivalArt(artMap: Map<'left' | 'right', HTMLImageElement>): void {
+  hdRivalArtMap = artMap;
 }
 
 export function createHdRival(side: 'left' | 'right'): HdRivalController {
   const container = new Container();
   const dir = side === 'left' ? 1 : -1;
+  const isLeft = side === 'left';
+  const anchorScreenX = isLeft ? 57 : 569;
+  const anchorScreenY = 122;
 
-  const makeTex = (think: boolean, play: boolean) =>
-    createHdTexture(76, 46, (ctx) => {
-      const cx = 38;
-      const cy = 32;
+  const palette = isLeft
+    ? {
+        light: '#f37aff',
+        main: '#ab20c9',
+        dark: '#4e085c',
+        lapel: '#290736',
+        lapelTrim: '#e5ba56',
+        tie: '#151822',
+        tieAccent: '#ffe282',
+        rim: 'rgba(255, 220, 255, 0.34)',
+      }
+    : {
+        light: '#ea5cff',
+        main: '#8a14a3',
+        dark: '#3b0547',
+        lapel: '#21052b',
+        lapelTrim: '#d4425c',
+        tie: '#300b1e',
+        tieAccent: '#ff708c',
+        rim: 'rgba(255, 200, 248, 0.28)',
+      };
 
-      // Felt ledge
-      ctx.fillStyle = '#166e32';
-      ctx.fillRect(2, 40, 72, 4);
-      ctx.fillStyle = '#c9982e';
-      ctx.fillRect(2, 43.5, 72, 1.5);
+  // Fixed emerald felt & brass pedestal rail at bottom (y = 40..46)
+  const ledgeTex = createHdTexture(84, 9, (ctx) => {
+    const g = ctx.createLinearGradient(0, 1, 0, 6);
+    g.addColorStop(0, '#229648');
+    g.addColorStop(0.55, '#156830');
+    g.addColorStop(1, '#0c3f1d');
+    ctx.fillStyle = g;
+    ctx.strokeStyle = '#071f0e';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.roundRect(2, 1, 80, 5, 2);
+    ctx.fill();
+    ctx.stroke();
 
-      // Amethyst velvet tuxedo
-      const suitG = ctx.createRadialGradient(cx - 6, cy - 6, 4, cx, cy + 4, 28);
-      suitG.addColorStop(0, '#ea5cff');
-      suitG.addColorStop(0.55, '#9d1bb5');
-      suitG.addColorStop(1, '#4b0959');
-      ctx.fillStyle = suitG;
-      ctx.strokeStyle = '#150819';
-      ctx.lineWidth = 1.2;
+    ctx.fillStyle = '#d4a33b';
+    ctx.fillRect(3, 6.2, 78, 1.8);
+  });
+  const ledgeSpr = new Sprite(ledgeTex);
+  ledgeSpr.anchor.set(0.5, 0);
+  ledgeSpr.position.set(38, 39);
+
+  // Body pivot anchored cleanly on the rail center (38, 41) for natural tilt, lean & squash/stretch
+  const bodyPivot = new Container();
+  bodyPivot.position.set(38, 41);
+
+  const customImg = hdRivalArtMap.get(side);
+  const torsoTex = createHdTexture(80, 52, (ctx) => {
+    if (customImg && customImg.complete && customImg.naturalWidth > 0) {
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(customImg, 6, 2, 68, 48);
+      return;
+    }
+
+    const cx = 40;
+    const cy = 32;
+
+    // Tailored kolobok velvet tuxedo silhouette (rich painterly shading + dark ink outline)
+    const suitG = ctx.createRadialGradient(cx - dir * 6, cy - 8, 4, cx, cy + 4, 32);
+    suitG.addColorStop(0, palette.light);
+    suitG.addColorStop(0.52, palette.main);
+    suitG.addColorStop(1, palette.dark);
+    ctx.fillStyle = suitG;
+    ctx.strokeStyle = '#140619';
+    ctx.lineWidth = 1.3;
+    ctx.beginPath();
+    ctx.moveTo(cx - 29, 49);
+    ctx.bezierCurveTo(cx - 29, 25, cx - 17, 13, cx, 13);
+    ctx.bezierCurveTo(cx + 17, 13, cx + 29, 25, cx + 29, 49);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Soft top rim highlight
+    ctx.strokeStyle = palette.rim;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.arc(cx, 31, 18.5, -2.35, -0.78);
+    ctx.stroke();
+
+    // Crisp pleated white tuxedo shirt V + waistcoat border
+    ctx.fillStyle = '#fcfaf2';
+    ctx.strokeStyle = '#1b1622';
+    ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    ctx.moveTo(cx - 7.5, 31);
+    ctx.lineTo(cx, 48);
+    ctx.lineTo(cx + 7.5, 31);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Silk tuxedo lapels flanking the shirt V
+    ctx.fillStyle = palette.lapel;
+    ctx.strokeStyle = palette.lapelTrim;
+    ctx.lineWidth = 0.75;
+    for (const sx of [-1, 1]) {
       ctx.beginPath();
-      ctx.moveTo(cx - 28, 41);
-      ctx.quadraticCurveTo(cx - 21, 14, cx, 14);
-      ctx.quadraticCurveTo(cx + 21, 14, cx + 28, 41);
+      ctx.moveTo(cx + sx * 12.5, 31.5);
+      ctx.lineTo(cx + sx * 7, 30.5);
+      ctx.lineTo(cx, 48);
+      ctx.lineTo(cx + sx * 10, 46);
       ctx.closePath();
       ctx.fill();
       ctx.stroke();
+    }
 
-      // Shirt + Bow tie
-      ctx.fillStyle = '#ffffff';
-      ctx.beginPath();
-      ctx.moveTo(cx - 5.5, 29);
-      ctx.lineTo(cx, 39);
-      ctx.lineTo(cx + 5.5, 29);
-      ctx.closePath();
-      ctx.fill();
+    // Silk bow tie + pearl/ruby pin
+    ctx.fillStyle = palette.tie;
+    ctx.strokeStyle = '#0e0812';
+    ctx.lineWidth = 0.7;
+    ctx.beginPath();
+    ctx.moveTo(cx - 7.5, 30);
+    ctx.lineTo(cx, 33);
+    ctx.lineTo(cx - 7.5, 36.2);
+    ctx.closePath();
+    ctx.moveTo(cx + 7.5, 30);
+    ctx.lineTo(cx, 33);
+    ctx.lineTo(cx + 7.5, 36.2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
 
-      ctx.fillStyle = '#151720';
-      ctx.beginPath();
-      ctx.moveTo(cx - 6.5, 29);
-      ctx.lineTo(cx, 32);
-      ctx.lineTo(cx - 6.5, 35);
-      ctx.closePath();
-      ctx.moveTo(cx + 6.5, 29);
-      ctx.lineTo(cx, 32);
-      ctx.lineTo(cx + 6.5, 35);
-      ctx.closePath();
-      ctx.fill();
+    ctx.fillStyle = palette.tieAccent;
+    ctx.beginPath();
+    ctx.arc(cx, 33.1, 1.8, 0, Math.PI * 2);
+    ctx.fill();
 
-      // Eyes
-      const pupilShift = think ? dir * 1.1 : 0;
-      for (const ex of [cx - 3.6, cx + 3.6]) {
-        ctx.fillStyle = '#ffffff';
-        ctx.strokeStyle = '#150819';
-        ctx.lineWidth = 0.8;
+    // Subtle mischievous smile & nose shadow
+    ctx.strokeStyle = '#2d0638';
+    ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.arc(cx + dir * 0.6, 27.6, 5.2, 0.25, Math.PI - 0.25);
+    ctx.stroke();
+
+    // Right rival's distinguished curled mustache
+    if (!isLeft) {
+      ctx.fillStyle = '#33083d';
+      ctx.strokeStyle = '#15041a';
+      ctx.lineWidth = 0.7;
+      for (const sx of [-1, 1]) {
         ctx.beginPath();
-        ctx.ellipse(ex, 22, 3, 3.2, 0, 0, Math.PI * 2);
+        ctx.moveTo(cx, 27);
+        ctx.quadraticCurveTo(cx + sx * 5.5, 25, cx + sx * 9.5, 28.2);
+        ctx.quadraticCurveTo(cx + sx * 11, 26.8, cx + sx * 10.2, 25.4);
+        ctx.quadraticCurveTo(cx + sx * 5.5, 29.2, cx, 28.5);
+        ctx.closePath();
         ctx.fill();
         ctx.stroke();
-        ctx.fillStyle = '#111111';
-        ctx.beginPath();
-        ctx.arc(ex + pupilShift, 22, 1.35, 0, Math.PI * 2);
-        ctx.fill();
       }
+    }
 
-      // Nose
-      ctx.fillStyle = '#ff6ef7';
-      ctx.strokeStyle = '#150819';
+    // Glossy kolobok button nose
+    const noseG = ctx.createRadialGradient(cx + dir * 0.2 - 1, 24.4, 0.6, cx + dir * 0.5, 25.3, 4.4);
+    noseG.addColorStop(0, '#ffb0ff');
+    noseG.addColorStop(0.55, palette.light);
+    noseG.addColorStop(1, palette.dark);
+    ctx.fillStyle = noseG;
+    ctx.strokeStyle = '#16061b';
+    ctx.lineWidth = 0.85;
+    ctx.beginPath();
+    ctx.ellipse(cx + dir * 0.5, 25.3, 3.8, 2.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.65)';
+    ctx.beginPath();
+    ctx.ellipse(cx + dir * 0.5 - 1.1, 24.5, 1.1, 0.55, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  const torsoSpr = new Sprite(torsoTex);
+  torsoSpr.anchor.set(0.5, 1);
+  torsoSpr.position.set(0, 2);
+  bodyPivot.addChild(torsoSpr);
+
+  // Expressive Eye & Brow Rig (independent pupils track cards, eyelids blink/squint, brows convey emotion)
+  const faceRig = new Container();
+  faceRig.position.set(0, -24);
+  bodyPivot.addChild(faceRig);
+
+  const eyeRadiusX = 3.2;
+  const eyeRadiusY = 3.5;
+  const eyeOffsets = [-3.9, 3.9];
+  const pupils: Sprite[] = [];
+  const eyelidTops: Graphics[] = [];
+  const brows: Graphics[] = [];
+
+  const scleraTex = createHdTexture(10, 10, (ctx) => {
+    ctx.fillStyle = '#ffffff';
+    ctx.strokeStyle = '#16061b';
+    ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.ellipse(5, 5, eyeRadiusX, eyeRadiusY, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  });
+
+  const pupilTex = createHdTexture(6, 6, (ctx) => {
+    ctx.fillStyle = '#111420';
+    ctx.beginPath();
+    ctx.arc(3, 3, 1.55, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(2.35, 2.25, 0.55, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  for (let i = 0; i < 2; i++) {
+    const ex = eyeOffsets[i] + dir * 0.5;
+    const eyeC = new Container();
+    eyeC.position.set(ex, 0);
+
+    const scleraSpr = new Sprite(scleraTex);
+    scleraSpr.anchor.set(0.5);
+    eyeC.addChild(scleraSpr);
+
+    const pupilSpr = new Sprite(pupilTex);
+    pupilSpr.anchor.set(0.5);
+    eyeC.addChild(pupilSpr);
+    pupils.push(pupilSpr);
+
+    const lid = new Graphics();
+    eyeC.addChild(lid);
+    eyelidTops.push(lid);
+
+    const brow = new Graphics();
+    brow.moveTo(-3.2, -4.6).quadraticCurveTo(0, -5.8, 3.2, -4.4).stroke({ color: '#1a0621', width: 1.1 });
+    eyeC.addChild(brow);
+    brows.push(brow);
+
+    faceRig.addChild(eyeC);
+  }
+
+  // Left rival's gleaming golden monocle + fine chain
+  if (isLeft) {
+    const monocleTex = createHdTexture(16, 20, (ctx) => {
+      ctx.strokeStyle = '#d4a33b';
+      ctx.lineWidth = 1.05;
+      ctx.fillStyle = 'rgba(180, 235, 255, 0.2)';
+      ctx.beginPath();
+      ctx.arc(6, 6, 4.3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // Diagonal glass shine
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
       ctx.lineWidth = 0.7;
       ctx.beginPath();
-      ctx.ellipse(cx, 25.5, 3.2, 2.2, 0, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.moveTo(3.6, 4.2);
+      ctx.lineTo(5.6, 2.5);
       ctx.stroke();
-
-      drawTopHat(ctx, cx, 17, 0.88);
-
-      // Extended gloved hand when playing a card
-      if (play) {
-        ctx.fillStyle = '#f8f3e8';
-        ctx.strokeStyle = '#150819';
-        ctx.lineWidth = 0.9;
-        ctx.beginPath();
-        ctx.ellipse(cx + dir * 24, 34, 6, 3.8, 0, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.stroke();
-      }
+      // Fine gold chain hanging down to lapel
+      ctx.strokeStyle = '#caa042';
+      ctx.lineWidth = 0.7;
+      ctx.setLineDash([1.1, 0.9]);
+      ctx.beginPath();
+      ctx.moveTo(1.8, 7.2);
+      ctx.quadraticCurveTo(0.8, 13.5, 4.2, 18.5);
+      ctx.stroke();
     });
+    const monocleSpr = new Sprite(monocleTex);
+    monocleSpr.position.set(eyeOffsets[0] + dir * 0.5 - 6, -6);
+    faceRig.addChild(monocleSpr);
+  }
 
-  const idleTex = makeTex(false, false);
-  const thinkTex = makeTex(true, false);
-  const playTex = makeTex(false, true);
+  // Articulated Top Hat on top of kolobok head (lifts on celebration, tilts on think, dips on pass)
+  const hatPivot = new Container();
+  const baseHatRot = dir * 0.045;
+  hatPivot.position.set(0, -29);
+  hatPivot.rotation = baseHatRot;
+  const hatTex = createHdTexture(56, 34, (ctx) => {
+    drawTopHat(ctx, 28, 30, 0.92);
+    // Custom hatband tint
+    ctx.fillStyle = isLeft ? '#d4a33b' : '#9c1c3e';
+    ctx.fillRect(15.2, 22, 25.6, 3.2);
+  });
+  const hatSpr = new Sprite(hatTex);
+  hatSpr.anchor.set(0.5, 0.88);
+  hatPivot.addChild(hatSpr);
+  bodyPivot.addChild(hatPivot);
 
-  const spr = new Sprite(idleTex);
-  spr.position.set(0, 0);
-  container.addChild(spr);
+  // Outer / Bow-tie hand (frames 2-5 in original: rests by lapel/bowtie, fiddles on think)
+  const outerHandTex = createHdTexture(16, 14, (ctx) => {
+    ctx.fillStyle = '#fcf8ef';
+    ctx.strokeStyle = '#18091e';
+    ctx.lineWidth = 0.95;
+    ctx.beginPath();
+    ctx.ellipse(8, 7, 5.2, 3.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    // Subtle glove crease lines
+    ctx.strokeStyle = 'rgba(130, 115, 140, 0.55)';
+    ctx.lineWidth = 0.6;
+    ctx.beginPath();
+    ctx.moveTo(6.5, 5.2);
+    ctx.lineTo(9.5, 5.8);
+    ctx.moveTo(6.5, 7.8);
+    ctx.lineTo(9.5, 8);
+    ctx.stroke();
+  });
+  const outerArmRig = new Container();
+  outerArmRig.position.set(-dir * 16, -6);
+  const outerHandSpr = new Sprite(outerHandTex);
+  outerHandSpr.anchor.set(0.5);
+  outerArmRig.addChild(outerHandSpr);
+  bodyPivot.addChild(outerArmRig);
+
+  // Inner Table Arm + 4 Individually Articulated Drumming Fingers on the green rail (frames 2..5 homage!)
+  const innerArmRig = new Container();
+  const restArmX = 38 + dir * 27;
+  const restArmY = 39.5;
+  innerArmRig.position.set(restArmX, restArmY);
+
+  const palmSpr = new Sprite(outerHandTex);
+  palmSpr.anchor.set(0.5);
+  palmSpr.scale.set(0.88, 0.8);
+  palmSpr.position.set(-dir * 3, -1);
+  innerArmRig.addChild(palmSpr);
+
+  const fingerTex = createHdTexture(6, 8, (ctx) => {
+    ctx.fillStyle = '#fcf8ef';
+    ctx.strokeStyle = '#18091e';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.roundRect(1, 0.8, 3.6, 6.2, 1.8);
+    ctx.fill();
+    ctx.stroke();
+  });
+  const fingers: Sprite[] = [];
+  for (let f = 0; f < 4; f++) {
+    const fspr = new Sprite(fingerTex);
+    fspr.anchor.set(0.5, 0.15);
+    fspr.position.set(dir * (1.2 + f * 2.5), -1.8);
+    innerArmRig.addChild(fspr);
+    fingers.push(fspr);
+  }
+
+  // Layer order: body behind ledge rail, tapping inner hand & fingers resting right ON TOP of ledge rail
+  container.addChild(bodyPivot);
+  container.addChild(ledgeSpr);
+  container.addChild(innerArmRig);
+
+  // Smooth spring state for 60fps interpolation
+  let curPupilX = dir * 0.8;
+  let curPupilY = 0;
+  let curSquint = 0;
+  let curBodyY = 0;
+  let curBodyRot = 0;
+  let curScaleY = 1;
+  let curHatLift = 0;
+  let curHatRot = baseHatRot;
+  let curPlayReach = 0;
 
   return {
     container,
-    setState(mode, elapsedMs) {
-      if (mode === 'play') {
-        spr.texture = playTex;
-        spr.position.y = -1;
+    setState(mode, elapsedMs, lookTarget, dtMs = 16.6) {
+      const lerpFactor = Math.min(1, dtMs / 75);
+
+      // Compute pupil aim vector toward target on table
+      let targetPX = dir * 0.85;
+      let targetPY = 0.15;
+      if (lookTarget) {
+        const dx = lookTarget.x - anchorScreenX;
+        const dy = lookTarget.y - anchorScreenY;
+        const len = Math.hypot(dx, dy) || 1;
+        targetPX = Math.max(-1.45, Math.min(1.45, (dx / len) * 1.45));
+        targetPY = Math.max(-1.0, Math.min(1.25, (dy / len) * 1.25));
       } else if (mode === 'think') {
-        spr.texture = thinkTex;
-        spr.position.y = Math.sin(elapsedMs * 0.008) * 0.9;
+        targetPX = Math.sin(elapsedMs * 0.008) * 1.2;
+        targetPY = -0.45;
+      } else if (mode === 'impatient') {
+        targetPX = dir * 0.9;
+        targetPY = 0.85;
+      }
+      curPupilX += (targetPX - curPupilX) * lerpFactor;
+      curPupilY += (targetPY - curPupilY) * lerpFactor;
+
+      // Natural blinking (~every 3.4s) + emotion eye squint
+      const blinkPhase = (elapsedMs + (isLeft ? 0 : 1450)) % 3400;
+      const isBlinking = blinkPhase > 3230;
+      let targetSquint = 0;
+      let targetBodyY = Math.sin(elapsedMs * 0.0028 + (isLeft ? 0 : 1.9)) * 0.6;
+      let targetBodyRot = 0;
+      let targetScaleY = 1 + Math.sin(elapsedMs * 0.0028 + (isLeft ? 0 : 1.9)) * 0.015;
+      let targetHatLift = 0;
+      let targetHatRot = baseHatRot;
+      let targetPlayReach = 0;
+      let browTilt = 0;
+      let browLift = 0;
+
+      if (mode === 'think') {
+        targetSquint = 0.38;
+        targetBodyRot = dir * 0.04;
+        targetHatRot = baseHatRot - dir * 0.07 + Math.sin(elapsedMs * 0.012) * 0.04;
+        browTilt = 0.16;
+        browLift = -0.3;
+      } else if (mode === 'impatient') {
+        targetSquint = 0.18;
+        targetBodyY = Math.sin(elapsedMs * 0.005) * 0.5;
+        targetBodyRot = dir * 0.03;
+        browTilt = 0.22;
+        browLift = -0.5;
+      } else if (mode === 'play') {
+        targetBodyY = -2;
+        targetBodyRot = dir * 0.09;
+        targetScaleY = 1.04;
+        targetHatLift = 3.5;
+        targetHatRot = baseHatRot - dir * 0.1;
+        targetPlayReach = 1;
+        browLift = -1.2;
+      } else if (mode === 'pass') {
+        targetSquint = 0.62;
+        targetBodyY = 2.5;
+        targetBodyRot = Math.sin(elapsedMs * 0.018) * 0.09;
+        targetScaleY = 0.94;
+        targetHatLift = -2.2;
+        targetHatRot = baseHatRot + dir * 0.08;
+        browTilt = -0.25;
+        browLift = 0.4;
+      } else if (mode === 'winRound') {
+        const bounce = Math.abs(Math.sin(elapsedMs * 0.012));
+        targetBodyY = -bounce * 6;
+        targetScaleY = 0.96 + bounce * 0.08;
+        targetHatLift = bounce * 11;
+        targetHatRot = -dir * 0.28 * bounce;
+        browLift = -1.8;
+      } else if (mode === 'loseRound') {
+        targetSquint = 0.45;
+        targetBodyY = 1.8;
+        targetBodyRot = Math.sin(elapsedMs * 0.014) * 0.07;
+        targetScaleY = 0.96;
+        browTilt = -0.22;
+      }
+
+      if (isBlinking && mode !== 'winRound') {
+        targetSquint = 1;
+      }
+
+      curSquint += (targetSquint - curSquint) * Math.min(1, dtMs / 45);
+      curBodyY += (targetBodyY - curBodyY) * lerpFactor;
+      curBodyRot += (targetBodyRot - curBodyRot) * lerpFactor;
+      curScaleY += (targetScaleY - curScaleY) * lerpFactor;
+      curHatLift += (targetHatLift - curHatLift) * lerpFactor;
+      curHatRot += (targetHatRot - curHatRot) * lerpFactor;
+      curPlayReach += (targetPlayReach - curPlayReach) * Math.min(1, dtMs / 55);
+
+      bodyPivot.position.set(38, 41 + curBodyY);
+      bodyPivot.rotation = curBodyRot;
+      bodyPivot.scale.set(2 - curScaleY, curScaleY);
+
+      hatPivot.position.set(0, -29 - curHatLift);
+      hatPivot.rotation = curHatRot;
+
+      for (let i = 0; i < 2; i++) {
+        pupils[i].position.set(curPupilX, curPupilY);
+        const browSign = i === 0 ? 1 : -1;
+        brows[i].rotation = browSign * browTilt;
+        brows[i].position.y = browLift;
+
+        const lid = eyelidTops[i];
+        lid.clear();
+        if (curSquint > 0.04) {
+          const coverH = eyeRadiusY * 2 * Math.min(1, curSquint);
+          lid
+            .rect(-eyeRadiusX - 0.5, -eyeRadiusY - 0.3, eyeRadiusX * 2 + 1, coverH)
+            .fill(palette.main)
+            .stroke({ color: '#16061b', width: 0.75 });
+        }
+      }
+
+      // Outer bow-tie/lapel hand pose
+      if (mode === 'think' || mode === 'impatient') {
+        outerArmRig.position.set(
+          -dir * 11 + Math.sin(elapsedMs * 0.015) * 1.4,
+          -9 + Math.cos(elapsedMs * 0.015) * 1.1,
+        );
+        outerArmRig.rotation = Math.sin(elapsedMs * 0.015) * 0.14;
+      } else if (mode === 'winRound') {
+        const wave = Math.sin(elapsedMs * 0.02);
+        outerArmRig.position.set(-dir * 20, -18 + wave * 4);
+        outerArmRig.rotation = -dir * 0.3 + wave * 0.25;
+      } else if (mode === 'pass') {
+        outerArmRig.position.set(-dir * 18, -3);
+        outerArmRig.rotation = dir * 0.1;
       } else {
-        spr.texture = idleTex;
-        spr.position.y = Math.sin(elapsedMs * 0.0025 + (side === 'left' ? 0 : 2)) * 0.6;
+        outerArmRig.position.set(-dir * 17, -6);
+        outerArmRig.rotation = 0;
+      }
+
+      // Inner rail hand & 4 drumming fingers (homage to 1993 frames 2-5!)
+      innerArmRig.position.set(
+        restArmX + dir * curPlayReach * 11 - (mode === 'pass' ? dir * 4 : 0),
+        restArmY - curPlayReach * 8 + (mode === 'winRound' ? -Math.abs(Math.sin(elapsedMs * 0.012)) * 4 : 0),
+      );
+      innerArmRig.rotation = -dir * curPlayReach * 0.28;
+
+      for (let f = 0; f < fingers.length; f++) {
+        if (mode === 'impatient') {
+          // Rolling 4-finger wave drum on the emerald rail
+          const wave = Math.max(0, Math.sin(elapsedMs * 0.015 - f * 0.95));
+          fingers[f].position.y = -1.8 - wave * 3.1;
+          fingers[f].rotation = -dir * wave * 0.32;
+        } else if (mode === 'think') {
+          const fidget = Math.max(0, Math.sin(elapsedMs * 0.01 - f * 1.1));
+          fingers[f].position.y = -1.8 - fidget * 1.4;
+          fingers[f].rotation = -dir * fidget * 0.12;
+        } else if (mode === 'play') {
+          fingers[f].position.y = -2.2;
+          fingers[f].rotation = dir * 0.22;
+        } else {
+          fingers[f].position.y = -1.8;
+          fingers[f].rotation = 0;
+        }
       }
     },
   };
