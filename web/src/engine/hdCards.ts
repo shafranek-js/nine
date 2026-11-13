@@ -241,23 +241,22 @@ function drawRoyalCharacter(ctx: CanvasRenderingContext2D, suit: Suit, rank: Ran
   const bodyDark = red ? '#870d19' : '#132258';
   const bodyHighlight = red ? '#ff707c' : '#5e83e6';
 
-  // Royal Art-Deco arched vignette frame centered cleanly away from corner indices
+  // Subtle soft radial halo behind the character on open card stock (no inner box border)
   ctx.save();
-  roundRectPath(ctx, 16.5, 11, w - 33, h - 22, 6);
-  const frameBg = ctx.createRadialGradient(cx, cy - 4, 4, cx, cy, 32);
-  frameBg.addColorStop(0, red ? 'rgba(220, 40, 60, 0.14)' : 'rgba(38, 68, 158, 0.14)');
-  frameBg.addColorStop(1, 'rgba(184, 146, 62, 0.06)');
-  ctx.fillStyle = frameBg;
+  const halo = ctx.createRadialGradient(cx, cy, 4, cx, cy, 34);
+  halo.addColorStop(0, red ? 'rgba(220, 40, 60, 0.12)' : 'rgba(38, 68, 158, 0.12)');
+  halo.addColorStop(0.65, 'rgba(184, 146, 62, 0.05)');
+  halo.addColorStop(1, 'rgba(184, 146, 62, 0)');
+  ctx.fillStyle = halo;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 34, 0, Math.PI * 2);
   ctx.fill();
-  ctx.lineWidth = 0.85;
-  ctx.strokeStyle = 'rgba(184, 146, 62, 0.72)';
-  ctx.stroke();
 
   const illustrated = hdCourtArtMap.get(cardKey({ suit, rank }));
   if (illustrated && illustrated.complete && illustrated.naturalWidth > 0) {
-    const artSize = 55;
+    const artSize = 66;
     const dx = (w - artSize) * 0.5;
-    const dy = (h - artSize) * 0.5;
+    const dy = (h - artSize) * 0.5 + 0.5;
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(illustrated, dx, dy, artSize, artSize);

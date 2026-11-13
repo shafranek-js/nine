@@ -4,15 +4,20 @@ import type { Rank, Suit } from '../core/types';
 
 export type GraphicsMode = 'hd' | 'ega';
 
-/** Court cards for which HD kolobok PNGs exist under public/assets/hd/cards/. */
+/** All 12 court cards (J, Q, K across all 4 suits) loaded from public/assets/hd/cards/. */
 export const HD_COURT_ART_ENTRIES: readonly { suit: Suit; rank: Rank }[] = [
   { suit: 1, rank: 11 },
   { suit: 1, rank: 12 },
   { suit: 1, rank: 13 },
   { suit: 2, rank: 11 },
+  { suit: 2, rank: 12 },
   { suit: 2, rank: 13 },
   { suit: 3, rank: 11 },
+  { suit: 3, rank: 12 },
+  { suit: 3, rank: 13 },
+  { suit: 4, rank: 11 },
   { suit: 4, rank: 12 },
+  { suit: 4, rank: 13 },
 ];
 
 export interface AssetManifest {
