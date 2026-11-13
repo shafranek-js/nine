@@ -11,6 +11,13 @@ export interface HdCardLibrary {
 }
 
 let cachedLibrary: HdCardLibrary | null = null;
+let hdCourtArtMap: Map<string, HTMLImageElement> = new Map();
+
+/** Registers preloaded illustrated HD court portraits and invalidates cached card textures. */
+export function setHdCourtArt(artMap: Map<string, HTMLImageElement>): void {
+  hdCourtArtMap = artMap;
+  cachedLibrary = null;
+}
 
 export function createHdTexture(
   logicalW: number,
@@ -236,8 +243,8 @@ function drawRoyalCharacter(ctx: CanvasRenderingContext2D, suit: Suit, rank: Ran
 
   // Royal Art-Deco arched vignette frame centered cleanly away from corner indices
   ctx.save();
-  roundRectPath(ctx, 19, 13, w - 38, h - 26, 6);
-  const frameBg = ctx.createRadialGradient(cx, cy - 4, 4, cx, cy, 30);
+  roundRectPath(ctx, 16.5, 11, w - 33, h - 22, 6);
+  const frameBg = ctx.createRadialGradient(cx, cy - 4, 4, cx, cy, 32);
   frameBg.addColorStop(0, red ? 'rgba(220, 40, 60, 0.14)' : 'rgba(38, 68, 158, 0.14)');
   frameBg.addColorStop(1, 'rgba(184, 146, 62, 0.06)');
   ctx.fillStyle = frameBg;
@@ -245,6 +252,18 @@ function drawRoyalCharacter(ctx: CanvasRenderingContext2D, suit: Suit, rank: Ran
   ctx.lineWidth = 0.85;
   ctx.strokeStyle = 'rgba(184, 146, 62, 0.72)';
   ctx.stroke();
+
+  const illustrated = hdCourtArtMap.get(cardKey({ suit, rank }));
+  if (illustrated && illustrated.complete && illustrated.naturalWidth > 0) {
+    const artSize = 55;
+    const dx = (w - artSize) * 0.5;
+    const dy = (h - artSize) * 0.5;
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(illustrated, dx, dy, artSize, artSize);
+    ctx.restore();
+    return;
+  }
 
   // Scale character cleanly to 0.86x inside the royal frame so arms/spear never touch card indices
   ctx.translate(cx, cy);
@@ -421,27 +440,6 @@ function drawFullHdCard(suit: Suit, rank: Rank): Texture {
   return createHdTexture(88, 89, (ctx, w, h) => {
     drawCardStockBase(ctx, w, h, 6);
 
-    const red = isRedSuit(suit);
-    const inkColor = red ? '#bd1829' : '#181e2b';
-    const label = rankLabel(rank);
-
-    // Top-left corner index
-    ctx.save();
-    ctx.fillStyle = inkColor;
-    ctx.font = `bold ${label.length > 1 ? 10.5 : 12}px Georgia, "Times New Roman", serif`;
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    ctx.fillText(label, 11.5, 6);
-    drawSuitShape(ctx, suit, 11.5, 22, 9);
-
-    // Bottom-right rotated corner index
-    ctx.translate(w, h);
-    ctx.rotate(Math.PI);
-    ctx.fillStyle = inkColor;
-    ctx.fillText(label, 11.5, 6);
-    drawSuitShape(ctx, suit, 11.5, 22, 9);
-    ctx.restore();
-
     if (rank === 14) {
       // Ace Art-Deco sunburst medallion
       const cx = w * 0.5;
@@ -463,6 +461,27 @@ function drawFullHdCard(suit: Suit, rank: Rank): Texture {
     } else {
       drawPipLayout(ctx, suit, rank, w, h);
     }
+
+    const red = isRedSuit(suit);
+    const inkColor = red ? '#bd1829' : '#181e2b';
+    const label = rankLabel(rank);
+
+    // Top-left corner index
+    ctx.save();
+    ctx.fillStyle = inkColor;
+    ctx.font = `bold ${label.length > 1 ? 10.5 : 12}px Georgia, "Times New Roman", serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillText(label, 11.5, 6);
+    drawSuitShape(ctx, suit, 11.5, 22, 9);
+
+    // Bottom-right rotated corner index
+    ctx.translate(w, h);
+    ctx.rotate(Math.PI);
+    ctx.fillStyle = inkColor;
+    ctx.fillText(label, 11.5, 6);
+    drawSuitShape(ctx, suit, 11.5, 22, 9);
+    ctx.restore();
   });
 }
 
@@ -485,6 +504,17 @@ function drawMiniHdCard(suit: Suit, rank: Rank): Texture {
       ctx.fillStyle = red ? 'rgba(200, 30, 50, 0.08)' : 'rgba(20, 40, 110, 0.08)';
       roundRectPath(ctx, 5, 5, w - 10, h - 10, 2);
       ctx.fill();
+    }
+
+    const illustrated = rank >= 11 ? hdCourtArtMap.get(cardKey({ suit, rank })) : undefined;
+    if (illustrated && illustrated.complete && illustrated.naturalWidth > 0) {
+      drawSuitShape(ctx, suit, 7.6, 16.5, 6.2);
+      ctx.save();
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(illustrated, 10.5, 6.5, 25, 25);
+      ctx.restore();
+      return;
     }
 
     drawSuitShape(ctx, suit, w * 0.56, h * 0.56, rank >= 11 ? 15 : 16.5);

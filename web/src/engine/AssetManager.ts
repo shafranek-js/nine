@@ -4,6 +4,17 @@ import type { Rank, Suit } from '../core/types';
 
 export type GraphicsMode = 'hd' | 'ega';
 
+/** Court cards for which HD kolobok PNGs exist under public/assets/hd/cards/. */
+export const HD_COURT_ART_ENTRIES: readonly { suit: Suit; rank: Rank }[] = [
+  { suit: 1, rank: 11 },
+  { suit: 1, rank: 12 },
+  { suit: 1, rank: 13 },
+  { suit: 2, rank: 11 },
+  { suit: 2, rank: 13 },
+  { suit: 3, rank: 11 },
+  { suit: 4, rank: 12 },
+];
+
 export interface AssetManifest {
   screen: { width: number; height: number };
   backgrounds: Record<'ZF_NINE' | 'TF_NINE' | 'GF_NINE', string>;
@@ -17,6 +28,7 @@ export interface LoadedAssets {
   manifest: AssetManifest;
   backgrounds: Record<'ZF_NINE' | 'TF_NINE' | 'GF_NINE', Texture>;
   hdBackgrounds: Record<'intro' | 'menu' | 'table', Texture>;
+  hdCourtArt: Map<string, HTMLImageElement>;
   sheets: Record<'ZR_NINE' | 'TR_NINE' | 'GR_NINE' | 'VR_NINE', Texture>;
   cards: Map<string, Texture>;
   miniCards: Map<string, Texture>;
@@ -43,6 +55,16 @@ async function loadLinearTexture(url: string): Promise<Texture> {
   const tex = await Assets.load<Texture>(url);
   tex.source.scaleMode = 'linear';
   return tex;
+}
+
+function loadHtmlImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error(`Failed to load HD image ${url}`));
+    img.src = url;
+  });
 }
 
 export async function loadGameAssets(basePath = `${import.meta.env.BASE_URL}assets`): Promise<LoadedAssets> {
@@ -83,10 +105,19 @@ export async function loadGameAssets(basePath = `${import.meta.env.BASE_URL}asse
     }),
   );
 
+  const hdCourtEntries = await Promise.all(
+    HD_COURT_ART_ENTRIES.map(async ({ suit, rank }) => {
+      const key = cardKey({ suit, rank });
+      const img = await loadHtmlImage(`${normalizedBase}/hd/cards/s${suit}_${rank}.png`);
+      return [key, img] as const;
+    }),
+  );
+
   return {
     manifest,
     backgrounds: { ZF_NINE: zf, TF_NINE: tf, GF_NINE: gf },
     hdBackgrounds: { intro: hdIntro, menu: hdMenu, table: hdTable },
+    hdCourtArt: new Map(hdCourtEntries),
     sheets: { ZR_NINE: zr, TR_NINE: tr, GR_NINE: gr, VR_NINE: vr },
     cards: new Map(cardEntries),
     miniCards: new Map(miniEntries),

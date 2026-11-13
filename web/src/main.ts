@@ -1,6 +1,7 @@
 import { parseNineMsc } from './audio/mscParser';
 import { createAudioController } from './audio/opl2Engine';
 import { loadGameAssets } from './engine/AssetManager';
+import { setHdCourtArt } from './engine/hdCards';
 import { InputController } from './engine/InputController';
 import { StageApp } from './engine/StageApp';
 import { ClubMenuScene } from './scenes/ClubMenuScene';
@@ -15,6 +16,7 @@ async function bootstrap(): Promise<void> {
   if (!appEl) throw new Error('#app mount element missing');
 
   const assets = await loadGameAssets();
+  setHdCourtArt(assets.hdCourtArt);
   const tracks = parseNineMsc(assets.mscBytes);
 
   appEl.innerHTML = '';
