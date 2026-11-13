@@ -26,7 +26,7 @@ export class ShellControls {
     this.musicModeBtn = this.makeButton('', () => {
       void this.manager.ctx.audio.unlock();
       const music = this.manager.ctx.audio.music;
-      const next = music.getMusicMode() === 'suno' ? 'adlib' : 'suno';
+      const next = music.getMusicMode() === 'mp3' ? 'adlib' : 'mp3';
       music.setMusicMode(next);
       this.sync();
     });
@@ -112,7 +112,7 @@ export class ShellControls {
     const sndOn = config.soundMusicEnabled;
     const unlocked = audio.isUnlocked();
     this.soundBtn.textContent = sndOn ? (unlocked ? 'Audio: ON' : 'Audio: ON (click to wake)') : 'Audio: OFF';
-    this.musicModeBtn.textContent = audio.music.getMusicMode() === 'suno' ? 'Music: Suno MP3' : 'Music: AdLib OPL2';
+    this.musicModeBtn.textContent = audio.music.getMusicMode() === 'mp3' ? 'Music: MP3' : 'Music: AdLib OPL2';
     this.aspectBtn.textContent =
       this.manager.ctx.stage.getAspectMode() === '1:1' ? 'Aspect: PAR 1:1 (640x350)' : 'Aspect: 4:3 EGA CRT';
     this.scanlineBtn.textContent = this.manager.ctx.stage.isScanlinesEnabled() ? 'CRT Scanlines: ON' : 'CRT Scanlines: OFF';

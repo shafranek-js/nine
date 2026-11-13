@@ -40,10 +40,10 @@ class NineOpl2Processor extends AudioWorkletProcessor {
 registerProcessor('nine-opl2-processor', NineOpl2Processor);
 `;
 
-export type MusicSourceMode = 'suno' | 'adlib';
+export type MusicSourceMode = 'mp3' | 'adlib';
 
 const ASSET_BASE = (import.meta.env?.BASE_URL ?? '/').replace(/\/$/, '');
-const SUNO_TRACK_URLS: Record<MscTrackId, string> = {
+const MP3_TRACK_URLS: Record<MscTrackId, string> = {
   intro: `${ASSET_BASE}/assets/audio/01_intro_fanfare.mp3`,
   menu: `${ASSET_BASE}/assets/audio/02_club_menu_piano.mp3`,
   table: `${ASSET_BASE}/assets/audio/03_card_table_theme.mp3`,
@@ -55,16 +55,16 @@ export class Opl2MusicEngine {
   private initPromise: Promise<void> | null = null;
   private tracks: Record<MscTrackId, MscTrack> | null = null;
   private enabled = true;
-  private musicMode: MusicSourceMode = 'suno';
+  private musicMode: MusicSourceMode = 'mp3';
   private currentTrack: MscTrackId | null = null;
   private pendingTrack: MscTrackId | null = null;
   private gainValue = 0.72;
   private playSerial = 0;
 
-  private sunoGain: GainNode | null = null;
-  private sunoSource: AudioBufferSourceNode | null = null;
-  private sunoBuffers = new Map<MscTrackId, AudioBuffer>();
-  private sunoLoads = new Map<MscTrackId, Promise<AudioBuffer | null>>();
+  private mp3Gain: GainNode | null = null;
+  private mp3Source: AudioBufferSourceNode | null = null;
+  private mp3Buffers = new Map<MscTrackId, AudioBuffer>();
+  private mp3Loads = new Map<MscTrackId, Promise<AudioBuffer | null>>();
 
   // Fallback timer-driven synth when AudioWorklet is unavailable
   private fallbackTimer: number | null = null;
@@ -96,14 +96,14 @@ export class Opl2MusicEngine {
 
   async ensureInitialized(ctx: AudioContext): Promise<void> {
     this.ctx = ctx;
-    if (!this.sunoGain) {
+    if (!this.mp3Gain) {
       const g = ctx.createGain();
       g.gain.value = 0.55;
       g.connect(ctx.destination);
-      this.sunoGain = g;
+      this.mp3Gain = g;
     }
-    if (this.musicMode === 'suno') {
-      void this.loadSunoBuffer('intro');
+    if (this.musicMode === 'mp3') {
+      void this.loadMp3Buffer('intro');
     }
     if (this.workletNode) return;
     if (this.initPromise) return this.initPromise;
@@ -173,13 +173,13 @@ export class Opl2MusicEngine {
       void this.ctx.resume();
     }
 
-    if (this.musicMode === 'suno') {
+    if (this.musicMode === 'mp3') {
       this.stopOpl2Only();
-      void this.startSunoTrack(trackId, serial);
+      void this.startMp3Track(trackId, serial);
       return;
     }
 
-    this.stopSunoSource();
+    this.stopMp3Source();
     this.startOpl2Track(trackId);
   }
 
@@ -190,15 +190,15 @@ export class Opl2MusicEngine {
     this.stopPlaybackOnly();
   }
 
-  private stopSunoSource(): void {
-    if (this.sunoSource) {
+  private stopMp3Source(): void {
+    if (this.mp3Source) {
       try {
-        this.sunoSource.stop();
+        this.mp3Source.stop();
       } catch {
         // Ignore already-stopped source
       }
-      this.sunoSource.disconnect();
-      this.sunoSource = null;
+      this.mp3Source.disconnect();
+      this.mp3Source = null;
     }
   }
 
@@ -208,7 +208,7 @@ export class Opl2MusicEngine {
   }
 
   private stopPlaybackOnly(): void {
-    this.stopSunoSource();
+    this.stopMp3Source();
     this.stopOpl2Only();
   }
 
@@ -228,57 +228,57 @@ export class Opl2MusicEngine {
     }
   }
 
-  private loadSunoBuffer(trackId: MscTrackId): Promise<AudioBuffer | null> {
-    const cached = this.sunoBuffers.get(trackId);
+  private loadMp3Buffer(trackId: MscTrackId): Promise<AudioBuffer | null> {
+    const cached = this.mp3Buffers.get(trackId);
     if (cached) return Promise.resolve(cached);
-    const inflight = this.sunoLoads.get(trackId);
+    const inflight = this.mp3Loads.get(trackId);
     if (inflight) return inflight;
 
     const p = (async () => {
       if (!this.ctx) return null;
       try {
-        const res = await fetch(SUNO_TRACK_URLS[trackId]);
+        const res = await fetch(MP3_TRACK_URLS[trackId]);
         if (!res.ok) return null;
         const arr = await res.arrayBuffer();
         const decoded = await this.ctx.decodeAudioData(arr);
-        this.sunoBuffers.set(trackId, decoded);
+        this.mp3Buffers.set(trackId, decoded);
         return decoded;
       } catch {
         return null;
       } finally {
-        this.sunoLoads.delete(trackId);
+        this.mp3Loads.delete(trackId);
       }
     })();
-    this.sunoLoads.set(trackId, p);
+    this.mp3Loads.set(trackId, p);
     return p;
   }
 
-  private async startSunoTrack(trackId: MscTrackId, serial: number): Promise<void> {
-    const buf = await this.loadSunoBuffer(trackId);
+  private async startMp3Track(trackId: MscTrackId, serial: number): Promise<void> {
+    const buf = await this.loadMp3Buffer(trackId);
     if (
       serial !== this.playSerial ||
       !this.enabled ||
       this.currentTrack !== trackId ||
-      this.musicMode !== 'suno'
+      this.musicMode !== 'mp3'
     ) {
       return;
     }
-    if (!buf || !this.ctx || !this.sunoGain) {
+    if (!buf || !this.ctx || !this.mp3Gain) {
       this.startOpl2Track(trackId);
       return;
     }
-    this.stopSunoSource();
+    this.stopMp3Source();
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
     src.loop = true;
-    src.connect(this.sunoGain);
+    src.connect(this.mp3Gain);
     src.start(0);
-    this.sunoSource = src;
+    this.mp3Source = src;
 
-    // Warm remaining Suno tracks in background so scene changes start instantaneously
+    // Warm remaining MP3 tracks in background so scene changes start instantaneously
     for (const nextId of ['intro', 'menu', 'table'] as const) {
-      if (nextId !== trackId && !this.sunoBuffers.has(nextId)) {
-        void this.loadSunoBuffer(nextId);
+      if (nextId !== trackId && !this.mp3Buffers.has(nextId)) {
+        void this.loadMp3Buffer(nextId);
       }
     }
   }
