@@ -23,10 +23,19 @@ async function bootstrap(): Promise<void> {
   const tracks = parseNineMsc(assets.mscBytes);
 
   appEl.innerHTML = '';
+  const workspace = document.createElement('div');
+  workspace.className = 'club-workspace';
+  const leftPanel = document.createElement('aside');
+  leftPanel.className = 'side-panel side-panel-left';
+  const stageColumn = document.createElement('main');
+  stageColumn.className = 'stage-column';
   const stageHost = document.createElement('div');
   stageHost.className = 'stage-frame';
-  const shellHost = document.createElement('div');
-  appEl.append(stageHost, shellHost);
+  stageColumn.appendChild(stageHost);
+  const rightPanel = document.createElement('aside');
+  rightPanel.className = 'side-panel side-panel-right';
+  workspace.append(leftPanel, stageColumn, rightPanel);
+  appEl.appendChild(workspace);
 
   const stage = new StageApp();
   const canvas = await stage.mount(stageHost);
@@ -41,7 +50,13 @@ async function bootstrap(): Promise<void> {
   scenes.register('menu', () => new ClubMenuScene());
   scenes.register('table', () => new GameTableScene());
 
-  const shell = new ShellControls(shellHost, scenes);
+  const shell = new ShellControls({
+    appRoot: appEl,
+    leftHost: leftPanel,
+    rightHost: rightPanel,
+    stageColumn,
+    manager: scenes,
+  });
   scenes.ctx.onStateChange = () => shell.sync();
 
   input.onFirstGesture(() => {

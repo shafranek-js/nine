@@ -10,7 +10,7 @@ import {
   saveStoredHighScores,
   type HighScoreTables,
 } from '../core/persistence';
-import { SCREEN_HEIGHT, SCREEN_WIDTH, type NineConfig } from '../core/types';
+import { SCREEN_HEIGHT, SCREEN_WIDTH, type NineConfig, type SeatIndex } from '../core/types';
 import type { GraphicsMode, LoadedAssets } from '../engine/AssetManager';
 import { HudDigitFont, MenuBitmapFont } from '../engine/BitmapFont';
 import type { InputController } from '../engine/InputController';
@@ -37,6 +37,23 @@ export interface SessionPlayer {
   clubCarryover: number;
 }
 
+export interface MoveLogEntry {
+  id: number;
+  kind: 'round' | 'play' | 'pass' | 'win';
+  seat?: SeatIndex;
+  text: string;
+}
+
+export interface TableTelemetry {
+  roundNumber: number;
+  phase: string;
+  currentTurn: SeatIndex | null;
+  bank: number;
+  handCounts: Record<SeatIndex, number>;
+  cash: Record<SeatIndex, number>;
+  moves: readonly MoveLogEntry[];
+}
+
 export interface GameContext {
   readonly stage: StageApp;
   readonly assets: LoadedAssets;
@@ -47,10 +64,12 @@ export interface GameContext {
   config: NineConfig;
   highScores: HighScoreTables;
   sessionPlayer: SessionPlayer;
+  tableTelemetry: TableTelemetry | null;
   persistConfig(): void;
   persistHighScores(): void;
   getGraphicsMode(): GraphicsMode;
   setGraphicsMode(mode: GraphicsMode): void;
+  getCurrentSceneId(): SceneId | null;
   goTo(scene: SceneId, fadeMs?: number): void;
   onStateChange?: () => void;
 }
@@ -114,6 +133,7 @@ export class SceneManager {
         password: '',
         clubCarryover: 0,
       },
+      tableTelemetry: null,
       persistConfig: () => {
         saveStoredConfig(this.ctx.config);
         this.ctx.onStateChange?.();
@@ -135,6 +155,7 @@ export class SceneManager {
         this.activeScene?.onGraphicsModeChanged?.(mode);
         this.ctx.onStateChange?.();
       },
+      getCurrentSceneId: () => this.currentId,
       goTo: (scene, fadeMs = 220) => {
         this.transitionTo(scene, fadeMs);
       },
@@ -202,6 +223,7 @@ export class SceneManager {
     const nextScene = factory();
     this.activeScene = nextScene;
     this.currentId = nextId;
+    this.ctx.tableTelemetry = null;
     nextScene.mount(this.sceneLayer, this.ctx);
     this.ctx.onStateChange?.();
   }

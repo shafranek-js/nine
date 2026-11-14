@@ -38,7 +38,20 @@ import {
   type HdRivalController,
   type RivalAnimMode,
 } from '../engine/hdCharacters';
-import type { GameContext, Scene } from './SceneManager';
+import type { GameContext, MoveLogEntry, Scene } from './SceneManager';
+
+const SUIT_SYMBOLS: Record<Suit, string> = {
+  [Suit.Spades]: '♠',
+  [Suit.Clubs]: '♣',
+  [Suit.Diamonds]: '♦',
+  [Suit.Hearts]: '♥',
+};
+
+function formatCardShort(card: Card): string {
+  const rank =
+    card.rank === 11 ? 'J' : card.rank === 12 ? 'Q' : card.rank === 13 ? 'K' : card.rank === 14 ? 'A' : String(card.rank);
+  return `${rank}${SUIT_SYMBOLS[card.suit]}`;
+}
 
 type TablePhase =
   | 'anteIntro'
@@ -246,6 +259,8 @@ export class GameTableScene implements Scene {
   private roundWinner: SeatIndex | null = null;
   private roundWonPot = 0;
   private statusBanner = '';
+  private moveLog: MoveLogEntry[] = [];
+  private nextMoveId = 1;
 
   private unbindKey: (() => void) | null = null;
   private unbindPtr: (() => void) | null = null;
@@ -263,6 +278,8 @@ export class GameTableScene implements Scene {
     this.sparkParticles = [];
     this.hoveredCardKey = null;
     this.statusBanner = '';
+    this.moveLog = [];
+    this.nextMoveId = 1;
 
     this.root.addChild(this.bgLayer);
     this.root.addChild(this.tableCardsLayer);
@@ -546,6 +563,38 @@ export class GameTableScene implements Scene {
     }
   }
 
+  private seatDisplayName(seat: SeatIndex): string {
+    if (seat === 1) return 'Left Rival';
+    if (seat === 2) return 'Right Rival';
+    return this.ctx?.sessionPlayer.loggedIn ? this.ctx.sessionPlayer.name : 'You';
+  }
+
+  private pushMoveLog(kind: MoveLogEntry['kind'], text: string, seat?: SeatIndex): void {
+    this.moveLog.unshift({ id: this.nextMoveId++, kind, seat, text });
+    if (this.moveLog.length > 18) {
+      this.moveLog.length = 18;
+    }
+  }
+
+  private emitTelemetry(): void {
+    if (!this.ctx) return;
+    const r = this.match.round;
+    this.ctx.tableTelemetry = {
+      roundNumber: this.match.roundNumber,
+      phase: this.phase,
+      currentTurn: r && !r.roundOver ? r.currentTurn : null,
+      bank: r?.bank ?? 0,
+      handCounts: {
+        1: r?.hands[1].length ?? 0,
+        2: r?.hands[2].length ?? 0,
+        3: r?.hands[3].length ?? 0,
+      },
+      cash: { ...this.match.cash },
+      moves: this.moveLog.slice(),
+    };
+    this.ctx.onStateChange?.();
+  }
+
   private beginRoundPresentation(): void {
     this.tableCardsLayer.removeChildren();
     this.overlayLayer.removeChildren();
@@ -567,6 +616,8 @@ export class GameTableScene implements Scene {
 
     this.phase = 'anteIntro';
     this.phaseTimerMs = 0;
+    this.pushMoveLog('round', `Round #${this.match.roundNumber} · Pot $${this.match.round?.bank ?? 0}`);
+    this.emitTelemetry();
   }
 
   private getRivalCardSlotPos(seat: 1 | 2, index: number): { x: number; y: number } {
@@ -817,6 +868,7 @@ export class GameTableScene implements Scene {
 
     const prevBank = this.match.round?.bank ?? 0;
     this.match = applyMove(this.match, card);
+    this.pushMoveLog('play', `${this.seatDisplayName(seat)}: ${formatCardShort(card)}`, seat);
     if (this.match.round?.roundOver) {
       this.roundWinner = this.match.round.winner;
       this.roundWonPot = prevBank;
@@ -824,6 +876,7 @@ export class GameTableScene implements Scene {
       this.roundWinner = null;
       this.roundWonPot = 0;
     }
+    this.emitTelemetry();
 
     if (seat === 3) {
       this.renderHumanHand();
@@ -896,6 +949,7 @@ export class GameTableScene implements Scene {
     this.match = applyPass(this.match);
     this.renderCashAndBankHud();
     this.renderStatusBanner();
+    this.pushMoveLog('pass', `${this.seatDisplayName(seat)}: pass (-$${PASS_PENALTY})`, seat);
 
     if (seat === 1) {
       this.spawnCoinFlight(56, 170, 165, 42, 380);
@@ -908,6 +962,7 @@ export class GameTableScene implements Scene {
     this.passingSeat = seat;
     this.phase = 'passing';
     this.phaseTimerMs = 0;
+    this.emitTelemetry();
   }
 
   private enterNextTurn(): void {
@@ -929,6 +984,7 @@ export class GameTableScene implements Scene {
     }
     this.renderHumanHand();
     this.renderStatusBanner();
+    this.emitTelemetry();
   }
 
   private enterRoundEnd(): void {
@@ -939,6 +995,7 @@ export class GameTableScene implements Scene {
     this.renderStatusBanner();
 
     const winner = this.roundWinner ?? 3;
+    this.pushMoveLog('win', `${this.seatDisplayName(winner)} won Round #${this.match.roundNumber} (+$${this.roundWonPot})`, winner);
     const dstX = winner === 1 ? 56 : winner === 2 ? 568 : 316;
     const dstY = winner === 3 ? 232 : 170;
     if (this.roundWonPot > 0) {
@@ -949,6 +1006,7 @@ export class GameTableScene implements Scene {
         this.spawnSparkBurst(dstX, dstY, 14, 0xffea88);
       }
     }
+    this.emitTelemetry();
   }
 
   private enterMatchEnd(): void {
@@ -981,6 +1039,7 @@ export class GameTableScene implements Scene {
     }
 
     this.drawMatchEndModal(humanWonMatch, finalScore);
+    this.emitTelemetry();
   }
 
   private drawMatchEndModal(humanWon: boolean, finalScore: number): void {

@@ -15,6 +15,7 @@ export class StageApp {
   private scanlinesEnabled = false;
   private graphicsMode: GraphicsMode = 'hd';
   private scanlineOverlay: HTMLDivElement | null = null;
+  private resizeObserver: ResizeObserver | null = null;
 
   constructor() {
     TextureStyle.defaultOptions.scaleMode = 'linear';
@@ -51,6 +52,10 @@ export class StageApp {
     this.applyGraphicsStyling();
     this.applyViewportFit();
     window.addEventListener('resize', this.onResize);
+    if (typeof ResizeObserver !== 'undefined' && host.parentElement) {
+      this.resizeObserver = new ResizeObserver(() => this.applyViewportFit());
+      this.resizeObserver.observe(host.parentElement);
+    }
     return canvas;
   }
 
@@ -72,6 +77,10 @@ export class StageApp {
     }
     this.host?.classList.toggle('mode-hd', !isEga);
     this.host?.classList.toggle('mode-ega', isEga);
+    if (typeof document !== 'undefined') {
+      document.body.classList.toggle('mode-hd', !isEga);
+      document.body.classList.toggle('mode-ega', isEga);
+    }
   }
 
   private onResize = (): void => {
@@ -107,8 +116,11 @@ export class StageApp {
     const canvas = this.app.canvas;
     const targetAspect = this.aspectMode === '4:3' ? 4 / 3 : SCREEN_WIDTH / SCREEN_HEIGHT;
 
-    const maxW = Math.max(320, window.innerWidth - 24);
-    const maxH = Math.max(200, window.innerHeight - 64);
+    const parent = this.host.parentElement;
+    const availW = parent && parent.clientWidth > 0 ? parent.clientWidth : window.innerWidth - 24;
+    const availH = parent && parent.clientHeight > 0 ? parent.clientHeight : window.innerHeight - 24;
+    const maxW = Math.max(300, availW - 8);
+    const maxH = Math.max(200, availH - 8);
 
     let width = maxW;
     let height = width / targetAspect;
@@ -127,6 +139,8 @@ export class StageApp {
 
   destroy(): void {
     window.removeEventListener('resize', this.onResize);
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
     this.app.destroy(true, { children: true });
   }
 }
