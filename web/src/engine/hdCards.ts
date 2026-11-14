@@ -101,11 +101,11 @@ export function drawSuitShape(ctx: CanvasRenderingContext2D, suit: Suit, cx: num
   } else if (suit === 3) {
     // Diamond
     ctx.beginPath();
-    ctx.moveTo(0, -s * 0.98);
-    ctx.quadraticCurveTo(s * 0.35, -s * 0.28, s * 0.86, 0);
-    ctx.quadraticCurveTo(s * 0.35, s * 0.28, 0, s * 0.98);
-    ctx.quadraticCurveTo(-s * 0.35, s * 0.28, -s * 0.86, 0);
-    ctx.quadraticCurveTo(-s * 0.35, -s * 0.28, 0, -s * 0.98);
+    ctx.moveTo(0, -s * 0.96);
+    ctx.quadraticCurveTo(s * 0.36, -s * 0.34, s * 0.84, 0);
+    ctx.quadraticCurveTo(s * 0.36, s * 0.34, 0, s * 0.96);
+    ctx.quadraticCurveTo(-s * 0.36, s * 0.34, -s * 0.84, 0);
+    ctx.quadraticCurveTo(-s * 0.36, -s * 0.34, 0, -s * 0.96);
     ctx.closePath();
     ctx.fill();
   } else if (suit === 1) {
@@ -114,34 +114,49 @@ export function drawSuitShape(ctx: CanvasRenderingContext2D, suit: Suit, cx: num
     ctx.moveTo(0, -s * 0.96);
     ctx.bezierCurveTo(s * 1.05, -s * 0.15, s * 1.08, s * 0.58, s * 0.46, s * 0.62);
     ctx.bezierCurveTo(s * 0.2, s * 0.63, s * 0.08, s * 0.48, s * 0.06, s * 0.42);
-    ctx.lineTo(s * 0.26, s * 0.94);
-    ctx.lineTo(-s * 0.26, s * 0.94);
-    ctx.lineTo(-s * 0.06, s * 0.42);
+    ctx.quadraticCurveTo(s * 0.09, s * 0.72, s * 0.28, s * 0.94);
+    ctx.lineTo(-s * 0.28, s * 0.94);
+    ctx.quadraticCurveTo(-s * 0.09, s * 0.72, -s * 0.06, s * 0.42);
     ctx.bezierCurveTo(-s * 0.08, s * 0.48, -s * 0.2, s * 0.63, -s * 0.46, s * 0.62);
     ctx.bezierCurveTo(-s * 1.08, s * 0.58, -s * 1.05, -s * 0.15, 0, -s * 0.96);
     ctx.closePath();
     ctx.fill();
   } else {
-    // Club
-    const r = s * 0.42;
+    // Club (each lobe drawn with its own beginPath so Canvas2D never connects chord lines between circles)
+    const r = s * 0.4;
+    const lobes: readonly [number, number, number][] = [
+      [0, -s * 0.46, r],
+      [-s * 0.45, s * 0.14, r],
+      [s * 0.45, s * 0.14, r],
+      [0, -s * 0.02, s * 0.28],
+    ];
+    for (const [lx, ly, lr] of lobes) {
+      ctx.beginPath();
+      ctx.arc(lx, ly, lr, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.beginPath();
-    ctx.arc(0, -s * 0.44, r, 0, Math.PI * 2);
-    ctx.arc(-s * 0.46, s * 0.16, r, 0, Math.PI * 2);
-    ctx.arc(s * 0.46, s * 0.16, r, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.moveTo(-s * 0.08, s * 0.1);
-    ctx.lineTo(s * 0.08, s * 0.1);
-    ctx.lineTo(s * 0.26, s * 0.92);
-    ctx.lineTo(-s * 0.26, s * 0.92);
+    ctx.moveTo(-s * 0.08, s * 0.08);
+    ctx.lineTo(s * 0.08, s * 0.08);
+    ctx.quadraticCurveTo(s * 0.1, s * 0.66, s * 0.28, s * 0.92);
+    ctx.lineTo(-s * 0.28, s * 0.92);
+    ctx.quadraticCurveTo(-s * 0.1, s * 0.66, -s * 0.08, s * 0.08);
     ctx.closePath();
     ctx.fill();
   }
 
-  // Subtle specular highlight
-  ctx.fillStyle = 'rgba(255,255,255,0.22)';
+  // Subtle specular highlight positioned safely inside each suit's silhouette
+  ctx.fillStyle = 'rgba(255,255,255,0.2)';
   ctx.beginPath();
-  ctx.ellipse(-s * 0.24, -s * 0.28, s * 0.14, s * 0.24, -0.4, 0, Math.PI * 2);
+  if (suit === 2) {
+    ctx.ellipse(-s * 0.1, -s * 0.52, s * 0.11, s * 0.16, -0.35, 0, Math.PI * 2);
+  } else if (suit === 3) {
+    ctx.ellipse(-s * 0.16, -s * 0.24, s * 0.1, s * 0.18, -0.45, 0, Math.PI * 2);
+  } else if (suit === 1) {
+    ctx.ellipse(-s * 0.25, s * 0.06, s * 0.13, s * 0.22, -0.35, 0, Math.PI * 2);
+  } else {
+    ctx.ellipse(-s * 0.34, -s * 0.34, s * 0.13, s * 0.21, -0.45, 0, Math.PI * 2);
+  }
   ctx.fill();
   ctx.restore();
 }
@@ -181,15 +196,15 @@ function drawCardStockBase(ctx: CanvasRenderingContext2D, w: number, h: number, 
 }
 
 function drawPipLayout(ctx: CanvasRenderingContext2D, suit: Suit, rank: Rank, w: number, h: number): void {
-  const cx = w * 0.5;
-  const cy = h * 0.5;
-  const left = 27;
-  const right = w - 27;
-  const top = 21;
-  const bot = h - 21;
+  const left = 29;
+  const right = w - 25;
+  const cx = (left + right) * 0.5;
+  const top = 19;
+  const bot = h - 18;
+  const cy = (top + bot) * 0.5;
   const midY1 = (top + cy) * 0.5;
   const midY2 = (cy + bot) * 0.5;
-  const pip = 11.5;
+  const pip = 11.8;
 
   const drawMirrored = (px: number, py: number, flip = false) => {
     ctx.save();
@@ -254,9 +269,10 @@ function drawRoyalCharacter(ctx: CanvasRenderingContext2D, suit: Suit, rank: Ran
 
   const illustrated = hdCourtArtMap.get(cardKey({ suit, rank }));
   if (illustrated && illustrated.complete && illustrated.naturalWidth > 0) {
-    const artSize = 66;
-    const dx = (w - artSize) * 0.5;
-    const dy = (h - artSize) * 0.5 + 0.5;
+    // Bottom-right corner has no index, so expand portrait down & right cleanly inside the border
+    const artSize = 76;
+    const dx = 8.5;
+    const dy = 9.5;
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(illustrated, dx, dy, artSize, artSize);
@@ -304,11 +320,12 @@ function drawRoyalCharacter(ctx: CanvasRenderingContext2D, suit: Suit, rank: Ran
     ctx.fillStyle = '#f5eedc';
     ctx.strokeStyle = '#181410';
     ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.ellipse(cx - 13, cy + 12, 4.5, 8, 0.25, 0, Math.PI * 2);
-    ctx.ellipse(cx + 13, cy + 12, 4.5, 8, -0.25, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+    for (const sx of [-1, 1]) {
+      ctx.beginPath();
+      ctx.ellipse(cx + sx * 13, cy + 12, 4.5, 8, -sx * 0.25, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
 
     // Gold chain of office
     ctx.strokeStyle = '#e8b948';
@@ -340,10 +357,11 @@ function drawRoyalCharacter(ctx: CanvasRenderingContext2D, suit: Suit, rank: Ran
   } else if (rank === 12) {
     // Queen: royal collar/ruffles + pearl diadem + suit jewel
     ctx.fillStyle = '#1a1a24';
-    ctx.beginPath();
-    ctx.ellipse(cx - 14, cy + 10, 5.5, 7.5, 0.4, 0, Math.PI * 2);
-    ctx.ellipse(cx + 14, cy + 10, 5.5, 7.5, -0.4, 0, Math.PI * 2);
-    ctx.fill();
+    for (const sx of [-1, 1]) {
+      ctx.beginPath();
+      ctx.ellipse(cx + sx * 14, cy + 10, 5.5, 7.5, -sx * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
 
     // Necklace
     ctx.strokeStyle = '#ffe082';
@@ -411,17 +429,19 @@ function drawRoyalCharacter(ctx: CanvasRenderingContext2D, suit: Suit, rank: Ran
   ctx.fillStyle = '#ffffff';
   ctx.strokeStyle = '#181410';
   ctx.lineWidth = 0.8;
-  ctx.beginPath();
-  ctx.ellipse(cx - 3.6, cy - 1.5, 3, 3.4, 0, 0, Math.PI * 2);
-  ctx.ellipse(cx + 3.6, cy - 1.5, 3, 3.4, 0, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.stroke();
+  for (const sx of [-1, 1]) {
+    ctx.beginPath();
+    ctx.ellipse(cx + sx * 3.6, cy - 1.5, 3, 3.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
 
   ctx.fillStyle = '#111111';
-  ctx.beginPath();
-  ctx.arc(cx - 3.2, cy - 1.3, 1.35, 0, Math.PI * 2);
-  ctx.arc(cx + 3.2, cy - 1.3, 1.35, 0, Math.PI * 2);
-  ctx.fill();
+  for (const sx of [-1, 1]) {
+    ctx.beginPath();
+    ctx.arc(cx + sx * 3.2, cy - 1.3, 1.35, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
   // Cheerful button nose
   ctx.fillStyle = red ? '#ff5964' : '#5278e8';
@@ -441,20 +461,20 @@ function drawFullHdCard(suit: Suit, rank: Rank): Texture {
 
     if (rank === 14) {
       // Ace Art-Deco sunburst medallion
-      const cx = w * 0.5;
-      const cy = h * 0.5;
+      const cx = w * 0.5 + 1.5;
+      const cy = h * 0.52;
       ctx.save();
       ctx.strokeStyle = 'rgba(184, 146, 62, 0.52)';
       ctx.lineWidth = 0.9;
       ctx.beginPath();
-      ctx.arc(cx, cy, 19, 0, Math.PI * 2);
+      ctx.arc(cx, cy, 21, 0, Math.PI * 2);
       ctx.stroke();
       ctx.beginPath();
-      ctx.arc(cx, cy, 22.5, 0, Math.PI * 2);
+      ctx.arc(cx, cy, 25, 0, Math.PI * 2);
       ctx.strokeStyle = 'rgba(184, 146, 62, 0.25)';
       ctx.stroke();
       ctx.restore();
-      drawSuitShape(ctx, suit, cx, cy, suit === 1 ? 29 : 26);
+      drawSuitShape(ctx, suit, cx, cy, suit === 1 ? 33 : 30);
     } else if (rank >= 11) {
       drawRoyalCharacter(ctx, suit, rank, w, h);
     } else {
@@ -465,19 +485,12 @@ function drawFullHdCard(suit: Suit, rank: Rank): Texture {
     const inkColor = red ? '#bd1829' : '#181e2b';
     const label = rankLabel(rank);
 
-    // Top-left corner index
+    // Top-left corner index only (matches original 1993 Nine card layout)
     ctx.save();
     ctx.fillStyle = inkColor;
     ctx.font = `bold ${label.length > 1 ? 10.5 : 12}px Georgia, "Times New Roman", serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.fillText(label, 11.5, 6);
-    drawSuitShape(ctx, suit, 11.5, 22, 9);
-
-    // Bottom-right rotated corner index
-    ctx.translate(w, h);
-    ctx.rotate(Math.PI);
-    ctx.fillStyle = inkColor;
     ctx.fillText(label, 11.5, 6);
     drawSuitShape(ctx, suit, 11.5, 22, 9);
     ctx.restore();
@@ -516,7 +529,7 @@ function drawMiniHdCard(suit: Suit, rank: Rank): Texture {
       return;
     }
 
-    drawSuitShape(ctx, suit, w * 0.56, h * 0.56, rank >= 11 ? 15 : 16.5);
+    drawSuitShape(ctx, suit, w * 0.59, h * 0.58, rank >= 11 ? 14.5 : 15.5);
 
     // Tiny royal crown dot accent in upper-right for K/Q/J
     if (rank >= 11) {
