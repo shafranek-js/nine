@@ -2,6 +2,12 @@ import { Container, Graphics, type Ticker } from 'pixi.js';
 import type { AudioController } from '../audio/opl2Engine';
 import type { AdvisorRecommendation } from '../core/advisor';
 import {
+  DEFAULT_LANGUAGE,
+  getTranslations,
+  normalizeLanguage,
+  type Language,
+} from '../core/i18n';
+import {
   decodeNineCfg,
   decodeNineRes,
   encodeNineRes,
@@ -23,6 +29,22 @@ import type { AspectMode, StageApp } from '../engine/StageApp';
 
 const GRAPHICS_STORAGE_KEY = 'nine_graphics_mode_v1';
 const COACH_STORAGE_KEY = 'nine_coach_mode_v1';
+const LANGUAGE_STORAGE_KEY = 'nine_language_v1';
+
+function loadStoredLanguage(): Language {
+  try {
+    return normalizeLanguage(localStorage.getItem(LANGUAGE_STORAGE_KEY));
+  } catch {
+    return DEFAULT_LANGUAGE;
+  }
+}
+
+function applyDocumentLanguage(lang: Language): void {
+  if (typeof document !== 'undefined') {
+    document.documentElement.lang = getTranslations(lang).htmlLang;
+    document.title = getTranslations(lang).docTitle;
+  }
+}
 
 function loadStoredGraphicsMode(): GraphicsMode {
   try {
@@ -51,11 +73,18 @@ export interface SessionPlayer {
   clubCarryover: number;
 }
 
+export type MoveLogEvent =
+  | { readonly type: 'round'; readonly roundNumber: number; readonly pot: number }
+  | { readonly type: 'play'; readonly seat: SeatIndex; readonly cardLabel: string }
+  | { readonly type: 'pass'; readonly seat: SeatIndex; readonly penalty: number }
+  | { readonly type: 'win'; readonly seat: SeatIndex; readonly roundNumber: number; readonly pot: number };
+
 export interface MoveLogEntry {
   id: number;
   kind: 'round' | 'play' | 'pass' | 'win';
   seat?: SeatIndex;
   text: string;
+  event?: MoveLogEvent;
 }
 
 export interface TableTelemetry {
@@ -85,6 +114,8 @@ export interface GameContext {
   persistHighScores(): void;
   getGraphicsMode(): GraphicsMode;
   setGraphicsMode(mode: GraphicsMode): void;
+  getLanguage(): Language;
+  setLanguage(lang: Language): void;
   setAspectMode(mode: AspectMode): void;
   setCoachMode(enabled: boolean): void;
   signInPlayer(name: string, password: string): void;
@@ -101,6 +132,7 @@ export interface Scene {
   onGraphicsModeChanged?(mode: GraphicsMode): void;
   onAspectModeChanged?(mode: AspectMode): void;
   onCoachModeChanged?(enabled: boolean): void;
+  onLanguageChanged?(lang: Language): void;
   onSessionChanged?(): void;
 }
 
@@ -145,6 +177,8 @@ export class SceneManager {
           clubCarryover: 0,
         };
     const initialGraphics = loadStoredGraphicsMode();
+    let currentLanguage = loadStoredLanguage();
+    applyDocumentLanguage(currentLanguage);
     stage.setGraphicsMode(initialGraphics);
     audio.sfx.setSoundProfile(initialGraphics);
     audio.setEnabled(config.soundMusicEnabled);
@@ -188,6 +222,20 @@ export class SceneManager {
           // Ignore storage errors
         }
         this.activeScene?.onGraphicsModeChanged?.(mode);
+        this.ctx.onStateChange?.();
+      },
+      getLanguage: () => currentLanguage,
+      setLanguage: (lang: Language) => {
+        const next = normalizeLanguage(lang);
+        if (currentLanguage === next) return;
+        currentLanguage = next;
+        applyDocumentLanguage(next);
+        try {
+          localStorage.setItem(LANGUAGE_STORAGE_KEY, next);
+        } catch {
+          // Ignore storage errors
+        }
+        this.activeScene?.onLanguageChanged?.(next);
         this.ctx.onStateChange?.();
       },
       setAspectMode: (mode: AspectMode) => {

@@ -1,4 +1,5 @@
 import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
+import { getTranslations } from '../core/i18n';
 import { SCREEN_HEIGHT, SCREEN_WIDTH } from '../core/types';
 import { sliceMaskedTexture } from '../engine/BitmapFont';
 import {
@@ -80,6 +81,12 @@ export class DealerTransitionScene implements Scene {
     this.buildVisuals();
   }
 
+  onLanguageChanged(): void {
+    if (this.ctx?.getGraphicsMode() === 'hd') {
+      this.buildVisuals();
+    }
+  }
+
   private buildVisuals(): void {
     if (!this.ctx) return;
     this.viewRoot.removeChildren();
@@ -91,7 +98,7 @@ export class DealerTransitionScene implements Scene {
     if (this.ctx.getGraphicsMode() === 'ega') {
       this.buildEgaVisuals(this.ctx);
     } else {
-      this.buildHdVisuals();
+      this.buildHdVisuals(this.ctx);
     }
   }
 
@@ -126,7 +133,7 @@ export class DealerTransitionScene implements Scene {
     this.viewRoot.addChild(this.dealerSprite);
   }
 
-  private buildHdVisuals(): void {
+  private buildHdVisuals(ctx: GameContext): void {
     const bg = new Graphics();
     bg.rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT).fill(0x06070a);
     this.viewRoot.addChild(bg);
@@ -144,7 +151,8 @@ export class DealerTransitionScene implements Scene {
     this.viewRoot.addChild(dealer.container);
     this.hdDealer = dealer;
 
-    const caption = createHdTextSprite('WELCOME TO THE NINE CLUB', 340, 22, {
+    const welcomeText = getTranslations(ctx.getLanguage()).scenes.dealerWelcome;
+    const caption = createHdTextSprite(welcomeText, 340, 22, {
       font: '600 11px Georgia, "Times New Roman", serif',
       fill: ['#fff1bd', '#d49a24'],
       align: 'center',

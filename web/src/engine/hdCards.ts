@@ -173,7 +173,13 @@ function rankLabel(rank: Rank): string {
   return String(rank);
 }
 
-function drawCardStockBase(ctx: CanvasRenderingContext2D, w: number, h: number, radius: number): void {
+function drawCardStockBase(
+  ctx: CanvasRenderingContext2D,
+  w: number,
+  h: number,
+  radius: number,
+  cornerCut?: { gapX: number; gapY: number },
+): void {
   // Subtle rounded drop shadow inside boundary
   roundRectPath(ctx, 1, 1.5, w - 2, h - 2, radius);
   ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
@@ -192,10 +198,29 @@ function drawCardStockBase(ctx: CanvasRenderingContext2D, w: number, h: number, 
   ctx.strokeStyle = '#3d3324';
   ctx.stroke();
 
-  // Fine Art-Deco champagne-gold inner border
-  roundRectPath(ctx, 3.2, 3.2, w - 6.4, h - 6.8, Math.max(2, radius - 2));
+  // Fine Art-Deco champagne-gold inner border (open at top-left when index sits inside the frame corner)
+  const inset = cornerCut ? (w < 33 ? 3.2 : 3.8) : 3.2;
+  const x1 = inset;
+  const y1 = inset;
+  const x2 = w - inset;
+  const y2 = h - (cornerCut ? (w < 33 ? 3.6 : 4.0) : 3.6);
+  const innerR = Math.max(2, radius - 2);
+
+  if (cornerCut) {
+    ctx.beginPath();
+    ctx.moveTo(Math.max(x1 + innerR, cornerCut.gapX), y1);
+    ctx.lineTo(x2 - innerR, y1);
+    ctx.quadraticCurveTo(x2, y1, x2, y1 + innerR);
+    ctx.lineTo(x2, y2 - innerR);
+    ctx.quadraticCurveTo(x2, y2, x2 - innerR, y2);
+    ctx.lineTo(x1 + innerR, y2);
+    ctx.quadraticCurveTo(x1, y2, x1, y2 - innerR);
+    ctx.lineTo(x1, Math.max(y1 + innerR, cornerCut.gapY));
+  } else {
+    roundRectPath(ctx, x1, y1, x2 - x1, y2 - y1, innerR);
+  }
   ctx.lineWidth = 0.75;
-  ctx.strokeStyle = 'rgba(184, 146, 62, 0.62)';
+  ctx.strokeStyle = 'rgba(184, 146, 62, 0.65)';
   ctx.stroke();
 }
 
@@ -511,30 +536,99 @@ function drawFullHdCard(suit: Suit, rank: Rank, cardW: number, cardH: number): T
   });
 }
 
+function drawMiniPipLayout(ctx: CanvasRenderingContext2D, suit: Suit, rank: Rank, w: number, h: number): void {
+  const narrow = w < 33;
+  const cx = w * 0.5;
+  const halfSpread = narrow ? (rank >= 9 ? 4.2 : 4.5) : rank >= 9 ? 6.4 : 6.7;
+  const left = cx - halfSpread;
+  const right = cx + halfSpread;
+
+  if (rank <= 8) {
+    const top = narrow ? 8.6 : 8.5;
+    const bot = h - (narrow ? 8.6 : 8.5);
+    const cy = (top + bot) * 0.5;
+    const pip = narrow ? 4.2 : 5.4;
+
+    for (const py of [top, cy, bot]) {
+      drawSuitShape(ctx, suit, left, py, pip);
+      drawSuitShape(ctx, suit, right, py, pip);
+    }
+    if (rank >= 7) {
+      drawSuitShape(ctx, suit, cx, (top + cy) * 0.5, pip);
+    }
+    if (rank === 8) {
+      drawSuitShape(ctx, suit, cx, (cy + bot) * 0.5, pip);
+    }
+    return;
+  }
+
+  // 9 and 10: 4 rows in two columns centered on card + 1 center (9) or 2 inner pips (10)
+  const top = narrow ? 7.8 : 7.6;
+  const bot = h - (narrow ? 7.8 : 7.6);
+  const step = (bot - top) / 3;
+  const rows = [top, top + step, top + step * 2, bot];
+  const pip = narrow ? 3.5 : 4.7;
+
+  for (const py of rows) {
+    drawSuitShape(ctx, suit, left, py, pip);
+    drawSuitShape(ctx, suit, right, py, pip);
+  }
+  if (rank === 9) {
+    drawSuitShape(ctx, suit, cx, (top + bot) * 0.5, pip);
+  } else if (rank === 10) {
+    drawSuitShape(ctx, suit, cx, (rows[0] + rows[1]) * 0.5, pip);
+    drawSuitShape(ctx, suit, cx, (rows[2] + rows[3]) * 0.5, pip);
+  }
+}
+
 function drawMiniHdCard(suit: Suit, rank: Rank, miniW: number, miniH: number): Texture {
   const narrow = miniW < 33;
+  const isCourt = rank >= 11 && rank <= 13;
+  const isTen = rank === 10;
+  const cornerCut = isCourt
+    ? undefined
+    : {
+        gapX: narrow ? (isTen ? 8.2 : 6.6) : isTen ? 9.4 : 7.6,
+        gapY: narrow ? 12.2 : 13.6,
+      };
+
   return createHdTexture(miniW, miniH, (ctx, w, h) => {
-    drawCardStockBase(ctx, w, h, narrow ? 3.2 : 3.6);
+    drawCardStockBase(ctx, w, h, narrow ? 3.2 : 3.6, cornerCut);
     const red = isRedSuit(suit);
     const inkColor = red ? '#bd1829' : '#181e2b';
     const label = rankLabel(rank);
 
-    // Crisp corner rank
-    ctx.fillStyle = inkColor;
-    const fontSize = narrow ? (label.length > 1 ? 7.6 : 8.6) : label.length > 1 ? 8.5 : 9.5;
-    ctx.font = `bold ${fontSize}px Georgia, "Times New Roman", serif`;
-    ctx.textAlign = 'left';
-    ctx.textBaseline = 'top';
-    ctx.fillText(label, narrow ? 3.8 : 5, narrow ? 3.2 : 4);
-
-    // Gold inner tint for court cards & aces so key cards pop cleanly on board
+    // Subtle inner tint for court cards & aces so key cards pop cleanly on board
     if (rank >= 11 || rank === 14) {
       ctx.fillStyle = red ? 'rgba(200, 30, 50, 0.08)' : 'rgba(20, 40, 110, 0.08)';
       roundRectPath(ctx, narrow ? 3.8 : 5, narrow ? 4.2 : 5, w - (narrow ? 7.6 : 10), h - (narrow ? 8.4 : 10), 2);
       ctx.fill();
     }
 
-    const illustrated = rank >= 11 ? hdCourtArtMap.get(cardKey({ suit, rank })) : undefined;
+    // Crisp top-left corner index integrated into the broken inner frame corner
+    ctx.fillStyle = inkColor;
+    if (isCourt) {
+      const fontSize = narrow ? 8.6 : 9.5;
+      ctx.font = `bold ${fontSize}px Georgia, "Times New Roman", serif`;
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(label, narrow ? 3.8 : 5, narrow ? 3.2 : 4);
+    } else {
+      const fontSize = narrow ? (isTen ? 4.8 : 5.5) : isTen ? 5.4 : 6.2;
+      const idxX = narrow ? (isTen ? 4.7 : 3.9) : isTen ? 5.3 : 4.5;
+      ctx.font = `bold ${fontSize}px Georgia, "Times New Roman", serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillText(label, idxX, narrow ? 1.9 : 1.9);
+      drawSuitShape(ctx, suit, narrow ? 3.9 : 4.5, narrow ? 9.2 : 10.4, narrow ? 3.0 : 3.5);
+    }
+
+    if (rank <= 10) {
+      drawMiniPipLayout(ctx, suit, rank, w, h);
+      return;
+    }
+
+    const illustrated = isCourt ? hdCourtArtMap.get(cardKey({ suit, rank })) : undefined;
     if (illustrated && illustrated.complete && illustrated.naturalWidth > 0) {
       drawSuitShape(ctx, suit, narrow ? 6.4 : 7.6, narrow ? 14.5 : 16.5, narrow ? 5.2 : 6.2);
       ctx.save();
@@ -549,10 +643,16 @@ function drawMiniHdCard(suit: Suit, rank: Rank, miniW: number, miniH: number): T
       return;
     }
 
-    drawSuitShape(ctx, suit, w * (narrow ? 0.56 : 0.59), h * (narrow ? 0.61 : 0.58), narrow ? 12.2 : rank >= 11 ? 14.5 : 15.5);
+    drawSuitShape(
+      ctx,
+      suit,
+      isCourt ? w * (narrow ? 0.56 : 0.58) : w * 0.5,
+      isCourt ? h * (narrow ? 0.61 : 0.56) : h * 0.51,
+      narrow ? 12.2 : isCourt ? 14.5 : 15.5,
+    );
 
-    // Tiny royal crown dot accent in upper-right for K/Q/J
-    if (rank >= 11) {
+    // Tiny royal crown dot accent in upper-right for K/Q/J fallback
+    if (isCourt) {
       ctx.fillStyle = '#d49d2a';
       ctx.beginPath();
       ctx.arc(w - (narrow ? 6 : 7.5), narrow ? 6.5 : 7.5, narrow ? 1.8 : 2.1, 0, Math.PI * 2);

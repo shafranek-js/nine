@@ -1,4 +1,5 @@
 import { analyzeSuitBranches, selectBotMove } from './ai.js';
+import { DEFAULT_LANGUAGE, getTranslations, type Language } from './i18n.js';
 import { createDefaultRng, type Rng } from './rng.js';
 import { cardKey, getLegalMoves, nextSeat, SUITS } from './rules.js';
 import {
@@ -302,18 +303,20 @@ function buildStrategicReasons(params: {
   leftCount: number;
   rightCount: number;
   bank: number;
+  language: Language;
 }): string[] {
-  const { best, runnerUp, hand, bounds, isFirstTurn, difficulty, deduction, leftCount, rightCount, bank } = params;
+  const { best, runnerUp, hand, bounds, isFirstTurn, difficulty, deduction, leftCount, rightCount, bank, language } = params;
+  const tr = getTranslations(language).advisor;
   const c = best.card;
   const reasons: string[] = [];
 
   if (isFirstTurn) {
-    reasons.push('По правилам раунд всегда открывается с 9♦.');
+    reasons.push(tr.forcedNineReason);
     return reasons;
   }
 
   if (hand.length === 1) {
-    reasons.push(`Последняя карта на руке — ход сразу приносит банк $${bank}.`);
+    reasons.push(tr.lastCardWinReason(bank));
     return reasons;
   }
 
@@ -323,11 +326,9 @@ function buildStrategicReasons(params: {
     const winPct = Math.round(best.winRate * 100);
     const altPct = Math.round(runnerUp.winRate * 100);
     if (evDiff >= 3) {
-      reasons.push(
-        `Сильнее хода ${formatCardLabel(runnerUp.card)} на +$${evDiff} по ожиданию (${winPct}% побед против ${altPct}%).`,
-      );
+      reasons.push(tr.evAheadReason(formatCardLabel(runnerUp.card), evDiff, winPct, altPct));
     } else if (winPct > altPct + 2) {
-      reasons.push(`Шанс победы выше (${winPct}% против ${altPct}% у ${formatCardLabel(runnerUp.card)}).`);
+      reasons.push(tr.higherWinReason(formatCardLabel(runnerUp.card), winPct, altPct));
     }
   }
 
@@ -338,22 +339,22 @@ function buildStrategicReasons(params: {
 
   if (c.rank === 9) {
     if (unlocked.length >= 2) {
-      reasons.push(`Открывает новую масть под твои ${unlocked.map(formatCardLabel).join(', ')}.`);
+      reasons.push(tr.openSuitMultipleReason(unlocked.map(formatCardLabel).join(', ')));
     } else if (unlocked.length === 1) {
-      reasons.push(`Даёт выход для ${formatCardLabel(unlocked[0])}, не застревая с девяткой на руке.`);
+      reasons.push(tr.openSuitSingleReason(formatCardLabel(unlocked[0])));
     } else if (runnerUp && runnerUp.card.rank !== 9) {
-      reasons.push(`У соперников эта масть закрыта, но остальные варианты ещё рискованнее по раскладу.`);
+      reasons.push(tr.closedSuitRiskyReason);
     }
   } else {
     if (unlocked.length > 0) {
-      reasons.push(`Продвигает цепочку к твоим ${unlocked.map(formatCardLabel).join(', ')}.`);
+      reasons.push(tr.chainExtendReason(unlocked.map(formatCardLabel).join(', ')));
     } else if (c.rank === 6 || c.rank === 14) {
-      reasons.push(`Закрывает край масти — больше не держишь тупиковую карту.`);
+      reasons.push(tr.closeEndReason);
     }
     const branchGap = c.rank < 9 ? suitInfo.leadGapBelow : suitInfo.leadGapAbove;
     const hole = getMissingGapTowardsAnchor(hand, c);
     if (hole === 0 && branchGap === 0 && unlocked.length === 0) {
-      reasons.push(`Безопасный сброс без «дыр» — никому не открывает заблокированные ранги.`);
+      reasons.push(tr.safeDiscardReason);
     }
   }
 
@@ -362,41 +363,34 @@ function buildStrategicReasons(params: {
   if (altNine && c.rank !== 9) {
     const oppNineCards = getUnlockedChainCards(hand, altNine, bounds);
     if (oppNineCards.length <= 1) {
-      reasons.push(
-        `Придерживает ${formatCardLabel(altNine)} — если открыть эту масть сейчас, соперники сбросят лишние карты.`,
-      );
+      reasons.push(tr.holdNineReason(formatCardLabel(altNine)));
     }
   }
 
   // 4. Opponent pressure, low card counts & pass deduction
   if (runnerUp && best.avgOppPasses - runnerUp.avgOppPasses >= 0.22) {
-    reasons.push(
-      `Чаще вынуждает соперников пасовать (~${best.avgOppPasses.toFixed(1)} паса за остаток раунда, пополняя банк).`,
-    );
+    reasons.push(tr.pressureOppPassesReason(best.avgOppPasses.toFixed(1)));
   }
 
   const minOppCards = Math.min(leftCount, rightCount);
   if (minOppCards <= 3) {
-    const threatSeat = rightCount <= leftCount ? 'Правого' : 'Левого';
-    reasons.push(`У ${threatSeat} осталось всего ${minOppCards} карт — этот ход хуже всего помогает ему выйти.`);
+    reasons.push(tr.lowOppCardsReason(rightCount <= leftCount, minOppCards));
   }
 
   if (deduction.certainLeft.length > 0 || deduction.certainRight.length > 0) {
     const parts: string[] = [];
     if (deduction.certainLeft.length > 0) {
-      parts.push(`у Левого: ${deduction.certainLeft.slice(0, 3).map(formatCardLabel).join(', ')}`);
+      parts.push(tr.deductionPart(false, deduction.certainLeft.slice(0, 3).map(formatCardLabel).join(', ')));
     }
     if (deduction.certainRight.length > 0) {
-      parts.push(`у Правого: ${deduction.certainRight.slice(0, 3).map(formatCardLabel).join(', ')}`);
+      parts.push(tr.deductionPart(true, deduction.certainRight.slice(0, 3).map(formatCardLabel).join(', ')));
     }
-    reasons.push(`По прошлым пасам точно вычислено — ${parts.join('; ')}.`);
+    reasons.push(tr.deducedCardsReason(parts));
   }
 
   // Fallback general summary if no specific tactical trigger fired
   if (reasons.length === 0) {
-    reasons.push(
-      `Оптимальный баланс темпа и риска: сохраняет больше легальных ходов на следующие круги.`,
-    );
+    reasons.push(tr.balancedTempoReason);
   }
 
   return reasons.slice(0, 3);
@@ -412,8 +406,17 @@ export function evaluatePlayerMoves(params: {
   passExclusions: PassExclusions;
   maxSamples?: number;
   rng?: Rng;
+  language?: Language;
 }): AdvisorRecommendation {
-  const { round, difficulty, passExclusions, maxSamples = 96, rng = createDefaultRng() } = params;
+  const {
+    round,
+    difficulty,
+    passExclusions,
+    maxSamples = 96,
+    rng = createDefaultRng(),
+    language = DEFAULT_LANGUAGE,
+  } = params;
+  const tr = getTranslations(language).advisor;
   const hand = round.hands[3];
   const leftCount = round.hands[1].length;
   const rightCount = round.hands[2].length;
@@ -478,12 +481,12 @@ export function evaluatePlayerMoves(params: {
       action: 'pass',
       bestCard: null,
       forced: true,
-      headline: `Обязательный пас (-$${PASS_PENALTY})`,
+      headline: tr.forcedPassHeadline(PASS_PENALTY),
       reasons: [
-        'В руке нет ни одной подходящей карты к открытым мастям.',
+        tr.noLegalCardsReason,
         hand.length > 0
-          ? `Ждут открытия мастей/рангов: ${waitingCards}${hand.length > 4 ? '…' : ''}.`
-          : 'Карты закончились.',
+          ? tr.waitingCardsReason(waitingCards, hand.length > 4)
+          : tr.handEmptyReason,
       ],
       candidates: [],
       deduction,
@@ -559,6 +562,7 @@ export function evaluatePlayerMoves(params: {
     leftCount,
     rightCount,
     bank: round.bank,
+    language,
   });
   best.reasons = reasons;
 
@@ -567,8 +571,8 @@ export function evaluatePlayerMoves(params: {
   const evSign = best.expectedNetCash >= 0 ? '+' : '-';
   const evAbs = Math.abs(Math.round(best.expectedNetCash));
   const headline = forced
-    ? `Вынужденный ход: ${formatCardLabel(best.card)} · Шанс ${winPct}%`
-    : `Лучший ход: ${formatCardLabel(best.card)} · Шанс ${winPct}% · EV ${evSign}$${evAbs}`;
+    ? tr.forcedPlayHeadline(formatCardLabel(best.card), winPct)
+    : tr.bestPlayHeadline(formatCardLabel(best.card), winPct, `${evSign}$${evAbs}`);
 
   return {
     action: 'play',

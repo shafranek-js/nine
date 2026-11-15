@@ -1,13 +1,10 @@
-import { ANTE_AMOUNT, PASS_PENALTY, type ClubTableId, type SeatIndex } from '../core/types';
+import { formatCardLabel, type AdvisorRecommendation } from '../core/advisor';
+import { getTranslations, SUPPORTED_LANGUAGES, type Language } from '../core/i18n';
+import { ANTE_AMOUNT, type ClubTableId, type SeatIndex } from '../core/types';
 import type { MoveLogEntry, SceneManager, TableTelemetry } from '../scenes/SceneManager';
+import { AdvisorMascot, type AdvisorMascotMood } from './AdvisorMascot';
 
 const SIDEBAR_STORAGE_KEY = 'nine_sidebars_hidden_v1';
-
-const TABLE_STAKES_LABELS: Record<ClubTableId, string> = {
-  1: 'Table #1 · Classic',
-  2: 'Table #2 · Club Shark',
-  3: 'Table #3 · High Stakes',
-};
 
 function loadSidebarHidden(): boolean {
   try {
@@ -17,11 +14,9 @@ function loadSidebarHidden(): boolean {
   }
 }
 
-import { AdvisorMascot, type AdvisorMascotMood } from './AdvisorMascot';
-import { formatCardLabel, type AdvisorRecommendation } from '../core/advisor';
-
 export class ShellControls {
   private readonly advisorMascot = new AdvisorMascot();
+  private advisorTitleEl!: HTMLElement;
   private advisorToggleBtn!: HTMLButtonElement;
   private advisorHeadlineEl!: HTMLElement;
   private advisorMetaEl!: HTMLElement;
@@ -30,6 +25,7 @@ export class ShellControls {
   private advisorDeductionEl!: HTMLElement;
   private lastAdvisorRenderSig = '';
   private lastLeadersRenderSig = '';
+  private lastLangSig: Language | '' = '';
   private readonly manager: SceneManager;
   private readonly appRoot: HTMLElement;
   private readonly leftPanel: HTMLElement;
@@ -43,18 +39,33 @@ export class ShellControls {
   private potBadge!: HTMLElement;
   private turnStatusEl!: HTMLElement;
   private seatRowsEl!: HTMLElement;
+  private moveLogTitleEl!: HTMLElement;
   private moveLogEl!: HTMLElement;
+  private rulesTitleEl!: HTMLElement;
+  private rulesListEl!: HTMLUListElement;
 
   // Dynamic right panel nodes
+  private clubRoomTitleEl!: HTMLElement;
   private clubTableLabelEl!: HTMLElement;
   private playerStatusEl!: HTMLElement;
+  private leadersHeadingEl!: HTMLElement;
   private leadersListEl!: HTMLElement;
+  private displayTitleEl!: HTMLElement;
+  private langBtns = new Map<Language, HTMLButtonElement>();
   private soundBtn!: HTMLButtonElement;
   private musicModeBtn!: HTMLButtonElement;
   private graphicsBtn!: HTMLButtonElement;
   private aspectBtn!: HTMLButtonElement;
   private scanlineBtn!: HTMLButtonElement;
   private hideSidebarsBtn!: HTMLButtonElement;
+  private navTitleEl!: HTMLElement;
+  private playBtn!: HTMLButtonElement;
+  private tableBtn!: HTMLButtonElement;
+  private menuBtn!: HTMLButtonElement;
+  private introBtn!: HTMLButtonElement;
+  private exportBtn!: HTMLButtonElement;
+  private importBtn!: HTMLButtonElement;
+  private resetBtn!: HTMLButtonElement;
   private fileInput!: HTMLInputElement;
 
   constructor(params: {
@@ -106,36 +117,30 @@ export class ShellControls {
   private buildLeftPanel(): void {
     const matchCard = this.makeEl('section', 'panel-card');
     const head = this.makeEl('div', 'panel-card-head');
-    this.leftSceneTitle = this.makeEl('span', 'panel-title', 'Card Table');
+    this.leftSceneTitle = this.makeEl('span', 'panel-title', '');
     const badges = this.makeEl('div', 'panel-badges');
-    this.roundBadge = this.makeEl('span', 'pill-badge', 'Round 1');
-    this.potBadge = this.makeEl('span', 'pill-badge pill-gold', 'Pot $0');
+    this.roundBadge = this.makeEl('span', 'pill-badge', '');
+    this.potBadge = this.makeEl('span', 'pill-badge pill-gold', '');
     badges.append(this.roundBadge, this.potBadge);
     head.append(this.leftSceneTitle, badges);
 
-    this.turnStatusEl = this.makeEl('div', 'turn-banner', 'Ready at the club');
+    this.turnStatusEl = this.makeEl('div', 'turn-banner', '');
     this.seatRowsEl = this.makeEl('div', 'seat-list');
     matchCard.append(head, this.turnStatusEl, this.seatRowsEl);
 
     const logCard = this.makeEl('section', 'panel-card panel-card-grow');
     const logHead = this.makeEl('div', 'panel-card-head');
-    logHead.append(this.makeEl('span', 'panel-title', 'Move Log'));
+    this.moveLogTitleEl = this.makeEl('span', 'panel-title', '');
+    logHead.append(this.moveLogTitleEl);
     this.moveLogEl = this.makeEl('ul', 'move-log');
     logCard.append(logHead, this.moveLogEl);
 
     const rulesCard = this.makeEl('section', 'panel-card');
     const rulesHead = this.makeEl('div', 'panel-card-head');
-    rulesHead.append(this.makeEl('span', 'panel-title', 'Rules of Nine'));
-    const rulesList = this.makeEl('ul', 'rules-list');
-    for (const line of [
-      '9♦ opens every round',
-      '9 opens any suit; play ±1 rank',
-      'Playable cards glow gold in hand',
-      `No move: Pass (-$${PASS_PENALTY}), Ante $${ANTE_AMOUNT}`,
-    ]) {
-      rulesList.append(this.makeEl('li', '', line));
-    }
-    rulesCard.append(rulesHead, rulesList);
+    this.rulesTitleEl = this.makeEl('span', 'panel-title', '');
+    rulesHead.append(this.rulesTitleEl);
+    this.rulesListEl = this.makeEl('ul', 'rules-list');
+    rulesCard.append(rulesHead, this.rulesListEl);
 
     this.leftPanel.append(matchCard, logCard, rulesCard);
   }
@@ -143,19 +148,36 @@ export class ShellControls {
   private buildRightPanel(): void {
     const clubCard = this.makeEl('section', 'panel-card');
     const clubHead = this.makeEl('div', 'panel-card-head');
-    clubHead.append(this.makeEl('span', 'panel-title', 'Club Room'));
-    this.clubTableLabelEl = this.makeEl('span', 'pill-badge pill-gold', 'Table #1');
-    clubHead.append(this.clubTableLabelEl);
+    this.clubRoomTitleEl = this.makeEl('span', 'panel-title', '');
+    this.clubTableLabelEl = this.makeEl('span', 'pill-badge pill-gold', '');
+    clubHead.append(this.clubRoomTitleEl, this.clubTableLabelEl);
 
-    this.playerStatusEl = this.makeEl('div', 'profile-line', 'Guest (F4 Sign In)');
-    const leadersTitle = this.makeEl('div', 'sub-heading', 'Top Club Leaders');
+    this.playerStatusEl = this.makeEl('div', 'profile-line', '');
+    this.leadersHeadingEl = this.makeEl('div', 'sub-heading', '');
     this.leadersListEl = this.makeEl('ol', 'leaders-list');
-    clubCard.append(clubHead, this.playerStatusEl, leadersTitle, this.leadersListEl);
+    clubCard.append(clubHead, this.playerStatusEl, this.leadersHeadingEl, this.leadersListEl);
 
     const settingsCard = this.makeEl('section', 'panel-card');
     const settingsHead = this.makeEl('div', 'panel-card-head');
-    settingsHead.append(this.makeEl('span', 'panel-title', 'Display & Audio'));
+    this.displayTitleEl = this.makeEl('span', 'panel-title', '');
+    settingsHead.append(this.displayTitleEl);
     settingsCard.append(settingsHead);
+
+    const langRow = this.makeEl('div', 'lang-segmented');
+    for (const item of SUPPORTED_LANGUAGES) {
+      const btn = this.makeButton(
+        item.shortLabel,
+        () => {
+          this.manager.ctx.setLanguage(item.code);
+          this.sync();
+        },
+        'lang-btn',
+      );
+      btn.title = item.nativeLabel;
+      this.langBtns.set(item.code, btn);
+      langRow.append(btn);
+    }
+    settingsCard.append(langRow);
 
     const settingsGrid = this.makeEl('div', 'btn-grid');
     this.graphicsBtn = this.makeButton('', () => {
@@ -188,7 +210,7 @@ export class ShellControls {
       this.manager.ctx.stage.setScanlines(next);
       this.sync();
     });
-    this.hideSidebarsBtn = this.makeButton('Hide Sidebars', () => {
+    this.hideSidebarsBtn = this.makeButton('', () => {
       this.setSidebarsHidden(true);
     });
     settingsGrid.append(
@@ -203,14 +225,15 @@ export class ShellControls {
 
     const navCard = this.makeEl('section', 'panel-card');
     const navHead = this.makeEl('div', 'panel-card-head');
-    navHead.append(this.makeEl('span', 'panel-title', 'Navigation & Save'));
+    this.navTitleEl = this.makeEl('span', 'panel-title', '');
+    navHead.append(this.navTitleEl);
     navCard.append(navHead);
 
     const navGrid = this.makeEl('div', 'btn-grid btn-grid-2col');
-    const playBtn = this.makeButton('Deal / Play (F1)', () => {
+    this.playBtn = this.makeButton('', () => {
       this.manager.ctx.goTo('table', 180);
     });
-    const tableBtn = this.makeButton('Switch Table (F3)', () => {
+    this.tableBtn = this.makeButton('', () => {
       const next = (((this.manager.ctx.config.clubTable % 3) + 1) as ClubTableId);
       this.manager.ctx.config.clubTable = next;
       this.manager.ctx.persistConfig();
@@ -219,13 +242,13 @@ export class ShellControls {
       }
       this.sync();
     });
-    const menuBtn = this.makeButton('Club Menu (Esc)', () => {
+    this.menuBtn = this.makeButton('', () => {
       this.manager.ctx.goTo('menu', 180);
     });
-    const introBtn = this.makeButton('Intro (F5)', () => {
+    this.introBtn = this.makeButton('', () => {
       this.manager.ctx.goTo('intro', 180);
     });
-    const exportBtn = this.makeButton('Export Scores', () => {
+    this.exportBtn = this.makeButton('', () => {
       const bytes = this.manager.exportNineResBytes();
       const blob = new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], {
         type: 'application/octet-stream',
@@ -237,7 +260,6 @@ export class ShellControls {
       a.click();
       URL.revokeObjectURL(url);
     });
-    exportBtn.title = 'Скачать файл рекордов и профилей (NINE.RES)';
 
     this.fileInput = document.createElement('input');
     this.fileInput.type = 'file';
@@ -254,16 +276,23 @@ export class ShellControls {
       this.fileInput.value = '';
     });
 
-    const importBtn = this.makeButton('Import Scores', () => {
+    this.importBtn = this.makeButton('', () => {
       this.fileInput.click();
     });
-    importBtn.title = 'Загрузить файл рекордов и профилей (NINE.RES)';
-    const resetBtn = this.makeButton('Reset Save', () => {
+    this.resetBtn = this.makeButton('', () => {
       this.manager.resetLocalSave();
       this.sync();
     }, 'shell-btn-danger');
 
-    navGrid.append(playBtn, tableBtn, menuBtn, introBtn, exportBtn, importBtn, resetBtn);
+    navGrid.append(
+      this.playBtn,
+      this.tableBtn,
+      this.menuBtn,
+      this.introBtn,
+      this.exportBtn,
+      this.importBtn,
+      this.resetBtn,
+    );
     navCard.append(navGrid, this.fileInput);
 
     const coachCard = this.buildCoachCard();
@@ -280,10 +309,9 @@ export class ShellControls {
 
     const titleWrap = document.createElement('div');
     titleWrap.className = 'advisor-title-wrap';
-    const title = document.createElement('h2');
-    title.className = 'panel-title';
-    title.textContent = 'Советник';
-    titleWrap.append(title);
+    this.advisorTitleEl = document.createElement('h2');
+    this.advisorTitleEl.className = 'panel-title';
+    titleWrap.append(this.advisorTitleEl);
 
     this.advisorToggleBtn = document.createElement('button');
     this.advisorToggleBtn.type = 'button';
@@ -333,7 +361,8 @@ export class ShellControls {
     return card;
   }
 
-  private renderAdvisor(inTableScene: boolean): void {
+  private renderAdvisor(inTableScene: boolean, lang: Language): void {
+    const t = getTranslations(lang).advisor;
     const coachOn = this.manager.ctx.coachMode;
     const hint: AdvisorRecommendation | null = coachOn ? this.manager.ctx.advisorHint : null;
 
@@ -345,7 +374,7 @@ export class ShellControls {
     }
     this.advisorMascot.setMood(mood);
 
-    const sig = `${coachOn ? 1 : 0}|${inTableScene ? 1 : 0}|${
+    const sig = `${lang}|${coachOn ? 1 : 0}|${inTableScene ? 1 : 0}|${
       hint
         ? `${hint.action}|${hint.headline}|${hint.sampleCount}|${hint.reasons.join(';')}|${hint.candidates.length}|${hint.deduction.unseenTotal}|${hint.deduction.excludedLeftCount}|${hint.deduction.excludedRightCount}`
         : 'none'
@@ -355,7 +384,8 @@ export class ShellControls {
     }
     this.lastAdvisorRenderSig = sig;
 
-    this.advisorToggleBtn.textContent = coachOn ? 'Обучение: ВКЛ' : 'Обучение: ВЫКЛ';
+    this.advisorTitleEl.textContent = t.title;
+    this.advisorToggleBtn.textContent = coachOn ? t.coachOn : t.coachOff;
     this.advisorToggleBtn.classList.toggle('is-active', coachOn);
 
     this.advisorHeadlineEl.replaceChildren();
@@ -365,31 +395,23 @@ export class ShellControls {
     this.advisorDeductionEl.replaceChildren();
 
     if (!coachOn) {
-      this.advisorHeadlineEl.textContent = 'Подсказки выключены';
-      this.advisorMetaEl.textContent = 'Нажмите «Обучение: ВЫКЛ», чтобы включить разбор.';
-      this.appendReasonItem(
-        'Включите режим обучения — советник оценит скрытые карты и объяснит оптимальный ход.',
-      );
+      this.advisorHeadlineEl.textContent = t.offHeadline;
+      this.advisorMetaEl.textContent = t.offMeta;
+      this.appendReasonItem(t.offReason);
       return;
     }
 
     if (!hint) {
-      this.advisorHeadlineEl.textContent = inTableScene ? 'Слежу за раздачей…' : 'Готов к обучению';
-      this.advisorMetaEl.textContent = inTableScene
-        ? 'Ходят соперники'
-        : 'Начните партию за любым столом';
-      this.appendReasonItem(
-        inTableScene
-          ? 'Когда наступит ваш ход, я переберу допустимые расклады и объясню лучший выбор.'
-          : 'Во время вашего хода здесь появится оптимальная карта и аргументация.',
-      );
+      this.advisorHeadlineEl.textContent = inTableScene ? t.watchingHeadline : t.readyHeadline;
+      this.advisorMetaEl.textContent = inTableScene ? t.watchingMeta : t.readyMeta;
+      this.appendReasonItem(inTableScene ? t.watchingReason : t.readyReason);
       return;
     }
 
     this.appendCardStyledText(this.advisorHeadlineEl, hint.headline);
     this.advisorMetaEl.textContent = hint.isExact
-      ? `Точный перебор (${hint.sampleCount} раскл.)`
-      : `Оценка по ${hint.sampleCount} раскл.`;
+      ? t.exactMeta(hint.sampleCount)
+      : t.approxMeta(hint.sampleCount);
 
     for (const reason of hint.reasons) {
       this.appendReasonItem(reason);
@@ -398,7 +420,7 @@ export class ShellControls {
     if (hint.candidates.length > 1) {
       const titleEl = document.createElement('div');
       titleEl.className = 'advisor-subhead';
-      titleEl.textContent = 'Сравнение ходов';
+      titleEl.textContent = t.compareMoves;
       this.advisorCandidatesEl.append(titleEl);
 
       for (let i = 0; i < Math.min(3, hint.candidates.length); i++) {
@@ -427,10 +449,10 @@ export class ShellControls {
       }
     }
 
-    const dedParts: string[] = [`Вне руки: ${hint.deduction.unseenTotal} карт`];
+    const dedParts: string[] = [t.unseenCards(hint.deduction.unseenTotal)];
     if (hint.deduction.excludedLeftCount > 0 || hint.deduction.excludedRightCount > 0) {
       dedParts.push(
-        `Пасы исключили: Л ${hint.deduction.excludedLeftCount}, П ${hint.deduction.excludedRightCount}`,
+        t.excludedByPasses(hint.deduction.excludedLeftCount, hint.deduction.excludedRightCount),
       );
     }
     const dedMain = document.createElement('div');
@@ -439,7 +461,7 @@ export class ShellControls {
 
     if (hint.deduction.certainLeft.length > 0) {
       const leftLine = document.createElement('div');
-      leftLine.append(document.createTextNode('Точно слева: '));
+      leftLine.append(document.createTextNode(t.certainLeft));
       this.appendCardStyledText(
         leftLine,
         hint.deduction.certainLeft.slice(0, 4).map(formatCardLabel).join(', '),
@@ -448,7 +470,7 @@ export class ShellControls {
     }
     if (hint.deduction.certainRight.length > 0) {
       const rightLine = document.createElement('div');
-      rightLine.append(document.createTextNode('Точно справа: '));
+      rightLine.append(document.createTextNode(t.certainRight));
       this.appendCardStyledText(
         rightLine,
         hint.deduction.certainRight.slice(0, 4).map(formatCardLabel).join(', '),
@@ -495,53 +517,68 @@ export class ShellControls {
   }
 
   private applySidebarVisibility(): void {
+    const t = getTranslations(this.manager.ctx.getLanguage()).shell;
     this.appRoot.classList.toggle('sidebars-hidden', this.sidebarsHidden);
-    this.focusPill.textContent = this.sidebarsHidden ? 'Show Club Panels' : 'Focus View';
+    this.focusPill.textContent = this.sidebarsHidden ? t.showPanels : t.focusView;
     this.manager.ctx.stage.applyViewportFit();
   }
 
-  private renderTelemetry(telemetry: TableTelemetry | null, playerLabel: string): void {
+  private formatMoveEntryText(entry: MoveLogEntry, lang: Language, playerLabel: string): string {
+    const ev = entry.event;
+    if (!ev) return entry.text;
+    const t = getTranslations(lang);
+    const seatName = (seat: SeatIndex): string =>
+      seat === 1 ? t.shell.leftRival : seat === 2 ? t.shell.rightRival : playerLabel;
+
+    if (ev.type === 'round') return t.scenes.logRound(ev.roundNumber, ev.pot);
+    if (ev.type === 'play') return t.scenes.logPlay(seatName(ev.seat), ev.cardLabel);
+    if (ev.type === 'pass') return t.scenes.logPass(seatName(ev.seat), ev.penalty);
+    return t.scenes.logWin(seatName(ev.seat), ev.roundNumber, ev.pot);
+  }
+
+  private renderTelemetry(telemetry: TableTelemetry | null, playerLabel: string, lang: Language): void {
+    const t = getTranslations(lang).shell;
     const sceneId = this.manager.getCurrentSceneId();
     if (!telemetry) {
-      this.leftSceneTitle.textContent = sceneId === 'menu' ? 'Club Lobby' : sceneId === 'dealer' ? 'Dealing...' : 'Monte Carlo 1993';
-      this.roundBadge.textContent = 'Lobby';
-      this.potBadge.textContent = `Ante $${ANTE_AMOUNT}`;
-      this.turnStatusEl.textContent =
-        sceneId === 'menu' ? 'Pick F1 Play, F3 Switch Table, or F4 Sign In.' : 'Enter the club lobby to start a deal.';
+      this.leftSceneTitle.textContent =
+        sceneId === 'menu' ? t.clubLobby : sceneId === 'dealer' ? t.dealing : t.monteCarloTitle;
+      this.roundBadge.textContent = t.lobbyBadge;
+      this.potBadge.textContent = t.anteBadge(ANTE_AMOUNT);
+      this.turnStatusEl.textContent = sceneId === 'menu' ? t.readyBannerMenu : t.readyBannerIntro;
       this.seatRowsEl.innerHTML = '';
       this.moveLogEl.innerHTML = '';
-      this.moveLogEl.append(this.makeEl('li', 'move-empty', 'Deal a round to see live play history.'));
+      this.moveLogEl.append(this.makeEl('li', 'move-empty', t.dealToSeeHistory));
       return;
     }
 
-    this.leftSceneTitle.textContent = 'Active Match';
-    this.roundBadge.textContent = `Round #${telemetry.roundNumber}`;
-    this.potBadge.textContent = `Pot $${telemetry.bank}`;
+    this.leftSceneTitle.textContent = t.activeMatch;
+    this.roundBadge.textContent = t.roundBadge(telemetry.roundNumber);
+    this.potBadge.textContent = t.potBadge(telemetry.bank);
 
     const turnLabel =
       telemetry.phase === 'roundEnd'
-        ? 'Round finished'
+        ? t.roundFinished
         : telemetry.phase === 'matchEnd'
-          ? 'Match complete'
+          ? t.matchComplete
           : telemetry.currentTurn === 3
-            ? `Your turn (${playerLabel})`
+            ? t.yourTurn(playerLabel)
             : telemetry.currentTurn === 1
-              ? 'Left Rival thinking...'
+              ? t.leftThinking
               : telemetry.currentTurn === 2
-                ? 'Right Rival thinking...'
-                : 'Dealing ante...';
+                ? t.rightThinking
+                : t.dealingAnte;
     this.turnStatusEl.textContent = turnLabel;
 
     const seats: readonly { seat: SeatIndex; name: string }[] = [
-      { seat: 1, name: 'Left Rival' },
-      { seat: 2, name: 'Right Rival' },
+      { seat: 1, name: t.leftRival },
+      { seat: 2, name: t.rightRival },
       { seat: 3, name: playerLabel },
     ];
     this.seatRowsEl.innerHTML = '';
     for (const s of seats) {
       const row = this.makeEl('div', telemetry.currentTurn === s.seat ? 'seat-row seat-row-active' : 'seat-row');
       const left = this.makeEl('span', 'seat-name', s.name);
-      const mid = this.makeEl('span', 'seat-cards', `${telemetry.handCounts[s.seat]} cards`);
+      const mid = this.makeEl('span', 'seat-cards', t.seatCards(telemetry.handCounts[s.seat]));
       const right = this.makeEl('span', 'seat-cash', `$${telemetry.cash[s.seat]}`);
       row.append(left, mid, right);
       this.seatRowsEl.append(row);
@@ -549,35 +586,70 @@ export class ShellControls {
 
     this.moveLogEl.innerHTML = '';
     if (telemetry.moves.length === 0) {
-      this.moveLogEl.append(this.makeEl('li', 'move-empty', 'Waiting for 9♦ opening move...'));
+      this.moveLogEl.append(this.makeEl('li', 'move-empty', t.waitingOpeningNine));
     } else {
       for (const m of telemetry.moves) {
-        this.moveLogEl.append(this.makeMoveItem(m));
+        const text = this.formatMoveEntryText(m, lang, playerLabel);
+        this.moveLogEl.append(this.makeEl('li', `move-item move-${m.kind}`, text));
       }
     }
   }
 
-  private makeMoveItem(entry: MoveLogEntry): HTMLLIElement {
-    const li = this.makeEl('li', `move-item move-${entry.kind}`, entry.text);
-    return li;
+  private renderStaticLocalizedLabels(lang: Language): void {
+    const tr = getTranslations(lang);
+    const s = tr.shell;
+    if (this.lastLangSig !== lang) {
+      this.lastLangSig = lang;
+      this.moveLogTitleEl.textContent = s.moveLogTitle;
+      this.rulesTitleEl.textContent = s.rulesTitle;
+      this.rulesListEl.replaceChildren();
+      for (const line of s.rules) {
+        this.rulesListEl.append(this.makeEl('li', '', line));
+      }
+      this.clubRoomTitleEl.textContent = s.clubRoom;
+      this.leadersHeadingEl.textContent = s.topClubLeaders;
+      this.displayTitleEl.textContent = s.displayAudio;
+      this.hideSidebarsBtn.textContent = s.hideSidebars;
+      this.navTitleEl.textContent = s.navSave;
+      this.playBtn.textContent = s.dealPlay;
+      this.tableBtn.textContent = s.switchTable;
+      this.menuBtn.textContent = s.clubMenu;
+      this.introBtn.textContent = s.intro;
+      this.exportBtn.textContent = s.exportScores;
+      this.exportBtn.title = s.exportTip;
+      this.importBtn.textContent = s.importScores;
+      this.importBtn.title = s.importTip;
+      this.resetBtn.textContent = s.resetSave;
+      this.focusPill.textContent = this.sidebarsHidden ? s.showPanels : s.focusView;
+    }
+
+    for (const [code, btn] of this.langBtns.entries()) {
+      btn.classList.toggle('is-active', code === lang);
+    }
   }
 
   sync(): void {
     const { config, sessionPlayer, audio, highScores, tableTelemetry } = this.manager.ctx;
+    const lang = this.manager.ctx.getLanguage();
+    const tr = getTranslations(lang);
+    const s = tr.shell;
+
+    this.renderStaticLocalizedLabels(lang);
+
     const sndOn = config.soundMusicEnabled;
     const unlocked = audio.isUnlocked();
-    const playerLabel = sessionPlayer.loggedIn ? sessionPlayer.name : 'You';
+    const playerLabel = sessionPlayer.loggedIn ? sessionPlayer.name : s.you;
 
-    this.soundBtn.textContent = sndOn ? (unlocked ? 'Audio: ON' : 'Audio: Wake') : 'Audio: OFF';
-    this.musicModeBtn.textContent = audio.music.getMusicMode() === 'mp3' ? 'Music: MP3' : 'Music: OPL2';
-    this.graphicsBtn.textContent = this.manager.ctx.getGraphicsMode() === 'hd' ? 'Graphics: HD' : 'Graphics: EGA 93';
-    this.aspectBtn.textContent = this.manager.ctx.stage.getAspectMode() === '1:1' ? 'Aspect: 1:1' : 'Aspect: 4:3';
-    this.scanlineBtn.textContent = this.manager.ctx.stage.isScanlinesEnabled() ? 'CRT: ON' : 'CRT: OFF';
+    this.soundBtn.textContent = sndOn ? (unlocked ? s.audioOn : s.audioWake) : s.audioOff;
+    this.musicModeBtn.textContent = audio.music.getMusicMode() === 'mp3' ? s.musicMp3 : s.musicOpl2;
+    this.graphicsBtn.textContent = this.manager.ctx.getGraphicsMode() === 'hd' ? s.graphicsHd : s.graphicsEga;
+    this.aspectBtn.textContent = this.manager.ctx.stage.getAspectMode() === '1:1' ? s.aspect1to1 : s.aspect4to3;
+    this.scanlineBtn.textContent = this.manager.ctx.stage.isScanlinesEnabled() ? s.crtOn : s.crtOff;
 
-    this.clubTableLabelEl.textContent = TABLE_STAKES_LABELS[config.clubTable];
+    this.clubTableLabelEl.textContent = tr.tableStakes[config.clubTable];
     this.playerStatusEl.textContent = sessionPlayer.loggedIn
-      ? `Signed in: ${sessionPlayer.name} (Carryover $${200 + sessionPlayer.clubCarryover})`
-      : 'Guest session · Press F4 in Menu to sign in';
+      ? s.signedIn(sessionPlayer.name, sessionPlayer.clubCarryover)
+      : s.guestSession;
 
     const tableRows = highScores[config.clubTable] ?? [];
     const topRows = [...tableRows]
@@ -588,7 +660,7 @@ export class ShellControls {
       .sort((a, b) => b.score - a.score)
       .slice(0, 3);
     const canSwitch = tableTelemetry === null;
-    const leadersSig = `${config.clubTable}|${canSwitch ? 1 : 0}|${
+    const leadersSig = `${lang}|${config.clubTable}|${canSwitch ? 1 : 0}|${
       sessionPlayer.loggedIn ? sessionPlayer.name.toLowerCase() : ''
     }|${topRows.map((r) => `${r.name.trim()}:${r.score}:${r.password}`).join(',')}`;
 
@@ -596,7 +668,7 @@ export class ShellControls {
       this.lastLeadersRenderSig = leadersSig;
       this.leadersListEl.innerHTML = '';
       if (topRows.length === 0) {
-        this.leadersListEl.append(this.makeEl('li', 'leader-empty', 'No recorded scores yet'));
+        this.leadersListEl.append(this.makeEl('li', 'leader-empty', s.noScoresYet));
       } else {
         for (const row of topRows) {
           const cleanName = row.name.trim();
@@ -608,8 +680,8 @@ export class ShellControls {
           );
           if (canSwitch && cleanName !== 'Noname') {
             li.title = isCurrent
-              ? `Активный игрок: ${cleanName}`
-              : `Выбрать игрока ${cleanName} в один клик`;
+              ? s.activePlayerTip(cleanName)
+              : s.oneClickSignInTip(cleanName);
             li.addEventListener('click', () => {
               this.manager.ctx.signInPlayer(cleanName, row.password);
               this.manager.ctx.audio.sfx.coinChime();
@@ -624,7 +696,7 @@ export class ShellControls {
       }
     }
 
-    this.renderTelemetry(tableTelemetry, playerLabel);
-    this.renderAdvisor(tableTelemetry !== null);
+    this.renderTelemetry(tableTelemetry, playerLabel, lang);
+    this.renderAdvisor(tableTelemetry !== null, lang);
   }
 }

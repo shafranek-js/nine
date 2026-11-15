@@ -5,6 +5,7 @@ import {
   getAllCurrentlyLegalCards,
   type PassExclusions,
 } from '../src/core/advisor.js';
+import { DEFAULT_LANGUAGE, getTranslations, normalizeLanguage, SUPPORTED_LANGUAGES } from '../src/core/i18n.js';
 import { createSeededRng } from '../src/core/rng.js';
 import { cardKey, createEmptyTableBounds, SUITS } from '../src/core/rules.js';
 import { Suit, type Card, type Rank, type RoundState } from '../src/core/types.js';
@@ -27,7 +28,7 @@ function buildRemainingCardsExcluding(excludedKeys: Set<string>): Card[] {
 }
 
 describe('Advisor / Coach engine (fair-play deduction & EV search)', () => {
-  it('recommends forced 9♦ on opening turn with Russian explanation', () => {
+  it('recommends forced 9♦ on opening turn with English explanation by default', () => {
     const round: RoundState = {
       hands: {
         1: [{ suit: Suit.Spades, rank: 9 }],
@@ -93,7 +94,7 @@ describe('Advisor / Coach engine (fair-play deduction & EV search)', () => {
     expect(rec.action).toBe('pass');
     expect(rec.bestCard).toBeNull();
     expect(rec.candidates).toHaveLength(0);
-    expect(rec.headline).toMatch(/пас/i);
+    expect(rec.headline).toMatch(/pass/i);
     expect(rec.reasons.length).toBeGreaterThanOrEqual(2);
   });
 
@@ -299,5 +300,48 @@ describe('Advisor / Coach engine (fair-play deduction & EV search)', () => {
     const legal = getAllCurrentlyLegalCards(bounds, false);
     const labels = legal.map(formatCardLabel).sort();
     expect(labels).toEqual(['7♦', 'J♦', '9♠', '9♣', '9♥'].sort());
+  });
+
+  it('localizes advisor headlines and reasons across en, ru, uk, de', () => {
+    expect(DEFAULT_LANGUAGE).toBe('en');
+    expect(normalizeLanguage('RU')).toBe('ru');
+    expect(normalizeLanguage('uk-UA')).toBe('uk');
+    expect(normalizeLanguage('de-AT')).toBe('de');
+    expect(normalizeLanguage('fr')).toBe('en');
+
+    const round: RoundState = {
+      hands: {
+        1: [{ suit: Suit.Spades, rank: 9 }],
+        2: [{ suit: Suit.Clubs, rank: 9 }],
+        3: [
+          { suit: Suit.Diamonds, rank: 9 },
+          { suit: Suit.Hearts, rank: 9 },
+          { suit: Suit.Spades, rank: 8 },
+        ],
+      },
+      tableBounds: createEmptyTableBounds(),
+      playedCount: 0,
+      currentTurn: 3,
+      isFirstTurnOfRound: true,
+      bank: 60,
+      roundOver: false,
+      winner: null,
+    };
+
+    const headlines = new Set<string>();
+    for (const { code: language } of SUPPORTED_LANGUAGES) {
+      const rec = evaluatePlayerMoves({
+        round,
+        difficulty: 2,
+        passExclusions: emptyExclusions(),
+        rng: createSeededRng(42),
+        language,
+      });
+      expect(rec.headline).toContain('9♦');
+      expect(rec.reasons[0]).toBeTruthy();
+      expect(getTranslations(language).htmlLang).toBe(language);
+      headlines.add(rec.headline);
+    }
+    expect(headlines.size).toBe(4);
   });
 });

@@ -1,4 +1,5 @@
 import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
+import { getTranslations } from '../core/i18n';
 import { lookupPlayer } from '../core/persistence';
 import { SCREEN_HEIGHT, SCREEN_WIDTH, type ClubTableId } from '../core/types';
 import { sliceTexture } from '../engine/BitmapFont';
@@ -135,6 +136,12 @@ export class ClubMenuScene implements Scene {
 
   onGraphicsModeChanged(): void {
     this.buildVisuals();
+  }
+
+  onLanguageChanged(): void {
+    if (this.ctx?.getGraphicsMode() === 'hd') {
+      this.buildVisuals();
+    }
   }
 
   onSessionChanged(): void {
@@ -317,7 +324,8 @@ export class ClubMenuScene implements Scene {
     this.hdDealLayer.addChild(dealer.container);
     this.hdDealer = dealer;
 
-    const dealCaption = createHdTextSprite('SHUFFLING THE DECK...', 320, 22, {
+    const dealCaptionText = getTranslations(ctx.getLanguage()).scenes.menuShuffling;
+    const dealCaption = createHdTextSprite(dealCaptionText, 320, 22, {
       font: '600 10px Georgia, "Times New Roman", serif',
       fill: ['#fff1bd', '#d49a24'],
       align: 'center',
@@ -437,12 +445,15 @@ export class ClubMenuScene implements Scene {
           .stroke({ color: 0xf7d478, width: 1.15, alpha: 0.78 });
         this.hdHoverHaloLayer.addChild(halo);
 
+        const tr = getTranslations(this.ctx.getLanguage()).scenes;
         let caption = btn.label;
-        if (btn.id === 2) caption = config.soundMusicEnabled ? 'AUDIO: ON' : 'AUDIO: OFF';
-        else if (btn.id === 3) caption = `TABLE ${romanTable}`;
-        else if (btn.id === 4 && this.ctx.sessionPlayer.loggedIn) caption = this.ctx.sessionPlayer.name;
+        if (btn.id === 1) caption = tr.menuBtnPlay;
+        else if (btn.id === 2) caption = config.soundMusicEnabled ? tr.menuBtnAudioOn : tr.menuBtnAudioOff;
+        else if (btn.id === 3) caption = tr.menuBtnTable(romanTable);
+        else if (btn.id === 4) caption = this.ctx.sessionPlayer.loggedIn ? this.ctx.sessionPlayer.name : tr.menuBtnSignIn;
+        else if (btn.id === 5) caption = tr.menuBtnExit;
 
-        const pillW = Math.max(66, Math.min(110, caption.length * 6.8 + 20));
+        const pillW = Math.max(66, Math.min(126, caption.length * 6.8 + 20));
         const pillX = Math.max(6, Math.min(SCREEN_WIDTH - pillW - 6, btn.x + (btn.w - pillW) * 0.5));
         const pillY = 273;
 
@@ -507,7 +518,8 @@ export class ClubMenuScene implements Scene {
     const suitColors = [0xb81a28, 0x1b202b, 0x7b4c14];
     const rankColorHex = ['#c41d2d', '#1c2433', '#8c5a18'][tableId - 1] ?? '#c41d2d';
 
-    const leftHeader = createHdTextSprite(`9♥   CLUB TABLE ${roman}`, 138, 18, {
+    const tr = getTranslations(this.ctx.getLanguage()).scenes;
+    const leftHeader = createHdTextSprite(tr.menuClubTable(roman), 138, 18, {
       font: 'bold 9.5px Georgia, "Times New Roman", serif',
       fill: rankColorHex,
       align: 'left',
@@ -515,7 +527,7 @@ export class ClubMenuScene implements Scene {
     leftHeader.position.set(170, 124);
     this.hdTableLayer.addChild(leftHeader);
 
-    const rightHeader = createHdTextSprite('9♠   HIGH SCORES', 138, 18, {
+    const rightHeader = createHdTextSprite(tr.menuHighScores, 138, 18, {
       font: 'bold 9.5px Georgia, "Times New Roman", serif',
       fill: '#1b202b',
       align: 'left',
@@ -613,7 +625,8 @@ export class ClubMenuScene implements Scene {
     }
     this.hdInputLayer.removeChildren();
 
-    const promptLabel = this.loginPhase === 'enteringPassword' ? 'PASSWORD:' : 'NEW PLAYER:';
+    const tr = getTranslations(this.ctx.getLanguage()).scenes;
+    const promptLabel = this.loginPhase === 'enteringPassword' ? tr.menuPassword : tr.menuNewPlayer;
     const promptSpr = createHdTextSprite(promptLabel, 130, 16, {
       font: 'bold 8.5px Georgia, "Times New Roman", serif',
       fill: this.loginPhase !== 'idle' ? '#b81a28' : '#5e4926',
@@ -641,7 +654,7 @@ export class ClubMenuScene implements Scene {
       shown = this.ctx.sessionPlayer.name;
     }
 
-    const fieldText = shown || 'Click or press F4';
+    const fieldText = shown || tr.menuClickOrF4;
     const textSpr = createHdTextSprite(fieldText, 120, 14, {
       font: `${shown ? 'bold' : 'italic'} 8.5px "Segoe UI", system-ui, sans-serif`,
       fill: shown ? '#1b1d24' : '#8a7c63',

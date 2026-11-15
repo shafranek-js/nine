@@ -1,4 +1,5 @@
 import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
+import { getTranslations } from '../core/i18n';
 import { SCREEN_HEIGHT, SCREEN_WIDTH } from '../core/types';
 import { sliceTexture } from '../engine/BitmapFont';
 import {
@@ -80,6 +81,12 @@ export class IntroScene implements Scene {
 
   onGraphicsModeChanged(): void {
     this.buildVisuals();
+  }
+
+  onLanguageChanged(): void {
+    if (this.ctx?.getGraphicsMode() === 'hd') {
+      this.buildVisuals();
+    }
   }
 
   private buildVisuals(): void {
@@ -193,7 +200,8 @@ export class IntroScene implements Scene {
     credits.position.set(SCREEN_WIDTH * 0.5, 319);
     this.viewRoot.addChild(credits);
 
-    const prompt = createHdTextSprite('CLICK OR PRESS ANY KEY TO ENTER THE CLUB', 420, 16, {
+    const promptText = getTranslations(ctx.getLanguage()).scenes.introPrompt;
+    const prompt = createHdTextSprite(promptText, 420, 16, {
       font: '600 8.5px Georgia, "Times New Roman", serif',
       fill: '#ffe49e',
       align: 'center',

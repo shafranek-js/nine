@@ -1,5 +1,6 @@
 import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
 import { selectBotMove } from '../core/ai';
+import { DEFAULT_LANGUAGE, getTranslations } from '../core/i18n';
 import { upsertHighScore } from '../core/persistence';
 import { createDefaultRng, type Rng } from '../core/rng';
 import {
@@ -41,7 +42,7 @@ import {
   type RivalAnimMode,
 } from '../engine/hdCharacters';
 import type { AspectMode } from '../engine/StageApp';
-import type { GameContext, MoveLogEntry, Scene } from './SceneManager';
+import type { GameContext, MoveLogEntry, MoveLogEvent, Scene } from './SceneManager';
 import {
   evaluatePlayerMoves,
   getAllCurrentlyLegalCards,
@@ -478,6 +479,17 @@ export class GameTableScene implements Scene {
     }
   }
 
+  onLanguageChanged(): void {
+    this.refreshAdvisorHint();
+    if (this.statusBanner && this.ctx) {
+      this.statusBanner = getTranslations(this.ctx.getLanguage()).scenes.tableNoLegalMovesPass(PASS_PENALTY);
+    }
+    if (this.ctx?.getGraphicsMode() === 'hd') {
+      this.rebuildVisualsForModeChange();
+    }
+    this.emitTelemetry();
+  }
+
   private rebuildVisualsForModeChange(): void {
     this.buildVisuals();
     this.restoreBoardFromMatch();
@@ -654,7 +666,8 @@ export class GameTableScene implements Scene {
     this.hdCandelabras.push(candLeft, candRight);
 
     const pedestalAnchorY = 16.2 / 17;
-    const bankPedestal = createHdGoldLabel('BANK', {
+    const bankLabel = getTranslations(ctx.getLanguage()).scenes.tableBankLabel;
+    const bankPedestal = createHdGoldLabel(bankLabel, {
       anchorY: pedestalAnchorY,
       textHeight: 9.0,
       withPedestal: true,
@@ -749,13 +762,19 @@ export class GameTableScene implements Scene {
   }
 
   private seatDisplayName(seat: SeatIndex): string {
-    if (seat === 1) return 'Left Rival';
-    if (seat === 2) return 'Right Rival';
-    return this.ctx?.sessionPlayer.loggedIn ? this.ctx.sessionPlayer.name : 'You';
+    const tr = getTranslations(this.ctx?.getLanguage() ?? DEFAULT_LANGUAGE);
+    if (seat === 1) return tr.shell.leftRival;
+    if (seat === 2) return tr.shell.rightRival;
+    return this.ctx?.sessionPlayer.loggedIn ? this.ctx.sessionPlayer.name : tr.shell.you;
   }
 
-  private pushMoveLog(kind: MoveLogEntry['kind'], text: string, seat?: SeatIndex): void {
-    this.moveLog.unshift({ id: this.nextMoveId++, kind, seat, text });
+  private pushMoveLog(
+    kind: MoveLogEntry['kind'],
+    text: string,
+    seat?: SeatIndex,
+    event?: MoveLogEvent,
+  ): void {
+    this.moveLog.unshift({ id: this.nextMoveId++, kind, seat, text, event });
     if (this.moveLog.length > 18) {
       this.moveLog.length = 18;
     }
@@ -805,7 +824,16 @@ export class GameTableScene implements Scene {
     }
     this.phase = 'anteIntro';
     this.phaseTimerMs = 0;
-    this.pushMoveLog('round', `Round #${this.match.roundNumber} · Pot $${this.match.round?.bank ?? 0}`);
+    const pot = this.match.round?.bank ?? 0;
+    const roundLogText = getTranslations(this.ctx?.getLanguage() ?? DEFAULT_LANGUAGE).scenes.logRound(
+      this.match.roundNumber,
+      pot,
+    );
+    this.pushMoveLog('round', roundLogText, undefined, {
+      type: 'round',
+      roundNumber: this.match.roundNumber,
+      pot,
+    });
     this.emitTelemetry();
   }
 
@@ -1092,7 +1120,16 @@ export class GameTableScene implements Scene {
 
     const prevBank = this.match.round?.bank ?? 0;
     this.match = applyMove(this.match, card);
-    this.pushMoveLog('play', `${this.seatDisplayName(seat)}: ${formatCardShort(card)}`, seat);
+    const cardLabel = formatCardShort(card);
+    const playLogText = getTranslations(this.ctx.getLanguage()).scenes.logPlay(
+      this.seatDisplayName(seat),
+      cardLabel,
+    );
+    this.pushMoveLog('play', playLogText, seat, {
+      type: 'play',
+      seat,
+      cardLabel,
+    });
     if (this.match.round?.roundOver) {
       this.roundWinner = this.match.round.winner;
       this.roundWonPot = prevBank;
@@ -1184,7 +1221,15 @@ export class GameTableScene implements Scene {
     this.match = applyPass(this.match);
     this.renderCashAndBankHud();
     this.renderStatusBanner();
-    this.pushMoveLog('pass', `${this.seatDisplayName(seat)}: pass (-$${PASS_PENALTY})`, seat);
+    const passLogText = getTranslations(this.ctx?.getLanguage() ?? DEFAULT_LANGUAGE).scenes.logPass(
+      this.seatDisplayName(seat),
+      PASS_PENALTY,
+    );
+    this.pushMoveLog('pass', passLogText, seat, {
+      type: 'pass',
+      seat,
+      penalty: PASS_PENALTY,
+    });
 
     if (seat === 1) {
       this.spawnCoinFlight(56, 170, 165, 42, 380);
@@ -1210,7 +1255,9 @@ export class GameTableScene implements Scene {
     if (round.currentTurn === 3) {
       const legal = getLegalMoves(round.hands[3], round.tableBounds, round.isFirstTurnOfRound);
       if (legal.length === 0) {
-        this.statusBanner = `NO LEGAL MOVES — PASS -$${PASS_PENALTY}`;
+        this.statusBanner = getTranslations(this.ctx?.getLanguage() ?? DEFAULT_LANGUAGE).scenes.tableNoLegalMovesPass(
+          PASS_PENALTY,
+        );
       } else {
         this.statusBanner = '';
       }
@@ -1240,6 +1287,7 @@ export class GameTableScene implements Scene {
       round,
       difficulty: this.match.clubTable,
       passExclusions: this.passExclusions,
+      language: this.ctx.getLanguage(),
     });
   }
 
@@ -1254,7 +1302,17 @@ export class GameTableScene implements Scene {
     this.renderStatusBanner();
 
     const winner = this.roundWinner ?? 3;
-    this.pushMoveLog('win', `${this.seatDisplayName(winner)} won Round #${this.match.roundNumber} (+$${this.roundWonPot})`, winner);
+    const winLogText = getTranslations(this.ctx?.getLanguage() ?? DEFAULT_LANGUAGE).scenes.logWin(
+      this.seatDisplayName(winner),
+      this.match.roundNumber,
+      this.roundWonPot,
+    );
+    this.pushMoveLog('win', winLogText, winner, {
+      type: 'win',
+      seat: winner,
+      roundNumber: this.match.roundNumber,
+      pot: this.roundWonPot,
+    });
     const dstX = winner === 1 ? 56 : winner === 2 ? 568 : 316;
     const dstY = winner === 3 ? 232 : 170;
     if (this.roundWonPot > 0) {
@@ -1344,7 +1402,9 @@ export class GameTableScene implements Scene {
     backdrop.roundRect(189, 107, 262, 134, 7).stroke({ color: 0xd9ad42, width: 0.7, alpha: 0.5 });
     this.overlayLayer.addChild(backdrop);
 
-    const titleSpr = createHdTextSprite(humanWon ? 'VICTORY!' : 'BANKRUPT', 240, 28, {
+    const tr = getTranslations(this.ctx.getLanguage()).scenes;
+
+    const titleSpr = createHdTextSprite(humanWon ? tr.matchEndVictory : tr.matchEndBankrupt, 240, 28, {
       font: 'bold 18px Georgia, "Times New Roman", serif',
       fill: humanWon ? ['#fff3be', '#d99e26'] : ['#ff9696', '#c42938'],
       align: 'center',
@@ -1355,7 +1415,7 @@ export class GameTableScene implements Scene {
     titleSpr.position.set(SCREEN_WIDTH * 0.5, 130);
     this.overlayLayer.addChild(titleSpr);
 
-    const cashSpr = createHdTextSprite(`FINAL CASH: $${this.match.cash[3]}`, 240, 18, {
+    const cashSpr = createHdTextSprite(tr.finalCash(this.match.cash[3]), 240, 18, {
       font: '600 11px "Segoe UI", system-ui, sans-serif',
       fill: '#f0e4c8',
       align: 'center',
@@ -1364,7 +1424,7 @@ export class GameTableScene implements Scene {
     cashSpr.position.set(SCREEN_WIDTH * 0.5, 164);
     this.overlayLayer.addChild(cashSpr);
 
-    const scoreSpr = createHdTextSprite(`CLUB SCORE: ${finalScore}`, 240, 18, {
+    const scoreSpr = createHdTextSprite(tr.clubScore(finalScore), 240, 18, {
       font: 'bold 11.5px "Segoe UI", system-ui, sans-serif',
       fill: '#ffe18c',
       align: 'center',
@@ -1373,7 +1433,7 @@ export class GameTableScene implements Scene {
     scoreSpr.position.set(SCREEN_WIDTH * 0.5, 186);
     this.overlayLayer.addChild(scoreSpr);
 
-    const promptSpr = createHdTextSprite('CLICK OR PRESS ANY KEY TO CONTINUE', 240, 16, {
+    const promptSpr = createHdTextSprite(tr.continuePrompt, 240, 16, {
       font: '600 8.5px Georgia, serif',
       fill: '#cbb98c',
       align: 'center',

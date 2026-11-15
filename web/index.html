@@ -342,6 +342,31 @@
         border-color: rgba(228, 92, 102, 0.72);
       }
 
+      .lang-segmented {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 4px;
+        margin-bottom: 7px;
+      }
+
+      .lang-btn {
+        padding: 4px 0;
+        font-size: 10.5px;
+        letter-spacing: 0.04em;
+      }
+
+      .lang-btn.is-active {
+        background: rgba(212, 175, 55, 0.22);
+        border-color: rgba(242, 206, 98, 0.78);
+        color: #fff2c2;
+      }
+
+      body.mode-ega .lang-btn.is-active {
+        background: #232d42;
+        border-color: #6b88bd;
+        color: #f4f7ff;
+      }
+
       .stage-column {
         position: relative;
         min-width: 0;
