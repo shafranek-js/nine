@@ -128,6 +128,13 @@ export interface Translations {
     readonly title: string;
     readonly coachOn: string;
     readonly coachOff: string;
+    readonly xrayOn: string;
+    readonly xrayOff: string;
+    readonly xrayMeta: string;
+    readonly xrayHandsHeader: (leftCount: number, rightCount: number) => string;
+    readonly xrayLeftLabel: string;
+    readonly xrayRightLabel: string;
+    readonly xrayForceImmediatePassReason: (target: 'left' | 'right' | 'both', penalty: number) => string;
     readonly offHeadline: string;
     readonly offMeta: string;
     readonly offReason: string;
@@ -274,6 +281,16 @@ const EN: Translations = {
     title: 'Advisor',
     coachOn: 'Coach: ON',
     coachOff: 'Coach: OFF',
+    xrayOn: 'X-Ray: ON',
+    xrayOff: 'X-Ray: OFF',
+    xrayMeta: 'X-Ray · Sees all hands',
+    xrayHandsHeader: (l, r) => `X-Ray hands · L ${l}, R ${r}`,
+    xrayLeftLabel: 'Left: ',
+    xrayRightLabel: 'Right: ',
+    xrayForceImmediatePassReason: (target, penalty) =>
+      target === 'both'
+        ? `X-Ray: forces both rivals to pass immediately (-$${penalty} each).`
+        : `X-Ray: leaves ${target === 'right' ? 'Right' : 'Left'} Rival with no legal move (-$${penalty}).`,
     offHeadline: 'Hints are paused',
     offMeta: 'Click "Coach: OFF" to enable analysis.',
     offReason: 'Turn on the coach to evaluate hidden cards and explain the strongest move.',
@@ -423,6 +440,16 @@ const RU: Translations = {
     title: 'Советник',
     coachOn: 'Обучение: ВКЛ',
     coachOff: 'Обучение: ВЫКЛ',
+    xrayOn: 'Рентген: ВКЛ',
+    xrayOff: 'Рентген: ВЫКЛ',
+    xrayMeta: 'Рентген · Видит все карты',
+    xrayHandsHeader: (l, r) => `Карты (рентген) · Л: ${l}, П: ${r}`,
+    xrayLeftLabel: 'Левый: ',
+    xrayRightLabel: 'Правый: ',
+    xrayForceImmediatePassReason: (target, penalty) =>
+      target === 'both'
+        ? `Рентген: сразу заставляет пасовать обоих соперников (по -$${penalty}).`
+        : `Рентген: ${target === 'right' ? 'Правый' : 'Левый'} сразу остаётся без хода и платит -$${penalty}.`,
     offHeadline: 'Подсказки выключены',
     offMeta: 'Нажмите «Обучение: ВЫКЛ», чтобы включить разбор.',
     offReason: 'Включите режим обучения — советник оценит скрытые карты и объяснит оптимальный ход.',
@@ -574,6 +601,16 @@ const UK: Translations = {
     title: 'Радник',
     coachOn: 'Навчання: УВІМК',
     coachOff: 'Навчання: ВИМК',
+    xrayOn: 'Рентген: УВІМК',
+    xrayOff: 'Рентген: ВИМК',
+    xrayMeta: 'Рентген · Бачить усі карти',
+    xrayHandsHeader: (l, r) => `Карти (рентген) · Л: ${l}, П: ${r}`,
+    xrayLeftLabel: 'Лівий: ',
+    xrayRightLabel: 'Правий: ',
+    xrayForceImmediatePassReason: (target, penalty) =>
+      target === 'both'
+        ? `Рентген: одразу змушує пасувати обох суперників (по -$${penalty}).`
+        : `Рентген: ${target === 'right' ? 'Правий' : 'Лівий'} одразу лишається без ходу (-$${penalty}).`,
     offHeadline: 'Підказки вимкнено',
     offMeta: 'Натисніть «Навчання: ВИМК», щоб увімкнути розбір.',
     offReason: 'Увімкніть режим навчання — радник оцінить приховані карти й пояснить найкращий хід.',
@@ -725,6 +762,16 @@ const DE: Translations = {
     title: 'Berater',
     coachOn: 'Berater: EIN',
     coachOff: 'Berater: AUS',
+    xrayOn: 'Röntgen: EIN',
+    xrayOff: 'Röntgen: AUS',
+    xrayMeta: 'Röntgen · Sieht alle Hände',
+    xrayHandsHeader: (l, r) => `Röntgen-Hände · L ${l}, R ${r}`,
+    xrayLeftLabel: 'Links: ',
+    xrayRightLabel: 'Rechts: ',
+    xrayForceImmediatePassReason: (target, penalty) =>
+      target === 'both'
+        ? `Röntgen: zwingt beide Gegner sofort zum Passen (je -$${penalty}).`
+        : `Röntgen: ${target === 'right' ? 'Rechts' : 'Links'} hat sofort keinen Zug mehr (-$${penalty}).`,
     offHeadline: 'Hinweise pausiert',
     offMeta: 'Auf „Berater: AUS“ klicken zum Aktivieren.',
     offReason: 'Aktiviere den Berater, um verdeckte Karten zu bewerten und den besten Zug zu erklären.',

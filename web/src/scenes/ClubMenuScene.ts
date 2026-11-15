@@ -1,6 +1,6 @@
 import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
 import { getTranslations } from '../core/i18n';
-import { lookupPlayer } from '../core/persistence';
+import { isEncodableProfileChar, lookupPlayer } from '../core/persistence';
 import { SCREEN_HEIGHT, SCREEN_WIDTH, type ClubTableId } from '../core/types';
 import { sliceTexture } from '../engine/BitmapFont';
 import {
@@ -142,6 +142,10 @@ export class ClubMenuScene implements Scene {
     if (this.ctx?.getGraphicsMode() === 'hd') {
       this.buildVisuals();
     }
+  }
+
+  onClubTableChanged(): void {
+    this.cancelLoginFlow();
   }
 
   onSessionChanged(): void {
@@ -690,7 +694,7 @@ export class ClubMenuScene implements Scene {
     if (!this.ctx) return;
     const trimmed = this.pendingName.trim();
     if (!trimmed || trimmed.toLowerCase() === 'noname') {
-      this.ctx.audio.sfx.passAlert();
+      this.ctx.audio.sfx.illegalMove();
       this.cancelLoginFlow();
       return;
     }
@@ -711,7 +715,7 @@ export class ClubMenuScene implements Scene {
     if (!this.ctx) return;
     const pwd = this.pendingPassword.slice(0, 8);
     if (this.existingPasswordToMatch !== null && pwd !== this.existingPasswordToMatch) {
-      this.ctx.audio.sfx.passAlert();
+      this.ctx.audio.sfx.illegalMove();
       this.cancelLoginFlow();
       return;
     }
@@ -778,14 +782,8 @@ export class ClubMenuScene implements Scene {
   private triggerF3CycleTable(): void {
     if (!this.ctx || this.inputBlocked || this.activeAnim) return;
     const nextTable = ((this.ctx.config.clubTable % 3) + 1) as ClubTableId;
-    this.ctx.config.clubTable = nextTable;
-    this.cancelLoginFlow();
-    if (this.ctx.sessionPlayer.loggedIn) {
-      this.ctx.signInPlayer(this.ctx.sessionPlayer.name, this.ctx.sessionPlayer.password);
-    }
-    this.ctx.persistConfig();
+    this.ctx.setClubTable(nextTable);
     this.ctx.audio.sfx.cardSlide();
-    this.renderLeaderboard();
   }
 
   private triggerF5Exit(): void {
@@ -839,19 +837,14 @@ export class ClubMenuScene implements Scene {
         this.renderPromptInput();
         return;
       }
-      if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        const code = e.key.charCodeAt(0);
-        const isAsciiPrintable = code >= 0x20 && code <= 0x7e;
-        const isCyrillic = (code >= 0x0400 && code <= 0x04ff) || code === 0x2116;
-        if (isAsciiPrintable || isCyrillic) {
-          e.preventDefault();
-          if (this.loginPhase === 'enteringName' && this.pendingName.length < 8) {
-            this.pendingName += e.key;
-          } else if (this.loginPhase === 'enteringPassword' && this.pendingPassword.length < 8) {
-            this.pendingPassword += e.key;
-          }
-          this.renderPromptInput();
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && isEncodableProfileChar(e.key)) {
+        e.preventDefault();
+        if (this.loginPhase === 'enteringName' && this.pendingName.length < 8) {
+          this.pendingName += e.key;
+        } else if (this.loginPhase === 'enteringPassword' && this.pendingPassword.length < 8) {
+          this.pendingPassword += e.key;
         }
+        this.renderPromptInput();
       }
       return;
     }

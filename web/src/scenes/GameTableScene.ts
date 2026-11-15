@@ -352,6 +352,7 @@ export class GameTableScene implements Scene {
   private ctx: GameContext | null = null;
   private rng: Rng = createDefaultRng();
   private match!: MatchState;
+  private matchHighScoresRevision = 0;
 
   private root = new Container();
   private bgLayer = new Container();
@@ -451,6 +452,7 @@ export class GameTableScene implements Scene {
 
     const playerName = ctx.sessionPlayer.loggedIn ? ctx.sessionPlayer.name : 'Player';
     const playerPassword = ctx.sessionPlayer.loggedIn ? ctx.sessionPlayer.password : '';
+    this.matchHighScoresRevision = ctx.getHighScoresRevision();
     this.match = createMatch(
       playerName,
       playerPassword,
@@ -522,6 +524,12 @@ export class GameTableScene implements Scene {
     } else {
       this.refreshAdvisorHint();
     }
+    this.renderHumanHand();
+    this.emitTelemetry();
+  }
+
+  onAdvisorXrayModeChanged(): void {
+    this.refreshAdvisorHint();
     this.renderHumanHand();
     this.emitTelemetry();
   }
@@ -1287,6 +1295,7 @@ export class GameTableScene implements Scene {
       round,
       difficulty: this.match.clubTable,
       passExclusions: this.passExclusions,
+      xrayMode: this.ctx.advisorXrayMode,
       language: this.ctx.getLanguage(),
     });
   }
@@ -1355,7 +1364,11 @@ export class GameTableScene implements Scene {
     }
 
     const finalScore = getFinalClubScore(this.match);
-    if (this.ctx.sessionPlayer.loggedIn) {
+    const sameScoresSnapshot = this.matchHighScoresRevision === this.ctx.getHighScoresRevision();
+    const sameProfile =
+      this.ctx.sessionPlayer.loggedIn &&
+      this.ctx.sessionPlayer.name.toLowerCase() === this.match.playerName.toLowerCase();
+    if (sameProfile && sameScoresSnapshot) {
       this.ctx.highScores = upsertHighScore(
         this.ctx.highScores,
         this.match.clubTable,
@@ -1363,7 +1376,9 @@ export class GameTableScene implements Scene {
         this.match.playerPassword,
         finalScore,
       );
-      this.ctx.sessionPlayer.clubCarryover = finalScore - 200;
+      if (this.match.clubTable === this.ctx.config.clubTable) {
+        this.ctx.sessionPlayer.clubCarryover = finalScore - 200;
+      }
       this.ctx.persistHighScores();
     }
 
@@ -1713,10 +1728,10 @@ export class GameTableScene implements Scene {
       if (this.hdDealer) {
         this.hdDealer.setTableExpression('bell', this.phaseTimerMs);
       } else if (this.dealerSpr) {
-        const bIdx = Math.floor(this.phaseTimerMs / 100) % this.dealerBellFrames.length;
+        const bIdx = Math.floor(this.phaseTimerMs / 130) % this.dealerBellFrames.length;
         this.dealerSpr.texture = this.dealerBellFrames[bIdx];
       }
-      if (this.phaseTimerMs >= (isHd ? 850 : 420)) {
+      if (this.phaseTimerMs >= (isHd ? 1480 : 520)) {
         this.passingSeat = null;
         if (this.dealerSpr) this.dealerSpr.texture = this.dealerIdleTex;
         this.enterNextTurn();
@@ -1758,10 +1773,10 @@ export class GameTableScene implements Scene {
       if (this.hdDealer) {
         this.hdDealer.setTableExpression('bell', this.phaseTimerMs);
       } else if (this.dealerSpr) {
-        const bIdx = Math.floor(this.phaseTimerMs / 110) % this.dealerBellFrames.length;
+        const bIdx = Math.floor(this.phaseTimerMs / 130) % this.dealerBellFrames.length;
         this.dealerSpr.texture = this.dealerBellFrames[bIdx];
       }
-      if (this.phaseTimerMs >= 1150) {
+      if (this.phaseTimerMs >= (isHd ? 1520 : 1150)) {
         if (this.dealerSpr) this.dealerSpr.texture = this.dealerIdleTex;
         if (this.match.matchOver) {
           this.enterMatchEnd();

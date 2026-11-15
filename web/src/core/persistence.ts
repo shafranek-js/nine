@@ -19,6 +19,28 @@ export interface StoredLastPlayer {
 
 export type HighScoreTables = Record<ClubTableId, HighScoreRow[]>;
 
+/**
+ * Returns true if a Unicode character code maps cleanly to CP866 without
+ * falling back to '?'. Matches the exact set handled by `unicodeToCp866Byte`.
+ */
+export function isEncodableProfileCharCode(code: number): boolean {
+  return (
+    (code >= 0x20 && code <= 0x7e) ||
+    (code >= 0x0410 && code <= 0x044f) ||
+    code === 0x0401 ||
+    code === 0x0451 ||
+    code === 0x2116
+  );
+}
+
+/**
+ * Returns true if `ch` is a single character that can be stored losslessly
+ * in NINE.RES CP866 name/password fields.
+ */
+export function isEncodableProfileChar(ch: string): boolean {
+  return ch.length === 1 && isEncodableProfileCharCode(ch.charCodeAt(0));
+}
+
 function unicodeToCp866Byte(code: number): number {
   if (code >= 0x20 && code <= 0x7e) return code;
   if (code >= 0x0410 && code <= 0x042f) return 0x80 + (code - 0x0410); // А..Я

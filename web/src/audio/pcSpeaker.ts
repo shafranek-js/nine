@@ -5,6 +5,9 @@
  */
 export type SoundProfile = 'hd' | 'ega';
 
+const ASSET_BASE = ((import.meta as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/').replace(/\/$/, '');
+const HD_DEALER_BELL_URL = `${ASSET_BASE}/assets/audio/07_dealer_bell.mp3`;
+
 interface ModalPartial {
   readonly freqHz: number;
   readonly gain: number;
@@ -18,9 +21,66 @@ export class PcSpeaker {
   private soundProfile: SoundProfile = 'hd';
   private cachedNoiseCtx: AudioContext | null = null;
   private cachedNoiseBuffer: AudioBuffer | null = null;
+  private bellBufferCtx: AudioContext | null = null;
+  private bellBuffer: AudioBuffer | null = null;
+  private bellBufferLoading: Promise<AudioBuffer | null> | null = null;
 
   attachContext(ctx: AudioContext): void {
+    if (this.ctx !== ctx) {
+      this.bellBuffer = null;
+      this.bellBufferCtx = null;
+      this.bellBufferLoading = null;
+    }
     this.ctx = ctx;
+    void this.loadBellBuffer(ctx);
+  }
+
+  private async loadBellBuffer(ctx: AudioContext): Promise<AudioBuffer | null> {
+    if (
+      typeof window === 'undefined' ||
+      typeof fetch !== 'function' ||
+      typeof ctx.decodeAudioData !== 'function'
+    ) {
+      return null;
+    }
+    if (this.bellBufferCtx === ctx && this.bellBuffer) {
+      return this.bellBuffer;
+    }
+    if (this.bellBufferLoading) {
+      return this.bellBufferLoading;
+    }
+    this.bellBufferLoading = (async () => {
+      try {
+        const res = await fetch(HD_DEALER_BELL_URL);
+        if (!res.ok) return null;
+        const arr = await res.arrayBuffer();
+        const decoded = await ctx.decodeAudioData(arr);
+        if (this.ctx === ctx) {
+          this.bellBuffer = decoded;
+          this.bellBufferCtx = ctx;
+        }
+        return decoded;
+      } catch {
+        return null;
+      } finally {
+        this.bellBufferLoading = null;
+      }
+    })();
+    return this.bellBufferLoading;
+  }
+
+  private playSample(buffer: AudioBuffer, gainValue: number, delayOffsetSec = 0): boolean {
+    const ctx = this.ensureResumed();
+    if (!ctx || typeof ctx.createBufferSource !== 'function') return false;
+    const start = ctx.currentTime + delayOffsetSec;
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(gainValue, start);
+    src.connect(gain);
+    gain.connect(ctx.destination);
+    src.start(start);
+    return true;
   }
 
   setEnabled(enabled: boolean): void {
@@ -261,17 +321,31 @@ export class PcSpeaker {
     this.playBodyThump(128, 56, 26, 360, 0.075, 0.002);
   }
 
-  /** Forced pass double-knock on mahogany table (`220 Hz` buzz in EGA) */
+  private playBrassHandBell(baseHz: number, gainScale: number, decayMs: number, delayOffsetSec = 0): void {
+    this.playNoiseBurst(5800, 2.2, 'bandpass', 14, 0.085 * gainScale, delayOffsetSec, 1);
+    this.playModalBell(
+      [
+        { freqHz: baseHz, gain: 0.16 * gainScale, decayMs },
+        { freqHz: baseHz * 1.498, gain: 0.11 * gainScale, decayMs: Math.round(decayMs * 0.78) },
+        { freqHz: baseHz * 2.0, gain: 0.08 * gainScale, decayMs: Math.round(decayMs * 0.62) },
+        { freqHz: baseHz * 2.996, gain: 0.045 * gainScale, decayMs: Math.round(decayMs * 0.38) },
+      ],
+      delayOffsetSec,
+    );
+  }
+
+  /** Forced pass dealer brass handbell (`220 Hz` buzz in EGA) */
   passAlert(): void {
     if (this.soundProfile === 'ega') {
       this.playTone(220, 200);
       return;
     }
-    // Authentic card-table double knuckle knock ("knock-knock" = pass)
-    this.playNoiseBurst(520, 1.8, 'bandpass', 22, 0.065, 0, 1);
-    this.playBodyThump(182, 86, 48, 420, 0.125, 0);
-    this.playNoiseBurst(480, 1.8, 'bandpass', 22, 0.055, 0.105, 1);
-    this.playBodyThump(164, 78, 52, 390, 0.105, 0.105);
+    if (this.bellBuffer && this.bellBufferCtx === this.ctx && this.playSample(this.bellBuffer, 0.55)) {
+      return;
+    }
+    // Fallback while sample loads: synchronized double ring
+    this.playBrassHandBell(1396.91, 1.0, 460, 0.14);
+    this.playBrassHandBell(1479.98, 1.1, 540, 0.56);
   }
 
   /** Clicking an unplayable card — muted single felt rejection thud */
@@ -290,19 +364,14 @@ export class PcSpeaker {
       this.playTone(5000, 18);
       return;
     }
-    // Warm brass desk bell ding followed by uplifting parlor triad
-    this.playNoiseBurst(4200, 2.2, 'bandpass', 12, 0.03, 0, 1);
-    this.playModalBell(
-      [
-        { freqHz: 1174.66, gain: 0.052, decayMs: 260 },
-        { freqHz: 2349.32, gain: 0.026, decayMs: 180 },
-        { freqHz: 3180, gain: 0.015, decayMs: 120 },
-      ],
-      0,
-    );
-    this.playWarmVoice(587.33, 150, 0.045, 'triangle', 2200, 0.09);
-    this.playWarmVoice(739.99, 170, 0.045, 'triangle', 2200, 0.16);
-    this.playWarmVoice(880.0, 240, 0.05, 'sine', 2600, 0.23);
+    if (this.bellBuffer && this.bellBufferCtx === this.ctx) {
+      this.playSample(this.bellBuffer, 0.42);
+    } else {
+      this.playBrassHandBell(1174.66, 1.05, 480, 0);
+    }
+    this.playWarmVoice(587.33, 170, 0.085, 'triangle', 2200, 0.1);
+    this.playWarmVoice(739.99, 190, 0.085, 'triangle', 2200, 0.17);
+    this.playWarmVoice(880.0, 260, 0.095, 'sine', 2600, 0.24);
   }
 
   /** Full match victory golden arpeggio chord */

@@ -942,7 +942,7 @@ export function createHdDealer(scale = 1): HdDealerController {
         if (bellSpr) {
           bellSpr.visible = showBell;
           if (showBell) {
-            const idx = Math.min(15, Math.floor(Math.max(0, elapsedMs) / 55));
+            const idx = Math.min(15, Math.floor(Math.max(0, elapsedMs) / 92));
             bellSpr.texture = bellFrames[idx];
           }
         }
@@ -1188,7 +1188,7 @@ export function createHdDealer(scale = 1): HdDealerController {
       hatPivot.rotation = 0;
 
       if (mode === 'bell') {
-        bellSpr.rotation = Math.sin(elapsedMs * 0.036) * 0.48;
+        bellSpr.rotation = Math.sin(elapsedMs * 0.02) * 0.48;
       } else if (mode === 'wag') {
         fingerSpr.rotation = Math.sin(elapsedMs * 0.035) * 0.36;
       }

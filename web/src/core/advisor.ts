@@ -1,7 +1,7 @@
 import { analyzeSuitBranches, selectBotMove } from './ai.js';
 import { DEFAULT_LANGUAGE, getTranslations, type Language } from './i18n.js';
 import { createDefaultRng, type Rng } from './rng.js';
-import { cardKey, getLegalMoves, nextSeat, SUITS } from './rules.js';
+import { cardKey, getLegalMoves, nextSeat, sortHand, SUITS } from './rules.js';
 import {
   PASS_PENALTY,
   Suit,
@@ -37,6 +37,7 @@ export interface AdvisorRecommendation {
   action: 'play' | 'pass';
   bestCard: Card | null;
   forced: boolean;
+  xrayMode: boolean;
   headline: string;
   reasons: string[];
   candidates: CandidateAdvice[];
@@ -124,6 +125,17 @@ function cloneBounds(b: TableBounds): TableBounds {
   };
 }
 
+function applyCardToBounds(bounds: TableBounds, card: Card): void {
+  const b = bounds[card.suit];
+  if (b.low === 0) {
+    b.low = card.rank;
+    b.high = card.rank;
+  } else {
+    if (card.rank < b.low) b.low = card.rank;
+    if (card.rank > b.high) b.high = card.rank;
+  }
+}
+
 interface RolloutOutcome {
   winner: SeatIndex;
   humanPasses: number;
@@ -149,14 +161,7 @@ function simulateAfterHumanCard(
     3: baseRound.hands[3].filter((c) => !(c.suit === candidate.suit && c.rank === candidate.rank)),
   };
   const bounds = cloneBounds(baseRound.tableBounds);
-  const b0 = bounds[candidate.suit];
-  if (b0.low === 0) {
-    b0.low = candidate.rank;
-    b0.high = candidate.rank;
-  } else {
-    if (candidate.rank < b0.low) b0.low = candidate.rank;
-    if (candidate.rank > b0.high) b0.high = candidate.rank;
-  }
+  applyCardToBounds(bounds, candidate);
 
   let bank = baseRound.bank;
   let humanPasses = 0;
@@ -188,14 +193,7 @@ function simulateAfterHumanCard(
       const h = hands[turn];
       const idx = h.findIndex((c) => c.suit === chosen.suit && c.rank === chosen.rank);
       if (idx !== -1) h.splice(idx, 1);
-      const tb = bounds[chosen.suit];
-      if (tb.low === 0) {
-        tb.low = chosen.rank;
-        tb.high = chosen.rank;
-      } else {
-        if (chosen.rank < tb.low) tb.low = chosen.rank;
-        if (chosen.rank > tb.high) tb.high = chosen.rank;
-      }
+      applyCardToBounds(bounds, chosen);
       playedCount++;
       isFirst = false;
       if (h.length === 0) {
@@ -292,10 +290,42 @@ function getMissingGapTowardsAnchor(hand: readonly Card[], card: Card): number {
   return missing;
 }
 
+function detectImmediateForcedPass(
+  bounds: TableBounds,
+  candidate: Card,
+  leftHand: readonly Card[],
+  rightHand: readonly Card[],
+): 'left' | 'right' | 'both' | null {
+  const afterHuman = cloneBounds(bounds);
+  applyCardToBounds(afterHuman, candidate);
+
+  const leftLegal = getLegalMoves(leftHand, afterHuman, false);
+  const leftPasses = leftLegal.length === 0;
+
+  let rightPasses = getLegalMoves(rightHand, afterHuman, false).length === 0;
+  if (rightPasses && leftLegal.length > 0) {
+    for (const lc of leftLegal) {
+      const afterLeft = cloneBounds(afterHuman);
+      applyCardToBounds(afterLeft, lc);
+      if (getLegalMoves(rightHand, afterLeft, false).length > 0) {
+        rightPasses = false;
+        break;
+      }
+    }
+  }
+
+  if (leftPasses && rightPasses) return 'both';
+  if (leftPasses) return 'left';
+  if (rightPasses) return 'right';
+  return null;
+}
+
 function buildStrategicReasons(params: {
   best: CandidateAdvice;
   runnerUp: CandidateAdvice | null;
   hand: readonly Card[];
+  leftHand: readonly Card[];
+  rightHand: readonly Card[];
   bounds: TableBounds;
   isFirstTurn: boolean;
   difficulty: ClubTableId;
@@ -303,9 +333,25 @@ function buildStrategicReasons(params: {
   leftCount: number;
   rightCount: number;
   bank: number;
+  xrayMode: boolean;
   language: Language;
 }): string[] {
-  const { best, runnerUp, hand, bounds, isFirstTurn, difficulty, deduction, leftCount, rightCount, bank, language } = params;
+  const {
+    best,
+    runnerUp,
+    hand,
+    leftHand,
+    rightHand,
+    bounds,
+    isFirstTurn,
+    difficulty,
+    deduction,
+    leftCount,
+    rightCount,
+    bank,
+    xrayMode,
+    language,
+  } = params;
   const tr = getTranslations(language).advisor;
   const c = best.card;
   const reasons: string[] = [];
@@ -330,6 +376,12 @@ function buildStrategicReasons(params: {
     } else if (winPct > altPct + 2) {
       reasons.push(tr.higherWinReason(formatCardLabel(runnerUp.card), winPct, altPct));
     }
+  }
+
+  // 1b. Immediate X-Ray forced-pass insight (high-signal tactical payoff)
+  const passTarget = xrayMode ? detectImmediateForcedPass(bounds, c, leftHand, rightHand) : null;
+  if (passTarget) {
+    reasons.push(tr.xrayForceImmediatePassReason(passTarget, PASS_PENALTY));
   }
 
   // 2. Hand chain / gap structure
@@ -367,8 +419,8 @@ function buildStrategicReasons(params: {
     }
   }
 
-  // 4. Opponent pressure, low card counts & pass deduction
-  if (runnerUp && best.avgOppPasses - runnerUp.avgOppPasses >= 0.22) {
+  // 4. Opponent pressure & pass deduction (when X-Ray didn't already report an immediate pass)
+  if (!passTarget && runnerUp && best.avgOppPasses - runnerUp.avgOppPasses >= 0.22) {
     reasons.push(tr.pressureOppPassesReason(best.avgOppPasses.toFixed(1)));
   }
 
@@ -377,7 +429,7 @@ function buildStrategicReasons(params: {
     reasons.push(tr.lowOppCardsReason(rightCount <= leftCount, minOppCards));
   }
 
-  if (deduction.certainLeft.length > 0 || deduction.certainRight.length > 0) {
+  if (!xrayMode && (deduction.certainLeft.length > 0 || deduction.certainRight.length > 0)) {
     const parts: string[] = [];
     if (deduction.certainLeft.length > 0) {
       parts.push(tr.deductionPart(false, deduction.certainLeft.slice(0, 3).map(formatCardLabel).join(', ')));
@@ -406,6 +458,7 @@ export function evaluatePlayerMoves(params: {
   passExclusions: PassExclusions;
   maxSamples?: number;
   rng?: Rng;
+  xrayMode?: boolean;
   language?: Language;
 }): AdvisorRecommendation {
   const {
@@ -414,6 +467,7 @@ export function evaluatePlayerMoves(params: {
     passExclusions,
     maxSamples = 96,
     rng = createDefaultRng(),
+    xrayMode = false,
     language = DEFAULT_LANGUAGE,
   } = params;
   const tr = getTranslations(language).advisor;
@@ -421,51 +475,60 @@ export function evaluatePlayerMoves(params: {
   const leftCount = round.hands[1].length;
   const rightCount = round.hands[2].length;
 
-  // Build unseen pool legally (everything not on table & not in player's hand)
-  const unseenPool: Card[] = [];
-  for (const suit of SUITS) {
-    const b = round.tableBounds[suit];
-    for (const rank of ALL_RANKS) {
-      const onTable = b.low > 0 && rank >= b.low && rank <= b.high;
-      const inHuman = hand.some((c) => c.suit === suit && c.rank === rank);
-      if (!onTable && !inHuman) {
-        unseenPool.push({ suit, rank });
-      }
-    }
-  }
-
-  // Deduct forced cards from pass exclusions (if card excluded from Left, Right must hold it, and vice versa)
   let certainLeft: Card[] = [];
   let certainRight: Card[] = [];
   let freePool: Card[] = [];
-  for (const card of unseenPool) {
-    const k = cardKey(card);
-    const exLeft = passExclusions[1].has(k);
-    const exRight = passExclusions[2].has(k);
-    if (exLeft && !exRight) {
-      certainRight.push(card);
-    } else if (exRight && !exLeft) {
-      certainLeft.push(card);
-    } else {
-      freePool.push(card);
+  let unseenTotal = 0;
+
+  if (xrayMode) {
+    certainLeft = sortHand(round.hands[1]);
+    certainRight = sortHand(round.hands[2]);
+    unseenTotal = certainLeft.length + certainRight.length;
+  } else {
+    // Build unseen pool legally (everything not on table & not in player's hand)
+    const unseenPool: Card[] = [];
+    for (const suit of SUITS) {
+      const b = round.tableBounds[suit];
+      for (const rank of ALL_RANKS) {
+        const onTable = b.low > 0 && rank >= b.low && rank <= b.high;
+        const inHuman = hand.some((c) => c.suit === suit && c.rank === rank);
+        if (!onTable && !inHuman) {
+          unseenPool.push({ suit, rank });
+        }
+      }
+    }
+    unseenTotal = unseenPool.length;
+
+    // Deduct forced cards from pass exclusions (if card excluded from Left, Right must hold it, and vice versa)
+    for (const card of unseenPool) {
+      const k = cardKey(card);
+      const exLeft = passExclusions[1].has(k);
+      const exRight = passExclusions[2].has(k);
+      if (exLeft && !exRight) {
+        certainRight.push(card);
+      } else if (exRight && !exLeft) {
+        certainLeft.push(card);
+      } else {
+        freePool.push(card);
+      }
+    }
+
+    // Guard if hand counts can't accommodate inferred certainties
+    if (certainLeft.length > leftCount || certainRight.length > rightCount) {
+      certainLeft = [];
+      certainRight = [];
+      freePool = [...unseenPool];
+    } else if (certainRight.length === rightCount && freePool.length > 0) {
+      certainLeft.push(...freePool);
+      freePool = [];
+    } else if (certainLeft.length === leftCount && freePool.length > 0) {
+      certainRight.push(...freePool);
+      freePool = [];
     }
   }
 
-  // Guard if hand counts can't accommodate inferred certainties
-  if (certainLeft.length > leftCount || certainRight.length > rightCount) {
-    certainLeft = [];
-    certainRight = [];
-    freePool = [...unseenPool];
-  } else if (certainRight.length === rightCount && freePool.length > 0) {
-    certainLeft.push(...freePool);
-    freePool = [];
-  } else if (certainLeft.length === leftCount && freePool.length > 0) {
-    certainRight.push(...freePool);
-    freePool = [];
-  }
-
   const deduction: AdvisorDeductionSummary = {
-    unseenTotal: unseenPool.length,
+    unseenTotal,
     certainLeft,
     certainRight,
     excludedLeftCount: passExclusions[1].size,
@@ -481,6 +544,7 @@ export function evaluatePlayerMoves(params: {
       action: 'pass',
       bestCard: null,
       forced: true,
+      xrayMode,
       headline: tr.forcedPassHeadline(PASS_PENALTY),
       reasons: [
         tr.noLegalCardsReason,
@@ -495,8 +559,18 @@ export function evaluatePlayerMoves(params: {
     };
   }
 
+  const XRAY_ROLLOUTS = 8;
   const needLeft = leftCount - certainLeft.length;
-  const { splits, isExact } = buildSplits(freePool, needLeft, certainLeft, certainRight, maxSamples, rng);
+  const { splits, isExact } = xrayMode
+    ? {
+        splits: Array.from({ length: XRAY_ROLLOUTS }, () => ({
+          left: certainLeft,
+          right: certainRight,
+        })),
+        isExact: true,
+      }
+    : buildSplits(freePool, needLeft, certainLeft, certainRight, maxSamples, rng);
+  const sampleCount = xrayMode ? 1 : splits.length;
 
   const evaluations: CandidateAdvice[] = [];
   for (const card of legal) {
@@ -555,6 +629,8 @@ export function evaluatePlayerMoves(params: {
     best,
     runnerUp,
     hand,
+    leftHand: certainLeft,
+    rightHand: certainRight,
     bounds: round.tableBounds,
     isFirstTurn: round.isFirstTurnOfRound,
     difficulty,
@@ -562,6 +638,7 @@ export function evaluatePlayerMoves(params: {
     leftCount,
     rightCount,
     bank: round.bank,
+    xrayMode,
     language,
   });
   best.reasons = reasons;
@@ -578,11 +655,12 @@ export function evaluatePlayerMoves(params: {
     action: 'play',
     bestCard: best.card,
     forced,
+    xrayMode,
     headline,
     reasons,
     candidates: evaluations,
     deduction,
-    sampleCount: splits.length,
+    sampleCount,
     isExact,
   };
 }

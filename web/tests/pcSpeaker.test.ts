@@ -125,4 +125,21 @@ describe('PcSpeaker SFX profiles', () => {
     expect(mock.oscillators.some((o) => o.type === 'square')).toBe(false);
     expect(mock.getBufferSources()).toBeGreaterThanOrEqual(6);
   });
+
+  it('plays audible brass handbell modal partials on passAlert and victoryBeep in hd mode', () => {
+    const mock = createMockAudioContext();
+    const sfx = new PcSpeaker();
+    sfx.attachContext(mock.ctx);
+    sfx.setSoundProfile('hd');
+
+    sfx.passAlert();
+    const passBellCount = mock.oscillators.filter((o) => o.freqHz >= 1000).length;
+    expect(passBellCount).toBeGreaterThanOrEqual(8);
+    expect(mock.getBufferSources()).toBe(2);
+
+    const beforeVictory = mock.oscillators.length;
+    sfx.victoryBeep();
+    const victoryBellCount = mock.oscillators.slice(beforeVictory).filter((o) => o.freqHz >= 1000).length;
+    expect(victoryBellCount).toBeGreaterThanOrEqual(4);
+  });
 });

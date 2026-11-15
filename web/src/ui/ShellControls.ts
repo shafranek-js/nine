@@ -1,6 +1,6 @@
 import { formatCardLabel, type AdvisorRecommendation } from '../core/advisor';
 import { getTranslations, SUPPORTED_LANGUAGES, type Language } from '../core/i18n';
-import { ANTE_AMOUNT, type ClubTableId, type SeatIndex } from '../core/types';
+import { ANTE_AMOUNT, type Card, type ClubTableId, type SeatIndex } from '../core/types';
 import type { MoveLogEntry, SceneManager, TableTelemetry } from '../scenes/SceneManager';
 import { AdvisorMascot, type AdvisorMascotMood } from './AdvisorMascot';
 
@@ -18,6 +18,7 @@ export class ShellControls {
   private readonly advisorMascot = new AdvisorMascot();
   private advisorTitleEl!: HTMLElement;
   private advisorToggleBtn!: HTMLButtonElement;
+  private advisorXrayBtn!: HTMLButtonElement;
   private advisorHeadlineEl!: HTMLElement;
   private advisorMetaEl!: HTMLElement;
   private advisorReasonsEl!: HTMLUListElement;
@@ -235,11 +236,7 @@ export class ShellControls {
     });
     this.tableBtn = this.makeButton('', () => {
       const next = (((this.manager.ctx.config.clubTable % 3) + 1) as ClubTableId);
-      this.manager.ctx.config.clubTable = next;
-      this.manager.ctx.persistConfig();
-      if (this.manager.getCurrentSceneId() === 'menu') {
-        this.manager.ctx.goTo('menu', 0);
-      }
+      this.manager.ctx.setClubTable(next);
       this.sync();
     });
     this.menuBtn = this.makeButton('', () => {
@@ -313,6 +310,9 @@ export class ShellControls {
     this.advisorTitleEl.className = 'panel-title';
     titleWrap.append(this.advisorTitleEl);
 
+    const togglesWrap = document.createElement('div');
+    togglesWrap.className = 'advisor-toggles';
+
     this.advisorToggleBtn = document.createElement('button');
     this.advisorToggleBtn.type = 'button';
     this.advisorToggleBtn.className = 'shell-btn advisor-toggle-btn';
@@ -321,7 +321,20 @@ export class ShellControls {
       this.sync();
     });
 
-    header.append(titleWrap, this.advisorToggleBtn);
+    this.advisorXrayBtn = document.createElement('button');
+    this.advisorXrayBtn.type = 'button';
+    this.advisorXrayBtn.className = 'shell-btn advisor-toggle-btn';
+    this.advisorXrayBtn.addEventListener('click', () => {
+      const next = !this.manager.ctx.advisorXrayMode;
+      this.manager.ctx.setAdvisorXrayMode(next);
+      if (next && !this.manager.ctx.coachMode) {
+        this.manager.ctx.setCoachMode(true);
+      }
+      this.sync();
+    });
+
+    togglesWrap.append(this.advisorXrayBtn, this.advisorToggleBtn);
+    header.append(titleWrap, togglesWrap);
 
     const topRow = document.createElement('div');
     topRow.className = 'advisor-top-row';
@@ -364,6 +377,7 @@ export class ShellControls {
   private renderAdvisor(inTableScene: boolean, lang: Language): void {
     const t = getTranslations(lang).advisor;
     const coachOn = this.manager.ctx.coachMode;
+    const xrayOn = this.manager.ctx.advisorXrayMode;
     const hint: AdvisorRecommendation | null = coachOn ? this.manager.ctx.advisorHint : null;
 
     let mood: AdvisorMascotMood = 'idle';
@@ -374,9 +388,9 @@ export class ShellControls {
     }
     this.advisorMascot.setMood(mood);
 
-    const sig = `${lang}|${coachOn ? 1 : 0}|${inTableScene ? 1 : 0}|${
+    const sig = `${lang}|${coachOn ? 1 : 0}|${xrayOn ? 1 : 0}|${inTableScene ? 1 : 0}|${
       hint
-        ? `${hint.action}|${hint.headline}|${hint.sampleCount}|${hint.reasons.join(';')}|${hint.candidates.length}|${hint.deduction.unseenTotal}|${hint.deduction.excludedLeftCount}|${hint.deduction.excludedRightCount}`
+        ? `${hint.xrayMode ? 1 : 0}|${hint.action}|${hint.headline}|${hint.sampleCount}|${hint.reasons.join(';')}|${hint.candidates.length}|${hint.deduction.unseenTotal}|${hint.deduction.certainLeft.length}|${hint.deduction.certainRight.length}|${hint.deduction.excludedLeftCount}|${hint.deduction.excludedRightCount}`
         : 'none'
     }`;
     if (sig === this.lastAdvisorRenderSig) {
@@ -387,6 +401,8 @@ export class ShellControls {
     this.advisorTitleEl.textContent = t.title;
     this.advisorToggleBtn.textContent = coachOn ? t.coachOn : t.coachOff;
     this.advisorToggleBtn.classList.toggle('is-active', coachOn);
+    this.advisorXrayBtn.textContent = xrayOn ? t.xrayOn : t.xrayOff;
+    this.advisorXrayBtn.classList.toggle('is-xray-active', xrayOn);
 
     this.advisorHeadlineEl.replaceChildren();
     this.advisorMetaEl.textContent = '';
@@ -409,9 +425,11 @@ export class ShellControls {
     }
 
     this.appendCardStyledText(this.advisorHeadlineEl, hint.headline);
-    this.advisorMetaEl.textContent = hint.isExact
-      ? t.exactMeta(hint.sampleCount)
-      : t.approxMeta(hint.sampleCount);
+    this.advisorMetaEl.textContent = hint.xrayMode
+      ? t.xrayMeta
+      : hint.isExact
+        ? t.exactMeta(hint.sampleCount)
+        : t.approxMeta(hint.sampleCount);
 
     for (const reason of hint.reasons) {
       this.appendReasonItem(reason);
@@ -449,34 +467,35 @@ export class ShellControls {
       }
     }
 
-    const dedParts: string[] = [t.unseenCards(hint.deduction.unseenTotal)];
-    if (hint.deduction.excludedLeftCount > 0 || hint.deduction.excludedRightCount > 0) {
-      dedParts.push(
-        t.excludedByPasses(hint.deduction.excludedLeftCount, hint.deduction.excludedRightCount),
-      );
-    }
     const dedMain = document.createElement('div');
-    dedMain.textContent = dedParts.join(' · ');
+    if (hint.xrayMode) {
+      dedMain.textContent = t.xrayHandsHeader(
+        hint.deduction.certainLeft.length,
+        hint.deduction.certainRight.length,
+      );
+    } else {
+      const dedParts: string[] = [t.unseenCards(hint.deduction.unseenTotal)];
+      if (hint.deduction.excludedLeftCount > 0 || hint.deduction.excludedRightCount > 0) {
+        dedParts.push(
+          t.excludedByPasses(hint.deduction.excludedLeftCount, hint.deduction.excludedRightCount),
+        );
+      }
+      dedMain.textContent = dedParts.join(' · ');
+    }
     this.advisorDeductionEl.append(dedMain);
 
-    if (hint.deduction.certainLeft.length > 0) {
-      const leftLine = document.createElement('div');
-      leftLine.append(document.createTextNode(t.certainLeft));
-      this.appendCardStyledText(
-        leftLine,
-        hint.deduction.certainLeft.slice(0, 4).map(formatCardLabel).join(', '),
-      );
-      this.advisorDeductionEl.append(leftLine);
-    }
-    if (hint.deduction.certainRight.length > 0) {
-      const rightLine = document.createElement('div');
-      rightLine.append(document.createTextNode(t.certainRight));
-      this.appendCardStyledText(
-        rightLine,
-        hint.deduction.certainRight.slice(0, 4).map(formatCardLabel).join(', '),
-      );
-      this.advisorDeductionEl.append(rightLine);
-    }
+    const appendSeatCards = (label: string, cards: readonly Card[]) => {
+      if (cards.length === 0) return;
+      const line = document.createElement('div');
+      line.className = 'advisor-deduction-hand';
+      line.append(document.createTextNode(label));
+      const shown = hint.xrayMode ? cards : cards.slice(0, 4);
+      this.appendCardStyledText(line, shown.map(formatCardLabel).join(', '));
+      this.advisorDeductionEl.append(line);
+    };
+
+    appendSeatCards(hint.xrayMode ? t.xrayLeftLabel : t.certainLeft, hint.deduction.certainLeft);
+    appendSeatCards(hint.xrayMode ? t.xrayRightLabel : t.certainRight, hint.deduction.certainRight);
   }
 
   private appendReasonItem(text: string): void {

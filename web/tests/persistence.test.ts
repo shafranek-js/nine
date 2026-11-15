@@ -6,6 +6,7 @@ import {
   decodeNineRes,
   encodeNineCfg,
   encodeNineRes,
+  isEncodableProfileChar,
   lookupPlayer,
   upsertHighScore,
 } from '../src/core/persistence.js';
@@ -68,5 +69,27 @@ describe('NINE.RES & NINE.CFG binary persistence', () => {
     expect(decoded[1][1].name).toBe('Алёна');
     expect(decoded[1][1].password).toBe('ёжик1');
     expect(lookupPlayer(decoded, 1, 'павел')?.score).toBe(420);
+  });
+
+  it('rejects non-CP866 Cyrillic letters (І, Ї, Є, Ґ) and round-trips every accepted profile char losslessly', () => {
+    for (const bad of ['І', 'і', 'Ї', 'ї', 'Є', 'є', 'Ґ', 'ґ']) {
+      expect(isEncodableProfileChar(bad)).toBe(false);
+    }
+
+    const acceptedSamples = ['A', 'z', '0', ' ', '~', 'А', 'Я', 'а', 'я', 'Ё', 'ё', '№'];
+    for (const ch of acceptedSamples) {
+      expect(isEncodableProfileChar(ch)).toBe(true);
+    }
+
+    const orig = new Uint8Array(readFileSync(resolve(process.cwd(), 'public/assets/data/NINE.RES')));
+    let tables = decodeNineRes(orig);
+    // Verify accepted chars preserve exact strings and lookup across NINE.RES encode/decode
+    tables = upsertHighScore(tables, 1, 'АБВГДЕЖЗ', 'абвгё№ 1', 350);
+    const decoded = decodeNineRes(encodeNineRes(tables));
+    expect(lookupPlayer(decoded, 1, 'АБВГДЕЖЗ')).toEqual({
+      name: 'АБВГДЕЖЗ',
+      password: 'абвгё№ 1',
+      score: 350,
+    });
   });
 });

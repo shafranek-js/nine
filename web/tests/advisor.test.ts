@@ -344,4 +344,44 @@ describe('Advisor / Coach engine (fair-play deduction & EV search)', () => {
     }
     expect(headlines.size).toBe(4);
   });
+
+  it('uses exact rival hands and detects forced rival passes when xrayMode is enabled', () => {
+    const bounds = createEmptyTableBounds();
+    bounds[Suit.Diamonds] = { low: 6, high: 13 };
+    bounds[Suit.Hearts] = { low: 6, high: 14 };
+    bounds[Suit.Clubs] = { low: 9, high: 14 };
+    bounds[Suit.Spades] = { low: 9, high: 14 };
+
+    const clearRound: RoundState = {
+      hands: {
+        1: [{ suit: Suit.Clubs, rank: 7 }, { suit: Suit.Clubs, rank: 6 }],
+        2: [{ suit: Suit.Spades, rank: 7 }, { suit: Suit.Spades, rank: 6 }],
+        3: [{ suit: Suit.Clubs, rank: 8 }, { suit: Suit.Diamonds, rank: 14 }],
+      },
+      tableBounds: bounds,
+      playedCount: 30,
+      currentTurn: 3,
+      isFirstTurnOfRound: false,
+      bank: 60,
+      roundOver: false,
+      winner: null,
+    };
+
+    const rec = evaluatePlayerMoves({
+      round: clearRound,
+      difficulty: 2,
+      passExclusions: emptyExclusions(),
+      xrayMode: true,
+      rng: createSeededRng(1),
+      language: 'ru',
+    });
+
+    expect(rec.xrayMode).toBe(true);
+    expect(rec.isExact).toBe(true);
+    expect(rec.sampleCount).toBe(1);
+    expect(rec.bestCard).toEqual({ suit: Suit.Diamonds, rank: 14 });
+    expect(rec.deduction.certainLeft.map(formatCardLabel)).toEqual(['6♣', '7♣']);
+    expect(rec.deduction.certainRight.map(formatCardLabel)).toEqual(['6♠', '7♠']);
+    expect(rec.reasons.some((r) => r.includes('Рентген'))).toBe(true);
+  });
 });
