@@ -349,6 +349,40 @@
         margin-bottom: 7px;
       }
 
+      .mode-segmented {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 4px;
+        margin: 6px 0 4px;
+      }
+
+      .fantan-opts-row {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 4px;
+        margin-bottom: 6px;
+      }
+
+      .fantan-opts-row.is-hidden {
+        display: none;
+      }
+
+      .rules-pending-note {
+        margin: -2px 0 6px;
+        font-size: 10px;
+        line-height: 1.3;
+        color: #f3c86c;
+      }
+
+      .rules-pending-note.is-hidden {
+        display: none;
+      }
+
+      .mode-opt-btn {
+        padding: 4px 5px;
+        font-size: 10px;
+      }
+
       .lang-btn {
         padding: 4px 0;
         font-size: 10.5px;
@@ -502,11 +536,6 @@
         gap: 6px;
         flex-wrap: wrap;
       }
-      .advisor-toggles {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-      }
       .advisor-title-wrap .panel-title {
         margin: 0;
       }
@@ -525,6 +554,17 @@
         background: rgba(20, 74, 102, 0.88);
         border-color: rgba(96, 218, 255, 0.72);
         color: #dcf6ff;
+      }
+      .advisor-toggle-btn.is-auto-active {
+        background: rgba(118, 76, 16, 0.9);
+        border-color: rgba(250, 204, 21, 0.72);
+        color: #fef08a;
+      }
+      .advisor-toggles {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        flex-wrap: wrap;
       }
       .advisor-deduction-hand {
         line-height: 1.45;
@@ -661,8 +701,118 @@
         color: #f6d375;
         font-weight: 700;
       }
+
+      .settings-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 50;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        background: rgba(5, 9, 7, 0.72);
+        backdrop-filter: blur(4px);
+      }
+
+      .settings-backdrop.is-hidden {
+        display: none;
+      }
+
+      .settings-modal {
+        width: min(370px, 100%);
+        max-height: 90vh;
+        overflow-y: auto;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 14px 16px;
+        border-radius: 12px;
+        background: linear-gradient(180deg, rgba(20, 31, 25, 0.98) 0%, rgba(12, 18, 15, 0.99) 100%);
+        border: 1px solid rgba(212, 175, 55, 0.42);
+        box-shadow: 0 22px 60px rgba(0, 0, 0, 0.78);
+      }
+
+      body.mode-ega .settings-modal {
+        background: #0d1017;
+        border-color: #3f4b66;
+      }
+
+      .settings-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid rgba(212, 175, 55, 0.18);
+      }
+
+      .settings-modal-title {
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #f4e6be;
+      }
+
+      .settings-close-btn {
+        background: rgba(255, 255, 255, 0.05);
+        color: #cfc6ae;
+        border: 1px solid rgba(212, 175, 55, 0.25);
+        border-radius: 6px;
+        width: 26px;
+        height: 24px;
+        font: inherit;
+        font-size: 13px;
+        line-height: 1;
+        cursor: pointer;
+      }
+
+      .settings-close-btn:hover {
+        background: rgba(212, 175, 55, 0.18);
+        border-color: rgba(236, 198, 86, 0.65);
+        color: #fff2c2;
+      }
+
+      .settings-section {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .settings-section-title {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #b7a982;
+      }
+
+      .settings-section .lang-segmented {
+        margin-bottom: 0;
+      }
+
+      .shell-btn-wide {
+        grid-column: 1 / -1;
+      }
+
+      .shell-btn-danger.is-armed {
+        background: rgba(138, 30, 42, 0.85);
+        border-color: rgba(252, 128, 138, 0.88);
+        color: #ffe2e5;
+      }
+
+      .settings-footer {
+        display: flex;
+        justify-content: flex-end;
+        padding-top: 6px;
+        border-top: 1px solid rgba(212, 175, 55, 0.16);
+      }
+
+      .settings-done-btn {
+        min-width: 96px;
+      }
     </style>
-    <script type="module" crossorigin src="./assets/index-s21gIJpZ.js"></script>
+    <script type="module" crossorigin src="./assets/index-CY5t6fhe.js"></script>
   </head>
   <body>
     <div id="app">
