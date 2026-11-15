@@ -19,6 +19,7 @@ export class ShellControls {
   private advisorTitleEl!: HTMLElement;
   private advisorToggleBtn!: HTMLButtonElement;
   private advisorXrayBtn!: HTMLButtonElement;
+  private advisorAutoBtn!: HTMLButtonElement;
   private advisorHeadlineEl!: HTMLElement;
   private advisorMetaEl!: HTMLElement;
   private advisorReasonsEl!: HTMLUListElement;
@@ -27,6 +28,7 @@ export class ShellControls {
   private lastAdvisorRenderSig = '';
   private lastLeadersRenderSig = '';
   private lastLangSig: Language | '' = '';
+  private lastRulesSig = '';
   private readonly manager: SceneManager;
   private readonly appRoot: HTMLElement;
   private readonly leftPanel: HTMLElement;
@@ -49,25 +51,54 @@ export class ShellControls {
   private clubRoomTitleEl!: HTMLElement;
   private clubTableLabelEl!: HTMLElement;
   private playerStatusEl!: HTMLElement;
+  private modeNineBtn!: HTMLButtonElement;
+  private modeFanTanBtn!: HTMLButtonElement;
+  private fanTanOptsRow!: HTMLElement;
+  private fanTanLeadBtn!: HTMLButtonElement;
+  private fanTanPenaltyBtn!: HTMLButtonElement;
+  private fanTanPendingNoteEl!: HTMLElement;
   private leadersHeadingEl!: HTMLElement;
   private leadersListEl!: HTMLElement;
-  private displayTitleEl!: HTMLElement;
-  private langBtns = new Map<Language, HTMLButtonElement>();
+  private controlsTitleEl!: HTMLElement;
+  private playBtn!: HTMLButtonElement;
+  private tableBtn!: HTMLButtonElement;
+  private menuBtn!: HTMLButtonElement;
   private soundBtn!: HTMLButtonElement;
+  private hideSidebarsBtn!: HTMLButtonElement;
+  private settingsBtn!: HTMLButtonElement;
+
+  // Settings modal nodes & state
+  private settingsOpen = false;
+  private resetArmed = false;
+  private resetArmTimer: number | null = null;
+  private settingsBackdrop!: HTMLElement;
+  private settingsModalTitleEl!: HTMLElement;
+  private settingsCloseIconBtn!: HTMLButtonElement;
+  private settingsDoneBtn!: HTMLButtonElement;
+  private settingsLangTitleEl!: HTMLElement;
+  private settingsDisplayTitleEl!: HTMLElement;
+  private settingsSavesTitleEl!: HTMLElement;
+  private langBtns = new Map<Language, HTMLButtonElement>();
   private musicModeBtn!: HTMLButtonElement;
   private graphicsBtn!: HTMLButtonElement;
   private aspectBtn!: HTMLButtonElement;
   private scanlineBtn!: HTMLButtonElement;
-  private hideSidebarsBtn!: HTMLButtonElement;
-  private navTitleEl!: HTMLElement;
-  private playBtn!: HTMLButtonElement;
-  private tableBtn!: HTMLButtonElement;
-  private menuBtn!: HTMLButtonElement;
   private introBtn!: HTMLButtonElement;
   private exportBtn!: HTMLButtonElement;
   private importBtn!: HTMLButtonElement;
   private resetBtn!: HTMLButtonElement;
   private fileInput!: HTMLInputElement;
+
+  private readonly handleModalKeyDown = (e: KeyboardEvent): void => {
+    if (!this.settingsOpen) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      this.setSettingsOpen(false);
+    } else if (e.key !== 'Tab') {
+      e.stopImmediatePropagation();
+    }
+  };
 
   constructor(params: {
     appRoot: HTMLElement;
@@ -84,6 +115,8 @@ export class ShellControls {
 
     this.buildLeftPanel();
     this.buildRightPanel();
+    this.buildSettingsModal();
+    window.addEventListener('keydown', this.handleModalKeyDown, true);
 
     this.focusPill = this.makeButton('', () => {
       this.setSidebarsHidden(!this.sidebarsHidden);
@@ -154,16 +187,153 @@ export class ShellControls {
     clubHead.append(this.clubRoomTitleEl, this.clubTableLabelEl);
 
     this.playerStatusEl = this.makeEl('div', 'profile-line', '');
+
+    const modeRow = this.makeEl('div', 'mode-segmented');
+    this.modeNineBtn = this.makeButton(
+      '',
+      () => {
+        this.manager.ctx.setRuleConfig({ variant: 'nine36' });
+        this.sync();
+      },
+      'lang-btn mode-opt-btn',
+    );
+    this.modeFanTanBtn = this.makeButton(
+      '',
+      () => {
+        this.manager.ctx.setRuleConfig({ variant: 'fantan52' });
+        this.sync();
+      },
+      'lang-btn mode-opt-btn',
+    );
+    modeRow.append(this.modeNineBtn, this.modeFanTanBtn);
+
+    this.fanTanOptsRow = this.makeEl('div', 'fantan-opts-row');
+    this.fanTanLeadBtn = this.makeButton(
+      '',
+      () => {
+        const cur = this.manager.ctx.ruleConfig.fanTanOpening;
+        this.manager.ctx.setRuleConfig({
+          fanTanOpening: cur === 'sevenDiamonds' ? 'anySeven' : 'sevenDiamonds',
+        });
+        this.sync();
+      },
+      'mode-opt-btn',
+    );
+    this.fanTanPenaltyBtn = this.makeButton(
+      '',
+      () => {
+        const cur = this.manager.ctx.ruleConfig.fanTanHandPenalty;
+        this.manager.ctx.setRuleConfig({
+          fanTanHandPenalty: cur > 0 ? 0 : 5,
+        });
+        this.sync();
+      },
+      'mode-opt-btn',
+    );
+    this.fanTanOptsRow.append(this.fanTanLeadBtn, this.fanTanPenaltyBtn);
+    this.fanTanPendingNoteEl = this.makeEl('div', 'rules-pending-note is-hidden', '');
+
     this.leadersHeadingEl = this.makeEl('div', 'sub-heading', '');
     this.leadersListEl = this.makeEl('ol', 'leaders-list');
-    clubCard.append(clubHead, this.playerStatusEl, this.leadersHeadingEl, this.leadersListEl);
+    clubCard.append(
+      clubHead,
+      this.playerStatusEl,
+      modeRow,
+      this.fanTanOptsRow,
+      this.fanTanPendingNoteEl,
+      this.leadersHeadingEl,
+      this.leadersListEl,
+    );
 
-    const settingsCard = this.makeEl('section', 'panel-card');
-    const settingsHead = this.makeEl('div', 'panel-card-head');
-    this.displayTitleEl = this.makeEl('span', 'panel-title', '');
-    settingsHead.append(this.displayTitleEl);
-    settingsCard.append(settingsHead);
+    const controlsCard = this.makeEl('section', 'panel-card');
+    const controlsHead = this.makeEl('div', 'panel-card-head');
+    this.controlsTitleEl = this.makeEl('span', 'panel-title', '');
+    controlsHead.append(this.controlsTitleEl);
+    controlsCard.append(controlsHead);
 
+    const controlsGrid = this.makeEl('div', 'btn-grid btn-grid-2col');
+    this.playBtn = this.makeButton('', () => {
+      this.manager.ctx.goTo('table', 180);
+    });
+    this.tableBtn = this.makeButton('', () => {
+      const next = (((this.manager.ctx.config.clubTable % 3) + 1) as ClubTableId);
+      this.manager.ctx.setClubTable(next);
+      this.sync();
+    });
+    this.menuBtn = this.makeButton('', () => {
+      this.manager.ctx.goTo('menu', 180);
+    });
+    this.soundBtn = this.makeButton('', () => {
+      void this.manager.ctx.audio.unlock();
+      const next = !this.manager.ctx.config.soundMusicEnabled;
+      this.manager.ctx.config.soundMusicEnabled = next;
+      this.manager.ctx.audio.setEnabled(next);
+      this.manager.ctx.persistConfig();
+      this.sync();
+    });
+    this.hideSidebarsBtn = this.makeButton('', () => {
+      this.setSidebarsHidden(true);
+    });
+    this.settingsBtn = this.makeButton('', () => {
+      this.setSettingsOpen(true);
+    });
+    controlsGrid.append(
+      this.playBtn,
+      this.tableBtn,
+      this.menuBtn,
+      this.soundBtn,
+      this.hideSidebarsBtn,
+      this.settingsBtn,
+    );
+    controlsCard.append(controlsGrid);
+
+    const coachCard = this.buildCoachCard();
+
+    this.rightPanel.append(clubCard, controlsCard, coachCard);
+  }
+
+  private disarmReset(): void {
+    if (this.resetArmTimer !== null) {
+      window.clearTimeout(this.resetArmTimer);
+      this.resetArmTimer = null;
+    }
+    this.resetArmed = false;
+  }
+
+  private setSettingsOpen(open: boolean): void {
+    this.settingsOpen = open;
+    if (!open) {
+      this.disarmReset();
+      this.manager.ctx.stage.getCanvas().focus({ preventScroll: true });
+    }
+    this.settingsBackdrop.classList.toggle('is-hidden', !open);
+    this.sync();
+  }
+
+  private buildSettingsModal(): void {
+    this.settingsBackdrop = this.makeEl('div', 'settings-backdrop is-hidden');
+    this.settingsBackdrop.addEventListener('click', (e) => {
+      if (e.target === this.settingsBackdrop) {
+        this.setSettingsOpen(false);
+      }
+    });
+
+    const modal = this.makeEl('div', 'settings-modal');
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+
+    const header = this.makeEl('div', 'settings-header');
+    this.settingsModalTitleEl = this.makeEl('span', 'settings-modal-title', '');
+    this.settingsCloseIconBtn = this.makeEl('button', 'settings-close-btn', '✕');
+    this.settingsCloseIconBtn.type = 'button';
+    this.settingsCloseIconBtn.addEventListener('click', () => {
+      this.setSettingsOpen(false);
+    });
+    header.append(this.settingsModalTitleEl, this.settingsCloseIconBtn);
+
+    // 1. Language section
+    const langSection = this.makeEl('div', 'settings-section');
+    this.settingsLangTitleEl = this.makeEl('div', 'settings-section-title', '');
     const langRow = this.makeEl('div', 'lang-segmented');
     for (const item of SUPPORTED_LANGUAGES) {
       const btn = this.makeButton(
@@ -178,20 +348,15 @@ export class ShellControls {
       this.langBtns.set(item.code, btn);
       langRow.append(btn);
     }
-    settingsCard.append(langRow);
+    langSection.append(this.settingsLangTitleEl, langRow);
 
-    const settingsGrid = this.makeEl('div', 'btn-grid');
+    // 2. Display & Audio section
+    const displaySection = this.makeEl('div', 'settings-section');
+    this.settingsDisplayTitleEl = this.makeEl('div', 'settings-section-title', '');
+    const displayGrid = this.makeEl('div', 'btn-grid btn-grid-2col');
     this.graphicsBtn = this.makeButton('', () => {
       const next = this.manager.ctx.getGraphicsMode() === 'hd' ? 'ega' : 'hd';
       this.manager.ctx.setGraphicsMode(next);
-      this.sync();
-    });
-    this.soundBtn = this.makeButton('', () => {
-      void this.manager.ctx.audio.unlock();
-      const next = !this.manager.ctx.config.soundMusicEnabled;
-      this.manager.ctx.config.soundMusicEnabled = next;
-      this.manager.ctx.audio.setEnabled(next);
-      this.manager.ctx.persistConfig();
       this.sync();
     });
     this.musicModeBtn = this.makeButton('', () => {
@@ -211,40 +376,27 @@ export class ShellControls {
       this.manager.ctx.stage.setScanlines(next);
       this.sync();
     });
-    this.hideSidebarsBtn = this.makeButton('', () => {
-      this.setSidebarsHidden(true);
-    });
-    settingsGrid.append(
+    this.introBtn = this.makeButton(
+      '',
+      () => {
+        this.setSettingsOpen(false);
+        this.manager.ctx.goTo('intro', 180);
+      },
+      'shell-btn-wide',
+    );
+    displayGrid.append(
       this.graphicsBtn,
-      this.soundBtn,
       this.musicModeBtn,
       this.aspectBtn,
       this.scanlineBtn,
-      this.hideSidebarsBtn,
+      this.introBtn,
     );
-    settingsCard.append(settingsGrid);
+    displaySection.append(this.settingsDisplayTitleEl, displayGrid);
 
-    const navCard = this.makeEl('section', 'panel-card');
-    const navHead = this.makeEl('div', 'panel-card-head');
-    this.navTitleEl = this.makeEl('span', 'panel-title', '');
-    navHead.append(this.navTitleEl);
-    navCard.append(navHead);
-
-    const navGrid = this.makeEl('div', 'btn-grid btn-grid-2col');
-    this.playBtn = this.makeButton('', () => {
-      this.manager.ctx.goTo('table', 180);
-    });
-    this.tableBtn = this.makeButton('', () => {
-      const next = (((this.manager.ctx.config.clubTable % 3) + 1) as ClubTableId);
-      this.manager.ctx.setClubTable(next);
-      this.sync();
-    });
-    this.menuBtn = this.makeButton('', () => {
-      this.manager.ctx.goTo('menu', 180);
-    });
-    this.introBtn = this.makeButton('', () => {
-      this.manager.ctx.goTo('intro', 180);
-    });
+    // 3. Saves & DOS Data section
+    const savesSection = this.makeEl('div', 'settings-section');
+    this.settingsSavesTitleEl = this.makeEl('div', 'settings-section-title', '');
+    const savesGrid = this.makeEl('div', 'btn-grid btn-grid-2col');
     this.exportBtn = this.makeButton('', () => {
       const bytes = this.manager.exportNineResBytes();
       const blob = new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], {
@@ -276,25 +428,40 @@ export class ShellControls {
     this.importBtn = this.makeButton('', () => {
       this.fileInput.click();
     });
-    this.resetBtn = this.makeButton('', () => {
-      this.manager.resetLocalSave();
-      this.sync();
-    }, 'shell-btn-danger');
-
-    navGrid.append(
-      this.playBtn,
-      this.tableBtn,
-      this.menuBtn,
-      this.introBtn,
-      this.exportBtn,
-      this.importBtn,
-      this.resetBtn,
+    this.resetBtn = this.makeButton(
+      '',
+      () => {
+        if (!this.resetArmed) {
+          this.resetArmed = true;
+          this.resetArmTimer = window.setTimeout(() => {
+            this.disarmReset();
+            this.sync();
+          }, 4000);
+          this.sync();
+          return;
+        }
+        this.disarmReset();
+        this.manager.resetLocalSave();
+        this.sync();
+      },
+      'shell-btn-danger',
     );
-    navCard.append(navGrid, this.fileInput);
+    savesGrid.append(this.exportBtn, this.importBtn, this.resetBtn);
+    savesSection.append(this.settingsSavesTitleEl, savesGrid, this.fileInput);
 
-    const coachCard = this.buildCoachCard();
+    const footer = this.makeEl('div', 'settings-footer');
+    this.settingsDoneBtn = this.makeButton(
+      '',
+      () => {
+        this.setSettingsOpen(false);
+      },
+      'settings-done-btn',
+    );
+    footer.append(this.settingsDoneBtn);
 
-    this.rightPanel.append(clubCard, settingsCard, navCard, coachCard);
+    modal.append(header, langSection, displaySection, savesSection, footer);
+    this.settingsBackdrop.append(modal);
+    this.appRoot.append(this.settingsBackdrop);
   }
 
   private buildCoachCard(): HTMLElement {
@@ -313,27 +480,38 @@ export class ShellControls {
     const togglesWrap = document.createElement('div');
     togglesWrap.className = 'advisor-toggles';
 
-    this.advisorToggleBtn = document.createElement('button');
-    this.advisorToggleBtn.type = 'button';
-    this.advisorToggleBtn.className = 'shell-btn advisor-toggle-btn';
-    this.advisorToggleBtn.addEventListener('click', () => {
+    const makeAdvisorToggle = (onClick: () => void): HTMLButtonElement => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'shell-btn advisor-toggle-btn';
+      btn.addEventListener('click', () => {
+        onClick();
+        this.sync();
+      });
+      return btn;
+    };
+
+    this.advisorToggleBtn = makeAdvisorToggle(() => {
       this.manager.ctx.setCoachMode(!this.manager.ctx.coachMode);
-      this.sync();
     });
 
-    this.advisorXrayBtn = document.createElement('button');
-    this.advisorXrayBtn.type = 'button';
-    this.advisorXrayBtn.className = 'shell-btn advisor-toggle-btn';
-    this.advisorXrayBtn.addEventListener('click', () => {
+    this.advisorXrayBtn = makeAdvisorToggle(() => {
       const next = !this.manager.ctx.advisorXrayMode;
       this.manager.ctx.setAdvisorXrayMode(next);
       if (next && !this.manager.ctx.coachMode) {
         this.manager.ctx.setCoachMode(true);
       }
-      this.sync();
     });
 
-    togglesWrap.append(this.advisorXrayBtn, this.advisorToggleBtn);
+    this.advisorAutoBtn = makeAdvisorToggle(() => {
+      const next = !this.manager.ctx.advisorAutoPlayMode;
+      this.manager.ctx.setAdvisorAutoPlayMode(next);
+      if (next && !this.manager.ctx.coachMode) {
+        this.manager.ctx.setCoachMode(true);
+      }
+    });
+
+    togglesWrap.append(this.advisorAutoBtn, this.advisorXrayBtn, this.advisorToggleBtn);
     header.append(titleWrap, togglesWrap);
 
     const topRow = document.createElement('div');
@@ -378,6 +556,7 @@ export class ShellControls {
     const t = getTranslations(lang).advisor;
     const coachOn = this.manager.ctx.coachMode;
     const xrayOn = this.manager.ctx.advisorXrayMode;
+    const autoOn = this.manager.ctx.advisorAutoPlayMode;
     const hint: AdvisorRecommendation | null = coachOn ? this.manager.ctx.advisorHint : null;
 
     let mood: AdvisorMascotMood = 'idle';
@@ -388,7 +567,7 @@ export class ShellControls {
     }
     this.advisorMascot.setMood(mood);
 
-    const sig = `${lang}|${coachOn ? 1 : 0}|${xrayOn ? 1 : 0}|${inTableScene ? 1 : 0}|${
+    const sig = `${lang}|${coachOn ? 1 : 0}|${xrayOn ? 1 : 0}|${autoOn ? 1 : 0}|${inTableScene ? 1 : 0}|${
       hint
         ? `${hint.xrayMode ? 1 : 0}|${hint.action}|${hint.headline}|${hint.sampleCount}|${hint.reasons.join(';')}|${hint.candidates.length}|${hint.deduction.unseenTotal}|${hint.deduction.certainLeft.length}|${hint.deduction.certainRight.length}|${hint.deduction.excludedLeftCount}|${hint.deduction.excludedRightCount}`
         : 'none'
@@ -403,6 +582,8 @@ export class ShellControls {
     this.advisorToggleBtn.classList.toggle('is-active', coachOn);
     this.advisorXrayBtn.textContent = xrayOn ? t.xrayOn : t.xrayOff;
     this.advisorXrayBtn.classList.toggle('is-xray-active', xrayOn);
+    this.advisorAutoBtn.textContent = autoOn ? t.autoOn : t.autoOff;
+    this.advisorAutoBtn.classList.toggle('is-auto-active', autoOn);
 
     this.advisorHeadlineEl.replaceChildren();
     this.advisorMetaEl.textContent = '';
@@ -505,7 +686,7 @@ export class ShellControls {
   }
 
   private appendCardStyledText(parent: HTMLElement, text: string): void {
-    const tokenRe = /(10|[6789JQKA])([♥♦♠♣])/g;
+    const tokenRe = /(10|[2-9JQKA])([♥♦♠♣])/g;
     let lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = tokenRe.exec(text)) !== null) {
@@ -605,7 +786,13 @@ export class ShellControls {
 
     this.moveLogEl.innerHTML = '';
     if (telemetry.moves.length === 0) {
-      this.moveLogEl.append(this.makeEl('li', 'move-empty', t.waitingOpeningNine));
+      const activeOpening =
+        telemetry.ruleConfig?.fanTanOpening ?? this.manager.ctx.ruleConfig.fanTanOpening;
+      const waitMsg =
+        telemetry.variant === 'fantan52'
+          ? t.waitingOpeningFanTan(activeOpening)
+          : t.waitingOpeningNine;
+      this.moveLogEl.append(this.makeEl('li', 'move-empty', waitMsg));
     } else {
       for (const m of telemetry.moves) {
         const text = this.formatMoveEntryText(m, lang, playerLabel);
@@ -620,26 +807,40 @@ export class ShellControls {
     if (this.lastLangSig !== lang) {
       this.lastLangSig = lang;
       this.moveLogTitleEl.textContent = s.moveLogTitle;
-      this.rulesTitleEl.textContent = s.rulesTitle;
-      this.rulesListEl.replaceChildren();
-      for (const line of s.rules) {
-        this.rulesListEl.append(this.makeEl('li', '', line));
-      }
       this.clubRoomTitleEl.textContent = s.clubRoom;
       this.leadersHeadingEl.textContent = s.topClubLeaders;
-      this.displayTitleEl.textContent = s.displayAudio;
-      this.hideSidebarsBtn.textContent = s.hideSidebars;
-      this.navTitleEl.textContent = s.navSave;
+      this.controlsTitleEl.textContent = s.controlsTitle;
       this.playBtn.textContent = s.dealPlay;
       this.tableBtn.textContent = s.switchTable;
       this.menuBtn.textContent = s.clubMenu;
+      this.hideSidebarsBtn.textContent = s.hideSidebars;
+      this.settingsBtn.textContent = `⚙ ${s.settingsBtn}`;
+      this.settingsModalTitleEl.textContent = s.settingsTitle;
+      this.settingsLangTitleEl.textContent = s.settingsLangSection;
+      this.settingsDisplayTitleEl.textContent = s.settingsDisplaySection;
+      this.settingsSavesTitleEl.textContent = s.settingsSavesSection;
+      this.settingsDoneBtn.textContent = s.settingsClose;
       this.introBtn.textContent = s.intro;
       this.exportBtn.textContent = s.exportScores;
       this.exportBtn.title = s.exportTip;
       this.importBtn.textContent = s.importScores;
       this.importBtn.title = s.importTip;
-      this.resetBtn.textContent = s.resetSave;
       this.focusPill.textContent = this.sidebarsHidden ? s.showPanels : s.focusView;
+    }
+
+    const rc = this.manager.ctx.tableTelemetry?.ruleConfig ?? this.manager.ctx.ruleConfig;
+    const rulesSig = `${lang}|${rc.variant}|${rc.fanTanOpening}|${rc.fanTanHandPenalty}`;
+    if (this.lastRulesSig !== rulesSig) {
+      this.lastRulesSig = rulesSig;
+      const lines =
+        rc.variant === 'fantan52'
+          ? s.fanTanRules(rc.fanTanOpening, rc.fanTanHandPenalty)
+          : s.rules;
+      this.rulesTitleEl.textContent = rc.variant === 'fantan52' ? s.fanTanRulesTitle : s.rulesTitle;
+      this.rulesListEl.replaceChildren();
+      for (const line of lines) {
+        this.rulesListEl.append(this.makeEl('li', '', line));
+      }
     }
 
     for (const [code, btn] of this.langBtns.entries()) {
@@ -648,7 +849,7 @@ export class ShellControls {
   }
 
   sync(): void {
-    const { config, sessionPlayer, audio, highScores, tableTelemetry } = this.manager.ctx;
+    const { config, ruleConfig, sessionPlayer, audio, tableTelemetry } = this.manager.ctx;
     const lang = this.manager.ctx.getLanguage();
     const tr = getTranslations(lang);
     const s = tr.shell;
@@ -664,13 +865,47 @@ export class ShellControls {
     this.graphicsBtn.textContent = this.manager.ctx.getGraphicsMode() === 'hd' ? s.graphicsHd : s.graphicsEga;
     this.aspectBtn.textContent = this.manager.ctx.stage.getAspectMode() === '1:1' ? s.aspect1to1 : s.aspect4to3;
     this.scanlineBtn.textContent = this.manager.ctx.stage.isScanlinesEnabled() ? s.crtOn : s.crtOff;
+    this.resetBtn.textContent = this.resetArmed ? s.resetSaveConfirm : s.resetSave;
+    this.resetBtn.classList.toggle('is-armed', this.resetArmed);
 
-    this.clubTableLabelEl.textContent = tr.tableStakes[config.clubTable];
+    const isFanTan = ruleConfig.variant === 'fantan52';
+    this.modeNineBtn.textContent = s.modeNine36;
+    this.modeFanTanBtn.textContent = s.modeFanTan52;
+    this.modeNineBtn.classList.toggle('is-active', !isFanTan);
+    this.modeFanTanBtn.classList.toggle('is-active', isFanTan);
+    this.fanTanOptsRow.classList.toggle('is-hidden', !isFanTan);
+    this.fanTanLeadBtn.textContent =
+      ruleConfig.fanTanOpening === 'anySeven' ? s.fanTanLeadAny7 : s.fanTanLead7D;
+    this.fanTanLeadBtn.classList.toggle('is-active', ruleConfig.fanTanOpening === 'anySeven');
+    this.fanTanPenaltyBtn.textContent =
+      ruleConfig.fanTanHandPenalty > 0
+        ? s.fanTanPenaltyOn(ruleConfig.fanTanHandPenalty)
+        : s.fanTanPenaltyOff;
+    this.fanTanPenaltyBtn.classList.toggle('is-active', ruleConfig.fanTanHandPenalty > 0);
+
+    const activeMatchRules = tableTelemetry?.ruleConfig;
+    const hasPendingRuleChange = Boolean(
+      isFanTan &&
+        activeMatchRules &&
+        activeMatchRules.variant === 'fantan52' &&
+        (activeMatchRules.fanTanOpening !== ruleConfig.fanTanOpening ||
+          activeMatchRules.fanTanHandPenalty !== ruleConfig.fanTanHandPenalty),
+    );
+    this.fanTanPendingNoteEl.classList.toggle('is-hidden', !hasPendingRuleChange);
+    this.fanTanPendingNoteEl.textContent =
+      hasPendingRuleChange && activeMatchRules
+        ? s.nextMatchRulesNote(activeMatchRules.fanTanOpening, activeMatchRules.fanTanHandPenalty)
+        : '';
+
+    this.clubTableLabelEl.textContent = isFanTan
+      ? `${tr.tableStakes[config.clubTable]} · ${s.fanTanLeadersTag}`
+      : tr.tableStakes[config.clubTable];
     this.playerStatusEl.textContent = sessionPlayer.loggedIn
       ? s.signedIn(sessionPlayer.name, sessionPlayer.clubCarryover)
       : s.guestSession;
 
-    const tableRows = highScores[config.clubTable] ?? [];
+    const activeTables = this.manager.ctx.getHighScoresForVariant();
+    const tableRows = activeTables[config.clubTable] ?? [];
     const topRows = [...tableRows]
       .filter((r) => {
         const clean = r.name.trim();
@@ -679,7 +914,7 @@ export class ShellControls {
       .sort((a, b) => b.score - a.score)
       .slice(0, 3);
     const canSwitch = tableTelemetry === null;
-    const leadersSig = `${lang}|${config.clubTable}|${canSwitch ? 1 : 0}|${
+    const leadersSig = `${lang}|${ruleConfig.variant}|${config.clubTable}|${canSwitch ? 1 : 0}|${
       sessionPlayer.loggedIn ? sessionPlayer.name.toLowerCase() : ''
     }|${topRows.map((r) => `${r.name.trim()}:${r.score}:${r.password}`).join(',')}`;
 

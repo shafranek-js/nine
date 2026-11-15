@@ -6,9 +6,15 @@ import { HD_RENDER_SCALE, type AspectMode } from './StageApp';
 export interface HdCardLibrary {
   readonly cards: Map<string, Texture>;
   readonly miniCards: Map<string, Texture>;
+  readonly compactMiniCards: Map<string, Texture>;
   readonly cardBack: Texture;
   readonly miniCardBack: Texture;
 }
+
+export const HD_COMPACT_MINI_SIZE: Record<AspectMode, { readonly w: number; readonly h: number }> = {
+  '4:3': { w: 36, h: 36 },
+  '1:1': { w: 30, h: 40 },
+};
 
 const cachedLibraries: Record<AspectMode, HdCardLibrary | null> = {
   '4:3': null,
@@ -166,10 +172,10 @@ export function drawSuitShape(ctx: CanvasRenderingContext2D, suit: Suit, cx: num
 }
 
 function rankLabel(rank: Rank): string {
+  if (rank === 1 || rank === 14) return 'A';
   if (rank === 11) return 'J';
   if (rank === 12) return 'Q';
   if (rank === 13) return 'K';
-  if (rank === 14) return 'A';
   return String(rank);
 }
 
@@ -244,7 +250,25 @@ function drawPipLayout(ctx: CanvasRenderingContext2D, suit: Suit, rank: Rank, w:
     ctx.restore();
   };
 
-  if (rank === 6) {
+  if (rank === 2) {
+    drawMirrored(cx, top);
+    drawMirrored(cx, bot, true);
+  } else if (rank === 3) {
+    drawMirrored(cx, top);
+    drawMirrored(cx, cy);
+    drawMirrored(cx, bot, true);
+  } else if (rank === 4) {
+    for (const py of [top, bot]) {
+      drawMirrored(left, py, py > cy);
+      drawMirrored(right, py, py > cy);
+    }
+  } else if (rank === 5) {
+    for (const py of [top, bot]) {
+      drawMirrored(left, py, py > cy);
+      drawMirrored(right, py, py > cy);
+    }
+    drawMirrored(cx, cy);
+  } else if (rank === 6) {
     for (const py of [top, cy, bot]) {
       drawMirrored(left, py, py > cy);
       drawMirrored(right, py, py > cy);
@@ -493,7 +517,7 @@ function drawFullHdCard(suit: Suit, rank: Rank, cardW: number, cardH: number): T
   return createHdTexture(cardW, cardH, (ctx, w, h) => {
     drawCardStockBase(ctx, w, h, narrow ? 5.5 : 6);
 
-    if (rank === 14) {
+    if (rank === 1 || rank === 14) {
       // Ace Art-Deco sunburst medallion
       const cx = w * 0.5 + (narrow ? 1.2 : 1.5);
       const cy = h * 0.53;
@@ -537,17 +561,52 @@ function drawFullHdCard(suit: Suit, rank: Rank, cardW: number, cardH: number): T
 }
 
 function drawMiniPipLayout(ctx: CanvasRenderingContext2D, suit: Suit, rank: Rank, w: number, h: number): void {
+  const compact = w <= 26;
   const narrow = w < 33;
   const cx = w * 0.5;
-  const halfSpread = narrow ? (rank >= 9 ? 4.2 : 4.5) : rank >= 9 ? 6.4 : 6.7;
+  const halfSpread = compact
+    ? (w <= 23 ? 3.1 : 3.7)
+    : narrow
+      ? (rank >= 9 ? 4.2 : 4.5)
+      : rank >= 9
+        ? 6.4
+        : 6.7;
   const left = cx - halfSpread;
   const right = cx + halfSpread;
 
-  if (rank <= 8) {
-    const top = narrow ? 8.6 : 8.5;
-    const bot = h - (narrow ? 8.6 : 8.5);
+  if (rank <= 5) {
+    const top = compact ? 9.5 : narrow ? 8.6 : 8.5;
+    const bot = h - (compact ? 8.5 : narrow ? 8.6 : 8.5);
     const cy = (top + bot) * 0.5;
-    const pip = narrow ? 4.2 : 5.4;
+    const pip = compact ? 3.4 : narrow ? 4.4 : 5.6;
+
+    if (rank === 2) {
+      drawSuitShape(ctx, suit, cx, top, pip);
+      drawSuitShape(ctx, suit, cx, bot, pip);
+    } else if (rank === 3) {
+      drawSuitShape(ctx, suit, cx, top, pip);
+      drawSuitShape(ctx, suit, cx, cy, pip);
+      drawSuitShape(ctx, suit, cx, bot, pip);
+    } else if (rank === 4) {
+      for (const py of [top, bot]) {
+        drawSuitShape(ctx, suit, left, py, pip);
+        drawSuitShape(ctx, suit, right, py, pip);
+      }
+    } else if (rank === 5) {
+      for (const py of [top, bot]) {
+        drawSuitShape(ctx, suit, left, py, pip);
+        drawSuitShape(ctx, suit, right, py, pip);
+      }
+      drawSuitShape(ctx, suit, cx, cy, pip);
+    }
+    return;
+  }
+
+  if (rank <= 8) {
+    const top = compact ? 9.2 : narrow ? 8.6 : 8.5;
+    const bot = h - (compact ? 8.0 : narrow ? 8.6 : 8.5);
+    const cy = (top + bot) * 0.5;
+    const pip = compact ? 3.0 : narrow ? 4.2 : 5.4;
 
     for (const py of [top, cy, bot]) {
       drawSuitShape(ctx, suit, left, py, pip);
@@ -563,11 +622,11 @@ function drawMiniPipLayout(ctx: CanvasRenderingContext2D, suit: Suit, rank: Rank
   }
 
   // 9 and 10: 4 rows in two columns centered on card + 1 center (9) or 2 inner pips (10)
-  const top = narrow ? 7.8 : 7.6;
-  const bot = h - (narrow ? 7.8 : 7.6);
+  const top = compact ? 8.6 : narrow ? 7.8 : 7.6;
+  const bot = h - (compact ? 7.6 : narrow ? 7.8 : 7.6);
   const step = (bot - top) / 3;
   const rows = [top, top + step, top + step * 2, bot];
-  const pip = narrow ? 3.5 : 4.7;
+  const pip = compact ? 2.6 : narrow ? 3.5 : 4.7;
 
   for (const py of rows) {
     drawSuitShape(ctx, suit, left, py, pip);
@@ -582,24 +641,26 @@ function drawMiniPipLayout(ctx: CanvasRenderingContext2D, suit: Suit, rank: Rank
 }
 
 function drawMiniHdCard(suit: Suit, rank: Rank, miniW: number, miniH: number): Texture {
+  const compact = miniW <= 26;
   const narrow = miniW < 33;
   const isCourt = rank >= 11 && rank <= 13;
+  const isAce = rank === 1 || rank === 14;
   const isTen = rank === 10;
   const cornerCut = isCourt
     ? undefined
     : {
-        gapX: narrow ? (isTen ? 8.2 : 6.6) : isTen ? 9.4 : 7.6,
-        gapY: narrow ? 12.2 : 13.6,
+        gapX: compact ? (isTen ? 7.2 : 5.8) : narrow ? (isTen ? 8.2 : 6.6) : isTen ? 9.4 : 7.6,
+        gapY: compact ? 10.6 : narrow ? 12.2 : 13.6,
       };
 
   return createHdTexture(miniW, miniH, (ctx, w, h) => {
-    drawCardStockBase(ctx, w, h, narrow ? 3.2 : 3.6, cornerCut);
+    drawCardStockBase(ctx, w, h, compact ? 2.6 : narrow ? 3.2 : 3.6, cornerCut);
     const red = isRedSuit(suit);
     const inkColor = red ? '#bd1829' : '#181e2b';
     const label = rankLabel(rank);
 
     // Subtle inner tint for court cards & aces so key cards pop cleanly on board
-    if (rank >= 11 || rank === 14) {
+    if (isCourt || isAce) {
       ctx.fillStyle = red ? 'rgba(200, 30, 50, 0.08)' : 'rgba(20, 40, 110, 0.08)';
       roundRectPath(ctx, narrow ? 3.8 : 5, narrow ? 4.2 : 5, w - (narrow ? 7.6 : 10), h - (narrow ? 8.4 : 10), 2);
       ctx.fill();
@@ -608,36 +669,43 @@ function drawMiniHdCard(suit: Suit, rank: Rank, miniW: number, miniH: number): T
     // Crisp top-left corner index integrated into the broken inner frame corner
     ctx.fillStyle = inkColor;
     if (isCourt) {
-      const fontSize = narrow ? 8.6 : 9.5;
+      const fontSize = compact ? 7.4 : narrow ? 8.6 : 9.5;
       ctx.font = `bold ${fontSize}px Georgia, "Times New Roman", serif`;
       ctx.textAlign = 'left';
       ctx.textBaseline = 'top';
-      ctx.fillText(label, narrow ? 3.8 : 5, narrow ? 3.2 : 4);
+      ctx.fillText(label, compact ? 3.2 : narrow ? 3.8 : 5, compact ? 2.6 : narrow ? 3.2 : 4);
     } else {
-      const fontSize = narrow ? (isTen ? 4.8 : 5.5) : isTen ? 5.4 : 6.2;
-      const idxX = narrow ? (isTen ? 4.7 : 3.9) : isTen ? 5.3 : 4.5;
+      const fontSize = compact ? (isTen ? 4.3 : 4.9) : narrow ? (isTen ? 4.8 : 5.5) : isTen ? 5.4 : 6.2;
+      const idxX = compact ? (isTen ? 4.2 : 3.5) : narrow ? (isTen ? 4.7 : 3.9) : isTen ? 5.3 : 4.5;
       ctx.font = `bold ${fontSize}px Georgia, "Times New Roman", serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
-      ctx.fillText(label, idxX, narrow ? 1.9 : 1.9);
-      drawSuitShape(ctx, suit, narrow ? 3.9 : 4.5, narrow ? 9.2 : 10.4, narrow ? 3.0 : 3.5);
+      ctx.fillText(label, idxX, compact ? 1.6 : 1.9);
+      drawSuitShape(ctx, suit, compact ? 3.5 : narrow ? 3.9 : 4.5, compact ? 8.1 : narrow ? 9.2 : 10.4, compact ? 2.5 : narrow ? 3.0 : 3.5);
     }
 
-    if (rank <= 10) {
+    if (rank >= 2 && rank <= 10) {
       drawMiniPipLayout(ctx, suit, rank, w, h);
       return;
     }
 
     const illustrated = isCourt ? hdCourtArtMap.get(cardKey({ suit, rank })) : undefined;
     if (illustrated && illustrated.complete && illustrated.naturalWidth > 0) {
-      drawSuitShape(ctx, suit, narrow ? 6.4 : 7.6, narrow ? 14.5 : 16.5, narrow ? 5.2 : 6.2);
+      drawSuitShape(ctx, suit, compact ? 5.2 : narrow ? 6.4 : 7.6, compact ? 12.6 : narrow ? 14.5 : 16.5, compact ? 4.2 : narrow ? 5.2 : 6.2);
       ctx.save();
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
-      if (narrow) {
-        ctx.drawImage(illustrated, 6.2, 13.5, 19.5, 19.5);
+      if (compact) {
+        const size = w - 7;
+        ctx.drawImage(illustrated, 4.2, 13.0, size, size);
+      } else if (narrow) {
+        const artW = Math.min(19.5, w - 10);
+        const artX = (w - artW) * 0.5 + 1.4;
+        const artY = h >= 40 ? 15.0 : 13.0;
+        ctx.drawImage(illustrated, artX, artY, artW, artW);
       } else {
-        ctx.drawImage(illustrated, 10.5, 6.5, 25, 25);
+        const artSize = Math.min(25, w - 13);
+        ctx.drawImage(illustrated, 10.2, 6.5, artSize, artSize);
       }
       ctx.restore();
       return;
@@ -647,15 +715,15 @@ function drawMiniHdCard(suit: Suit, rank: Rank, miniW: number, miniH: number): T
       ctx,
       suit,
       isCourt ? w * (narrow ? 0.56 : 0.58) : w * 0.5,
-      isCourt ? h * (narrow ? 0.61 : 0.56) : h * 0.51,
-      narrow ? 12.2 : isCourt ? 14.5 : 15.5,
+      isCourt ? h * (narrow ? 0.61 : 0.56) : h * 0.52,
+      compact ? 10.5 : narrow ? 12.2 : isCourt ? 14.5 : 15.5,
     );
 
     // Tiny royal crown dot accent in upper-right for K/Q/J fallback
     if (isCourt) {
       ctx.fillStyle = '#d49d2a';
       ctx.beginPath();
-      ctx.arc(w - (narrow ? 6 : 7.5), narrow ? 6.5 : 7.5, narrow ? 1.8 : 2.1, 0, Math.PI * 2);
+      ctx.arc(w - (compact ? 4.8 : narrow ? 6 : 7.5), compact ? 5.5 : narrow ? 6.5 : 7.5, compact ? 1.5 : narrow ? 1.8 : 2.1, 0, Math.PI * 2);
       ctx.fill();
     }
   });
@@ -727,28 +795,89 @@ export function getHdCardLibrary(aspectMode: AspectMode = '4:3'): HdCardLibrary 
   const cardH = 89;
   const miniW = isSquare ? 28 : 38;
   const miniH = isSquare ? 38 : 37;
+  const compactW = HD_COMPACT_MINI_SIZE[aspectMode].w;
+  const compactH = HD_COMPACT_MINI_SIZE[aspectMode].h;
 
   const cards = new Map<string, Texture>();
   const miniCards = new Map<string, Texture>();
+  const compactMiniCards = new Map<string, Texture>();
   const suits: readonly Suit[] = [1, 2, 3, 4];
-  const ranks: readonly Rank[] = [6, 7, 8, 9, 10, 11, 12, 13, 14];
+  const ranks: readonly Rank[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
 
   for (const suit of suits) {
     for (const rank of ranks) {
       const key = cardKey({ suit, rank });
       cards.set(key, drawFullHdCard(suit, rank, cardW, cardH));
       miniCards.set(key, drawMiniHdCard(suit, rank, miniW, miniH));
+      compactMiniCards.set(key, drawMiniHdCard(suit, rank, compactW, compactH));
     }
   }
 
   const lib: HdCardLibrary = {
     cards,
     miniCards,
+    compactMiniCards,
     cardBack: drawCardBack(cardW, cardH, isSquare ? 5.5 : 6),
     miniCardBack: drawCardBack(miniW, miniH, isSquare ? 3.2 : 3.6),
   };
   cachedLibraries[aspectMode] = lib;
   return lib;
+}
+
+const egaFallbackCache = new Map<string, Texture>();
+
+/**
+ * Generates crisp 16-color EGA-style textures on demand for ranks 2..5
+ * (not present in the original 36-card 1993 sprite sheets).
+ */
+export function getEgaFallbackCardTexture(suit: Suit, rank: Rank, isMini: boolean): Texture {
+  const key = `${isMini ? 'm' : 'f'}_${suit}_${rank}`;
+  const cached = egaFallbackCache.get(key);
+  if (cached) return cached;
+
+  const w = isMini ? 26 : 88;
+  const h = isMini ? 36 : 89;
+  const canvas = document.createElement('canvas');
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  if (ctx) {
+    ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, w, h);
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
+
+    const red = isRedSuit(suit);
+    const ink = red ? '#aa0000' : '#000000';
+    const label = rankLabel(rank);
+    const sym = suit === 1 ? '♠' : suit === 2 ? '♣' : suit === 3 ? '♦' : '♥';
+
+    ctx.fillStyle = ink;
+    ctx.textBaseline = 'top';
+    ctx.font = isMini ? 'bold 8px monospace' : 'bold 13px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(label, isMini ? 2 : 6, isMini ? 2 : 5);
+    if (!isMini) {
+      ctx.font = '12px monospace';
+      ctx.fillText(sym, 6, 19);
+    }
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    if (isMini) {
+      ctx.font = '14px monospace';
+      ctx.fillText(sym, w * 0.5 + 1, h * 0.58);
+    } else {
+      ctx.font = '26px monospace';
+      ctx.fillText(sym, w * 0.5 + 4, h * 0.54);
+    }
+  }
+  const tex = Texture.from(canvas);
+  tex.source.scaleMode = 'nearest';
+  egaFallbackCache.set(key, tex);
+  return tex;
 }
 
 const cachedRivalCardBacks: Record<AspectMode, Texture | null> = {

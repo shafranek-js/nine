@@ -59,6 +59,7 @@ function createHarness() {
   const manager = new SceneManager({ stage, assets, input, audio });
   const mounted: SceneId[] = [];
   const tableChanges: number[] = [];
+  const autoPlayChanges: boolean[] = [];
   let sessionUpdates = 0;
 
   const makeScene = (id: SceneId): Scene => ({
@@ -72,6 +73,9 @@ function createHarness() {
     },
     onSessionChanged() {
       sessionUpdates += 1;
+    },
+    onAdvisorAutoPlayModeChanged(enabled) {
+      autoPlayChanges.push(enabled);
     },
   });
 
@@ -91,6 +95,7 @@ function createHarness() {
     resBytes,
     mounted,
     tableChanges,
+    autoPlayChanges,
     tick,
     getSessionUpdates: () => sessionUpdates,
   };
@@ -190,6 +195,49 @@ describe('SceneManager audit regression tests', () => {
     tick(100);
     expect(manager.getCurrentSceneId()).toBe('table');
     expect(mounted).toEqual(['menu', 'table']);
+    manager.destroy();
+  });
+
+  it('toggles advisor auto-play mode and avoids no-op hooks', () => {
+    const { manager, autoPlayChanges } = createHarness();
+    manager.ctx.setAdvisorAutoPlayMode(false);
+    autoPlayChanges.length = 0;
+
+    manager.ctx.goTo('table', 0);
+
+    manager.ctx.setAdvisorAutoPlayMode(true);
+    expect(manager.ctx.advisorAutoPlayMode).toBe(true);
+    expect(autoPlayChanges).toEqual([true]);
+
+    // Calling again with same state is a no-op
+    manager.ctx.setAdvisorAutoPlayMode(true);
+    expect(autoPlayChanges).toEqual([true]);
+
+    manager.ctx.setAdvisorAutoPlayMode(false);
+    expect(manager.ctx.advisorAutoPlayMode).toBe(false);
+    expect(autoPlayChanges).toEqual([true, false]);
+    manager.destroy();
+  });
+
+  it('isolates Fan Tan 52 leaderboards from DOS-compatible NINE.RES', () => {
+    const { manager, resBytes } = createHarness();
+    let nineTables = decodeNineRes(resBytes);
+    nineTables = upsertHighScore(nineTables, 1, 'Alice', 'pwd', 900);
+    manager.ctx.highScores = nineTables;
+
+    manager.ctx.signInPlayer('Alice', 'pwd');
+    expect(manager.ctx.sessionPlayer.clubCarryover).toBe(700);
+
+    // Switching to Fan Tan switches active leaderboard & preserves NINE.RES untouched
+    manager.ctx.setRuleConfig({ variant: 'fantan52', fanTanHandPenalty: 5 });
+    expect(manager.ctx.ruleConfig.variant).toBe('fantan52');
+    expect(manager.ctx.sessionPlayer.loggedIn).toBe(true);
+    expect(manager.ctx.sessionPlayer.clubCarryover).toBe(0);
+    expect(manager.ctx.highScores[1].find((r) => r.name === 'Alice')?.score).toBe(900);
+
+    // Switching back restores NINE.RES carryover
+    manager.ctx.setRuleConfig({ variant: 'nine36' });
+    expect(manager.ctx.sessionPlayer.clubCarryover).toBe(700);
     manager.destroy();
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { selectBotMove } from '../src/core/ai.js';
 import { createSeededRng } from '../src/core/rng.js';
-import { createEmptyTableBounds } from '../src/core/rules.js';
+import { createEmptyTableBounds, resolveRoundRules } from '../src/core/rules.js';
 import { Suit, type RoundState } from '../src/core/types.js';
 
 describe('AI move selection (CS:6020..6DE3)', () => {
@@ -88,5 +88,34 @@ describe('AI move selection (CS:6020..6DE3)', () => {
 
     const chosen = selectBotMove(round, 3, createSeededRng(1));
     expect(chosen).toEqual({ suit: Suit.Clubs, rank: 8 });
+  });
+
+  it('plays Fan Tan (52-card) low-Ace chains down to A(1) without breaking on center 7', () => {
+    const rules = resolveRoundRules({ variant: 'fantan52', fanTanOpening: 'sevenDiamonds', fanTanHandPenalty: 5 });
+    const bounds = createEmptyTableBounds();
+    bounds[Suit.Diamonds] = { low: 2, high: 7 };
+    bounds[Suit.Clubs] = { low: 7, high: 7 };
+
+    const round: RoundState = {
+      hands: {
+        1: [
+          { suit: Suit.Diamonds, rank: 1 }, // Low Ace closes Diamond bottom cleanly!
+          { suit: Suit.Clubs, rank: 8 },
+        ],
+        2: [{ suit: Suit.Clubs, rank: 12 }],
+        3: [{ suit: Suit.Clubs, rank: 11 }],
+      },
+      tableBounds: bounds,
+      playedCount: 7,
+      currentTurn: 1,
+      isFirstTurnOfRound: false,
+      bank: 60,
+      rules,
+      roundOver: false,
+      winner: null,
+    };
+
+    const chosen = selectBotMove(round, 3, createSeededRng(3));
+    expect(chosen).toEqual({ suit: Suit.Diamonds, rank: 1 });
   });
 });

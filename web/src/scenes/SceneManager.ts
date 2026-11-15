@@ -8,16 +8,22 @@ import {
   type Language,
 } from '../core/i18n';
 import {
+  createDefaultHighScoreTables,
   decodeNineCfg,
   decodeNineRes,
   encodeNineRes,
   loadStoredConfig,
+  loadStoredFanTanHighScores,
   loadStoredHighScores,
   loadStoredLastPlayer,
+  loadStoredRuleConfig,
   lookupPlayer,
+  normalizeGameRulesConfig,
   saveStoredConfig,
+  saveStoredFanTanHighScores,
   saveStoredHighScores,
   saveStoredLastPlayer,
+  saveStoredRuleConfig,
   upsertHighScore,
   type HighScoreTables,
 } from '../core/persistence';
@@ -25,6 +31,8 @@ import {
   SCREEN_HEIGHT,
   SCREEN_WIDTH,
   type ClubTableId,
+  type GameRulesConfig,
+  type GameVariant,
   type NineConfig,
   type SeatIndex,
 } from '../core/types';
@@ -36,6 +44,7 @@ import type { AspectMode, StageApp } from '../engine/StageApp';
 const GRAPHICS_STORAGE_KEY = 'nine_graphics_mode_v1';
 const COACH_STORAGE_KEY = 'nine_coach_mode_v1';
 const XRAY_STORAGE_KEY = 'nine_advisor_xray_v1';
+const AUTO_PLAY_STORAGE_KEY = 'nine_advisor_autoplay_v1';
 const LANGUAGE_STORAGE_KEY = 'nine_language_v1';
 
 function loadStoredLanguage(): Language {
@@ -79,6 +88,14 @@ function loadStoredXrayMode(): boolean {
   }
 }
 
+function loadStoredAutoPlayMode(): boolean {
+  try {
+    return localStorage.getItem(AUTO_PLAY_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 export type SceneId = 'intro' | 'dealer' | 'menu' | 'table';
 
 export interface SessionPlayer {
@@ -107,6 +124,8 @@ export interface TableTelemetry {
   phase: string;
   currentTurn: SeatIndex | null;
   bank: number;
+  variant?: GameVariant;
+  ruleConfig?: GameRulesConfig;
   handCounts: Record<SeatIndex, number>;
   cash: Record<SeatIndex, number>;
   moves: readonly MoveLogEntry[];
@@ -120,14 +139,20 @@ export interface GameContext {
   readonly input: InputController;
   readonly audio: AudioController;
   config: NineConfig;
+  ruleConfig: GameRulesConfig;
   highScores: HighScoreTables;
+  fanTanHighScores: HighScoreTables;
   sessionPlayer: SessionPlayer;
   tableTelemetry: TableTelemetry | null;
   coachMode: boolean;
   advisorXrayMode: boolean;
+  advisorAutoPlayMode: boolean;
   advisorHint: AdvisorRecommendation | null;
   persistConfig(): void;
+  persistRuleConfig(): void;
   persistHighScores(): void;
+  persistFanTanHighScores(): void;
+  getHighScoresForVariant(variant?: GameVariant): HighScoreTables;
   getGraphicsMode(): GraphicsMode;
   setGraphicsMode(mode: GraphicsMode): void;
   getLanguage(): Language;
@@ -135,6 +160,8 @@ export interface GameContext {
   setAspectMode(mode: AspectMode): void;
   setCoachMode(enabled: boolean): void;
   setAdvisorXrayMode(enabled: boolean): void;
+  setAdvisorAutoPlayMode(enabled: boolean): void;
+  setRuleConfig(patch: Partial<GameRulesConfig>): void;
   setClubTable(tableId: ClubTableId): void;
   getHighScoresRevision(): number;
   signInPlayer(name: string, password: string): void;
@@ -152,6 +179,8 @@ export interface Scene {
   onAspectModeChanged?(mode: AspectMode): void;
   onCoachModeChanged?(enabled: boolean): void;
   onAdvisorXrayModeChanged?(enabled: boolean): void;
+  onAdvisorAutoPlayModeChanged?(enabled: boolean): void;
+  onRuleConfigChanged?(rules: GameRulesConfig): void;
   onClubTableChanged?(tableId: ClubTableId): void;
   onLanguageChanged?(lang: Language): void;
   onSessionChanged?(): void;
@@ -182,9 +211,12 @@ export class SceneManager {
     const hudFont = new HudDigitFont(assets.sheets.GR_NINE);
 
     const config = loadStoredConfig() ?? decodeNineCfg(assets.cfgBytes);
+    const ruleConfig = loadStoredRuleConfig();
     const highScores = loadStoredHighScores() ?? decodeNineRes(assets.resBytes);
+    const fanTanHighScores = loadStoredFanTanHighScores();
+    const activeTables = ruleConfig.variant === 'fantan52' ? fanTanHighScores : highScores;
     const lastPlayer = loadStoredLastPlayer();
-    const lastHit = lastPlayer ? lookupPlayer(highScores, config.clubTable, lastPlayer.name) : null;
+    const lastHit = lastPlayer ? lookupPlayer(activeTables, config.clubTable, lastPlayer.name) : null;
     const initialSession: SessionPlayer = lastPlayer
       ? {
           loggedIn: true,
@@ -220,20 +252,33 @@ export class SceneManager {
       input,
       audio,
       config,
+      ruleConfig,
       highScores,
+      fanTanHighScores,
       sessionPlayer: initialSession,
       tableTelemetry: null,
       coachMode: loadStoredCoachMode(),
       advisorXrayMode: loadStoredXrayMode(),
+      advisorAutoPlayMode: loadStoredAutoPlayMode(),
       advisorHint: null,
       persistConfig: () => {
         saveStoredConfig(this.ctx.config);
+        this.ctx.onStateChange?.();
+      },
+      persistRuleConfig: () => {
+        saveStoredRuleConfig(this.ctx.ruleConfig);
         this.ctx.onStateChange?.();
       },
       persistHighScores: () => {
         saveStoredHighScores(this.ctx.highScores);
         this.ctx.onStateChange?.();
       },
+      persistFanTanHighScores: () => {
+        saveStoredFanTanHighScores(this.ctx.fanTanHighScores);
+        this.ctx.onStateChange?.();
+      },
+      getHighScoresForVariant: (variant = this.ctx.ruleConfig.variant) =>
+        variant === 'fantan52' ? this.ctx.fanTanHighScores : this.ctx.highScores,
       getGraphicsMode: () => this.ctx.stage.getGraphicsMode(),
       setGraphicsMode: (mode: GraphicsMode) => {
         if (this.ctx.stage.getGraphicsMode() === mode) return;
@@ -292,11 +337,48 @@ export class SceneManager {
         this.activeScene?.onAdvisorXrayModeChanged?.(enabled);
         this.ctx.onStateChange?.();
       },
+      setAdvisorAutoPlayMode: (enabled: boolean) => {
+        if (this.ctx.advisorAutoPlayMode === enabled) return;
+        this.ctx.advisorAutoPlayMode = enabled;
+        try {
+          localStorage.setItem(AUTO_PLAY_STORAGE_KEY, enabled ? '1' : '0');
+        } catch {
+          // Ignore storage errors
+        }
+        this.activeScene?.onAdvisorAutoPlayModeChanged?.(enabled);
+        this.ctx.onStateChange?.();
+      },
+      setRuleConfig: (patch: Partial<GameRulesConfig>) => {
+        const next = normalizeGameRulesConfig({ ...this.ctx.ruleConfig, ...patch });
+        const variantChanged = next.variant !== this.ctx.ruleConfig.variant;
+        const changed =
+          variantChanged ||
+          next.fanTanOpening !== this.ctx.ruleConfig.fanTanOpening ||
+          next.fanTanHandPenalty !== this.ctx.ruleConfig.fanTanHandPenalty;
+        if (!changed) return;
+        this.ctx.ruleConfig = next;
+        this.ctx.persistRuleConfig();
+        if (variantChanged && this.ctx.sessionPlayer.loggedIn) {
+          const targetTables = this.ctx.getHighScoresForVariant(next.variant);
+          const existing = lookupPlayer(targetTables, this.ctx.config.clubTable, this.ctx.sessionPlayer.name);
+          if (existing && existing.password !== this.ctx.sessionPlayer.password) {
+            this.ctx.signOutPlayer();
+          } else {
+            this.ctx.signInPlayer(this.ctx.sessionPlayer.name, this.ctx.sessionPlayer.password);
+          }
+        }
+        this.activeScene?.onRuleConfigChanged?.(next);
+        this.ctx.onStateChange?.();
+      },
       setClubTable: (tableId: ClubTableId) => {
         this.ctx.config.clubTable = tableId;
         this.activeScene?.onClubTableChanged?.(tableId);
         if (this.ctx.sessionPlayer.loggedIn) {
-          const existing = lookupPlayer(this.ctx.highScores, tableId, this.ctx.sessionPlayer.name);
+          const existing = lookupPlayer(
+            this.ctx.getHighScoresForVariant(),
+            tableId,
+            this.ctx.sessionPlayer.name,
+          );
           if (existing && existing.password !== this.ctx.sessionPlayer.password) {
             this.ctx.signOutPlayer();
           } else {
@@ -313,16 +395,24 @@ export class SceneManager {
         const cleanName = name.trim().slice(0, 8);
         if (!cleanName || cleanName.toLowerCase() === 'noname') return;
         const cleanPwd = password.slice(0, 8);
-        const existing = lookupPlayer(this.ctx.highScores, this.ctx.config.clubTable, cleanName);
+        const variant = this.ctx.ruleConfig.variant;
+        const tables = this.ctx.getHighScoresForVariant(variant);
+        const existing = lookupPlayer(tables, this.ctx.config.clubTable, cleanName);
         if (!existing) {
-          this.ctx.highScores = upsertHighScore(
-            this.ctx.highScores,
+          const updated = upsertHighScore(
+            tables,
             this.ctx.config.clubTable,
             cleanName,
             cleanPwd,
             200,
           );
-          this.ctx.persistHighScores();
+          if (variant === 'fantan52') {
+            this.ctx.fanTanHighScores = updated;
+            this.ctx.persistFanTanHighScores();
+          } else {
+            this.ctx.highScores = updated;
+            this.ctx.persistHighScores();
+          }
         }
         const resolvedPwd = existing?.password ?? cleanPwd;
         this.ctx.sessionPlayer = {
@@ -366,6 +456,7 @@ export class SceneManager {
   resetLocalSave(): void {
     this.ctx.config = decodeNineCfg(this.ctx.assets.cfgBytes);
     this.ctx.highScores = decodeNineRes(this.ctx.assets.resBytes);
+    this.ctx.fanTanHighScores = createDefaultHighScoreTables();
     this.highScoresRevision += 1;
     this.ctx.sessionPlayer = {
       loggedIn: false,
@@ -377,6 +468,7 @@ export class SceneManager {
     this.ctx.audio.setEnabled(this.ctx.config.soundMusicEnabled);
     this.ctx.persistConfig();
     this.ctx.persistHighScores();
+    this.ctx.persistFanTanHighScores();
     this.ctx.onStateChange?.();
     this.transitionTo('menu', 180);
   }
@@ -389,7 +481,9 @@ export class SceneManager {
     this.ctx.highScores = decodeNineRes(bytes);
     this.highScoresRevision += 1;
     this.ctx.persistHighScores();
-    this.reconcileSessionWithHighScores();
+    if (this.ctx.ruleConfig.variant === 'nine36') {
+      this.reconcileSessionWithHighScores();
+    }
     if (this.currentId === 'menu') {
       this.transitionTo('menu', 120);
     }
@@ -398,7 +492,7 @@ export class SceneManager {
   private reconcileSessionWithHighScores(): void {
     if (this.ctx.sessionPlayer.loggedIn) {
       const existing = lookupPlayer(
-        this.ctx.highScores,
+        this.ctx.getHighScoresForVariant(),
         this.ctx.config.clubTable,
         this.ctx.sessionPlayer.name,
       );

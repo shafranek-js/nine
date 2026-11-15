@@ -1,17 +1,19 @@
 import type { Rng } from './rng.js';
-import { getLegalMoves, SUITS } from './rules.js';
+import { getLegalMoves, resolveRoundRules, SUITS } from './rules.js';
 import {
   Suit,
   type Card,
   type ClubTableId,
+  type GameRulesConfig,
+  type ResolvedRoundRules,
   type RoundState,
   type SeatIndex,
   type TableBounds,
 } from './types.js';
 
 export interface SuitAnalysis {
-  lowEdge: number;   // Rank next playable below (8..6, or 9 if unopened)
-  highEdge: number;  // Rank next playable above (10..14, or 9 if unopened)
+  lowEdge: number;   // Rank next playable below (center-1..minRank, or center if unopened)
+  highEdge: number;  // Rank next playable above (center+1..maxRank, or center if unopened)
   missingBelow: number;
   missingAbove: number;
   tailGapBelow: number;
@@ -27,25 +29,31 @@ function hasCard(hand: readonly Card[], suit: Suit, rank: number): boolean {
 }
 
 /**
- * Exact translation of AnalyzeSuitBranches (CS:606C..66B4) across all 4 suits.
+ * Exact translation of AnalyzeSuitBranches (CS:606C..66B4) across all 4 suits,
+ * generalized for both 36-card Nine and 52-card Fan Tan.
  */
 export function analyzeSuitBranches(
   hand: readonly Card[],
   tableBounds: TableBounds,
   difficulty: ClubTableId,
+  rulesInput?: Partial<GameRulesConfig> | ResolvedRoundRules,
 ): Record<Suit, SuitAnalysis> {
+  const rules = resolveRoundRules(rulesInput);
+  const { minRank, maxRank, centerRank } = rules;
+  const belowSpan = centerRank - minRank;
+  const aboveSpan = maxRank - centerRank;
   const result = {} as Record<Suit, SuitAnalysis>;
 
   for (const suit of SUITS) {
     const bounds = tableBounds[suit];
-    const lowEdge = bounds.low === 0 ? 9 : bounds.low - 1;
-    const highEdge = bounds.high === 0 ? 9 : bounds.high + 1;
+    const lowEdge = bounds.low === 0 ? centerRank : bounds.low - 1;
+    const highEdge = bounds.high === 0 ? centerRank : bounds.high + 1;
 
     let missingBelow = 0;
     let tailGapBelow = 0;
     let leadGapBelow = 0;
     let seenOwnBelow = false;
-    for (let r = lowEdge - 1; r >= 6; r--) {
+    for (let r = lowEdge - 1; r >= minRank; r--) {
       if (hasCard(hand, suit, r)) {
         seenOwnBelow = true;
         tailGapBelow = 0;
@@ -60,7 +68,7 @@ export function analyzeSuitBranches(
     let tailGapAbove = 0;
     let leadGapAbove = 0;
     let seenOwnAbove = false;
-    for (let r = highEdge + 1; r <= 14; r++) {
+    for (let r = highEdge + 1; r <= maxRank; r++) {
       if (hasCard(hand, suit, r)) {
         seenOwnAbove = true;
         tailGapAbove = 0;
@@ -80,19 +88,19 @@ export function analyzeSuitBranches(
     let effLeadBelow = leadGapBelow;
     let effLeadAbove = leadGapAbove;
 
-    if (difficulty === 3 && lowEdge === 9) {
+    if (difficulty === 3 && lowEdge === centerRank) {
       // Unopened suit evaluation on Difficulty 3 (CS:6358..64AD)
       const lowPen =
-        missingBelow === 3
+        missingBelow === belowSpan
           ? missingAbove === leadGapAbove
             ? 0
-            : 3
+            : belowSpan
           : missingBelow - leadGapBelow;
       const highPen =
-        missingAbove === 5
+        missingAbove === aboveSpan
           ? missingBelow === leadGapBelow
             ? 0
-            : 5
+            : aboveSpan
           : missingAbove - leadGapAbove;
       gapDiffBelow = lowPen + highPen;
       gapDiffAbove = gapDiffBelow;
@@ -100,7 +108,7 @@ export function analyzeSuitBranches(
       effTailAbove = effTailBelow;
       effLeadBelow = leadGapBelow + leadGapAbove;
       effLeadAbove = effLeadBelow;
-    } else if (difficulty !== 3 && lowEdge === 9) {
+    } else if (difficulty !== 3 && lowEdge === centerRank) {
       // Unopened suit on Difficulty 1 & 2 (CS:65C1..664C)
       gapDiffBelow = gapDiffBelow + gapDiffAbove;
       gapDiffAbove = gapDiffBelow;
@@ -110,8 +118,8 @@ export function analyzeSuitBranches(
       effLeadAbove = effLeadBelow;
     }
 
-    const scoreBelow = lowEdge >= 6 ? (gapDiffBelow === 0 ? 0 : 8 - gapDiffBelow) : 0;
-    const scoreAbove = highEdge <= 14 ? (gapDiffAbove === 0 ? 0 : 8 - gapDiffAbove) : 0;
+    const scoreBelow = lowEdge >= minRank ? (gapDiffBelow === 0 ? 0 : 8 - gapDiffBelow) : 0;
+    const scoreAbove = highEdge <= maxRank ? (gapDiffAbove === 0 ? 0 : 8 - gapDiffAbove) : 0;
 
     result[suit] = {
       lowEdge,
@@ -138,7 +146,9 @@ export function evaluateOpponentLockRisk(
   card: Card,
   round: RoundState,
   botSeat: SeatIndex,
+  rulesInput?: Partial<GameRulesConfig> | ResolvedRoundRules,
 ): number {
+  const { centerRank } = resolveRoundRules(rulesInput ?? round.rules);
   const opp1: SeatIndex = botSeat === 1 ? 2 : 1;
   const opp2: SeatIndex = botSeat === 3 ? 2 : 3;
   const botHand = round.hands[botSeat];
@@ -147,21 +157,21 @@ export function evaluateOpponentLockRisk(
 
   let score = 0;
 
-  if (card.rank >= 9) {
-    // Upper branch risk: check ranks 9..card.rank-1 not held by bot vs opponents
-    for (let r = 9; r < card.rank; r++) {
-      if (!hasCard(botHand, card.suit, r) && r >= (round.tableBounds[card.suit].high || 9)) {
-        if (hasCard(o1Hand, card.suit, r)) score -= Math.floor((r - 8) / 3) - 1;
-        if (hasCard(o2Hand, card.suit, r)) score -= Math.floor((r - 8) / 3) - 1;
+  if (card.rank >= centerRank) {
+    // Upper branch risk: check ranks centerRank..card.rank-1 not held by bot vs opponents
+    for (let r = centerRank; r < card.rank; r++) {
+      if (!hasCard(botHand, card.suit, r) && r >= (round.tableBounds[card.suit].high || centerRank)) {
+        if (hasCard(o1Hand, card.suit, r)) score -= Math.floor((r - (centerRank - 1)) / 3) - 1;
+        if (hasCard(o2Hand, card.suit, r)) score -= Math.floor((r - (centerRank - 1)) / 3) - 1;
       }
     }
   }
-  if (card.rank <= 9) {
-    // Lower branch risk: check ranks card.rank+1..9
-    for (let r = card.rank + 1; r <= 9; r++) {
+  if (card.rank <= centerRank) {
+    // Lower branch risk: check ranks card.rank+1..centerRank
+    for (let r = card.rank + 1; r <= centerRank; r++) {
       if (!hasCard(botHand, card.suit, r) && (round.tableBounds[card.suit].low === 0 || r <= round.tableBounds[card.suit].low)) {
-        if (hasCard(o1Hand, card.suit, r)) score += Math.floor((10 - r) / 3) - 1;
-        if (hasCard(o2Hand, card.suit, r)) score += Math.floor((10 - r) / 3) - 1;
+        if (hasCard(o1Hand, card.suit, r)) score += Math.floor((centerRank + 1 - r) / 3) - 1;
+        if (hasCard(o2Hand, card.suit, r)) score += Math.floor((centerRank + 1 - r) / 3) - 1;
       }
     }
   }
@@ -185,18 +195,18 @@ export function selectBotMove(
   difficulty: ClubTableId,
   rng: Rng,
 ): Card | null {
+  const rules = resolveRoundRules(round.rules);
   const seat = round.currentTurn;
   const hand = round.hands[seat];
-  const legal = getLegalMoves(hand, round.tableBounds, round.isFirstTurnOfRound);
+  const legal = getLegalMoves(hand, round.tableBounds, round.isFirstTurnOfRound, rules);
   if (legal.length === 0) return null;
 
-  // Mandatory 9♦ on opening turn (CS:6D84..6D9A -> score 1000)
-  const nineD = legal.find((c) => c.suit === Suit.Diamonds && c.rank === 9);
-  if (nineD && round.isFirstTurnOfRound) {
-    return nineD;
+  // Forced single opening move (9♦ in Nine or 7♦ in Fan Tan)
+  if (round.isFirstTurnOfRound && legal.length === 1) {
+    return legal[0];
   }
 
-  const analysis = analyzeSuitBranches(hand, round.tableBounds, difficulty);
+  const analysis = analyzeSuitBranches(hand, round.tableBounds, difficulty, rules);
   let best: CandidateEval | null = null;
   let tieCount = 0;
 
@@ -206,25 +216,25 @@ export function selectBotMove(
     let leadGap: number;
     let tailGap: number;
 
-    if (card.rank < 9) {
+    if (card.rank < rules.centerRank) {
       primary = info.scoreBelow;
       leadGap = info.leadGapBelow;
       tailGap = info.tailGapBelow;
-    } else if (card.rank > 9) {
+    } else if (card.rank > rules.centerRank) {
       primary = info.scoreAbove;
       leadGap = info.leadGapAbove;
       tailGap = info.tailGapAbove;
     } else {
-      // Playing a 9 (opens both branches of the suit)
+      // Playing a center card (9 or 7): opens both branches of the suit
       primary = Math.max(info.scoreBelow, info.scoreAbove);
       leadGap = info.leadGapBelow;
       tailGap = info.tailGapBelow;
       if (difficulty === 3 && tailGap === 0) {
-        primary = 500; // CS:6B2E: safe 9 with zero end gaps
+        primary = 500; // CS:6B2E: safe center card with zero end gaps
       }
     }
 
-    const lockRisk = difficulty === 3 ? evaluateOpponentLockRisk(card, round, seat) : 0;
+    const lockRisk = difficulty === 3 ? evaluateOpponentLockRisk(card, round, seat, rules) : 0;
     const cand: CandidateEval = { card, primary, leadGap, tailGap, lockRisk };
 
     if (!best) {

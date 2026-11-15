@@ -1,7 +1,7 @@
 import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
 import { selectBotMove } from '../core/ai';
 import { DEFAULT_LANGUAGE, getTranslations } from '../core/i18n';
-import { upsertHighScore } from '../core/persistence';
+import { normalizeGameRulesConfig, upsertHighScore } from '../core/persistence';
 import { createDefaultRng, type Rng } from '../core/rng';
 import {
   applyMove,
@@ -9,12 +9,15 @@ import {
   cardKey,
   computeHandLayout,
   createMatch,
+  getDeckRanks,
   getFinalClubScore,
   getLegalMoves,
   HAND_TOP_Y,
   isLegalMove,
+  resolveRoundRules,
   startNextRound,
   type HandCardLayout,
+  type HandLayoutOptions,
 } from '../core/rules';
 import {
   PASS_PENALTY,
@@ -22,12 +25,21 @@ import {
   SCREEN_WIDTH,
   Suit,
   type Card,
+  type GameRulesConfig,
+  type GameVariant,
   type MatchState,
   type Rank,
   type SeatIndex,
 } from '../core/types';
 import { sliceMaskedTexture, sliceTexture } from '../engine/BitmapFont';
-import { createHdTexture, drawSuitShape, getHdCardLibrary, getHdRivalCardBackTexture } from '../engine/hdCards';
+import {
+  createHdTexture,
+  drawSuitShape,
+  getEgaFallbackCardTexture,
+  getHdCardLibrary,
+  getHdRivalCardBackTexture,
+  HD_COMPACT_MINI_SIZE,
+} from '../engine/hdCards';
 import {
   createHdCandelabra,
   createHdDealer,
@@ -58,7 +70,15 @@ const SUIT_SYMBOLS: Record<Suit, string> = {
 
 function formatCardShort(card: Card): string {
   const rank =
-    card.rank === 11 ? 'J' : card.rank === 12 ? 'Q' : card.rank === 13 ? 'K' : card.rank === 14 ? 'A' : String(card.rank);
+    card.rank === 1 || card.rank === 14
+      ? 'A'
+      : card.rank === 11
+        ? 'J'
+        : card.rank === 12
+          ? 'Q'
+          : card.rank === 13
+            ? 'K'
+            : String(card.rank);
   return `${rank}${SUIT_SYMBOLS[card.suit]}`;
 }
 
@@ -131,39 +151,80 @@ interface HdBoardMetrics {
   readonly cornerRadius: number;
 }
 
-const HD_BOARD_METRICS: Record<AspectMode, HdBoardMetrics> = {
-  '4:3': {
-    tableX: 128,
-    tableY: 60,
-    tableW: 384,
-    tableH: 174,
-    slotX0: 145,
-    slotY0: 71,
-    stepX: 39,
-    stepY: 38,
-    cardW: 38,
-    cardH: 37,
-    cornerRadius: 3.6,
+const HD_BOARD_METRICS: Record<GameVariant, Record<AspectMode, HdBoardMetrics>> = {
+  nine36: {
+    '4:3': {
+      tableX: 128,
+      tableY: 60,
+      tableW: 384,
+      tableH: 174,
+      slotX0: 145,
+      slotY0: 71,
+      stepX: 39,
+      stepY: 38,
+      cardW: 38,
+      cardH: 37,
+      cornerRadius: 3.6,
+    },
+    '1:1': {
+      tableX: 158,
+      tableY: 60,
+      tableW: 324,
+      tableH: 174,
+      slotX0: 174,
+      slotY0: 69,
+      stepX: 33,
+      stepY: 40,
+      cardW: 28,
+      cardH: 38,
+      cornerRadius: 3.2,
+    },
   },
-  '1:1': {
-    tableX: 158,
-    tableY: 60,
-    tableW: 324,
-    tableH: 174,
-    slotX0: 174,
-    slotY0: 69,
-    stepX: 33,
-    stepY: 40,
-    cardW: 28,
-    cardH: 38,
-    cornerRadius: 3.2,
+  fantan52: {
+    '4:3': {
+      tableX: 60,
+      tableY: 60,
+      tableW: 520,
+      tableH: 170,
+      slotX0: 74,
+      slotY0: 71,
+      stepX: 38,
+      stepY: 37.5,
+      cardW: HD_COMPACT_MINI_SIZE['4:3'].w,
+      cardH: HD_COMPACT_MINI_SIZE['4:3'].h,
+      cornerRadius: 3.4,
+    },
+    '1:1': {
+      tableX: 86,
+      tableY: 60,
+      tableW: 468,
+      tableH: 188,
+      slotX0: 101,
+      slotY0: 71,
+      stepX: 34,
+      stepY: 42,
+      cardW: HD_COMPACT_MINI_SIZE['1:1'].w,
+      cardH: HD_COMPACT_MINI_SIZE['1:1'].h,
+      cornerRadius: 3.2,
+    },
   },
 };
 
-const cachedFeltTextures: Record<AspectMode, Texture | null> = {
-  '4:3': null,
-  '1:1': null,
+const EGA_FANTAN_BOARD_METRICS: HdBoardMetrics = {
+  tableX: 128,
+  tableY: 60,
+  tableW: 384,
+  tableH: 174,
+  slotX0: 145,
+  slotY0: 71,
+  stepX: 27,
+  stepY: 38,
+  cardW: 26,
+  cardH: 36,
+  cornerRadius: 2.6,
 };
+
+const cachedFeltTextures = new Map<string, Texture>();
 
 let cachedDealerSpotlightTex: Texture | null = null;
 
@@ -236,11 +297,13 @@ function getHdSoftTurnHaloTexture(): Texture {
   return cachedSoftTurnHaloTex;
 }
 
-function getHdFeltTableTexture(aspectMode: AspectMode): Texture {
-  const existing = cachedFeltTextures[aspectMode];
+function getHdFeltTableTexture(aspectMode: AspectMode, variant: GameVariant): Texture {
+  const cacheKey = `${aspectMode}:${variant}`;
+  const existing = cachedFeltTextures.get(cacheKey);
   if (existing) return existing;
 
-  const m = HD_BOARD_METRICS[aspectMode];
+  const m = HD_BOARD_METRICS[variant][aspectMode];
+  const rules = resolveRoundRules({ variant });
   const tex = createHdTexture(m.tableW, m.tableH, (ctx, w, h) => {
     // Rich mahogany frame with warm top bevel (no dark seam under overhead spotlight) and brass trim
     const outerRim = ctx.createLinearGradient(0, 0, 0, h);
@@ -299,10 +362,15 @@ function getHdFeltTableTexture(aspectMode: AspectMode): Texture {
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
-    // Subtle recessed 9x4 grid slots aligned with placed mini cards
-    const ranks: readonly Rank[] = [6, 7, 8, 9, 10, 11, 12, 13, 14];
+    // Subtle recessed grid slots (9x4 for Nine, 13x4 for Fan Tan) aligned with placed mini cards
+    const ranks = getDeckRanks(rules);
     const suits: readonly Suit[] = [1, 2, 3, 4];
-    const rankLabels: Record<Rank, string> = {
+    const rankLabels: Record<number, string> = {
+      1: 'A',
+      2: '2',
+      3: '3',
+      4: '4',
+      5: '5',
       6: '6',
       7: '7',
       8: '8',
@@ -313,38 +381,44 @@ function getHdFeltTableTexture(aspectMode: AspectMode): Texture {
       13: 'K',
       14: 'A',
     };
-    const narrow = aspectMode === '1:1';
+    const narrow = aspectMode === '1:1' || variant === 'fantan52';
 
     for (const suit of suits) {
       for (const rank of ranks) {
-        const sx = m.slotX0 - m.tableX + (rank - 6) * m.stepX;
+        const sx = m.slotX0 - m.tableX + (rank - rules.minRank) * m.stepX;
         const sy = m.slotY0 - m.tableY + (suit - 1) * m.stepY;
         const sw = m.cardW;
         const sh = m.cardH;
-        const isNine = rank === 9;
+        const isCenter = rank === rules.centerRank;
 
-        ctx.fillStyle = isNine ? 'rgba(218, 176, 68, 0.10)' : 'rgba(0, 0, 0, 0.14)';
+        ctx.fillStyle = isCenter ? 'rgba(218, 176, 68, 0.10)' : 'rgba(0, 0, 0, 0.14)';
         ctx.beginPath();
         ctx.roundRect(sx, sy, sw, sh, m.cornerRadius);
         ctx.fill();
 
-        ctx.strokeStyle = isNine ? 'rgba(230, 188, 82, 0.46)' : 'rgba(212, 175, 55, 0.18)';
-        ctx.lineWidth = isNine ? 0.95 : 0.65;
+        ctx.strokeStyle = isCenter ? 'rgba(230, 188, 82, 0.46)' : 'rgba(212, 175, 55, 0.18)';
+        ctx.lineWidth = isCenter ? 0.95 : 0.65;
         ctx.stroke();
 
         ctx.save();
-        ctx.globalAlpha = isNine ? 0.34 : 0.16;
-        ctx.fillStyle = isNine ? '#ffe699' : '#d6eadb';
-        ctx.font = `bold ${narrow ? 8 : 8.5}px Georgia, serif`;
+        ctx.globalAlpha = isCenter ? 0.34 : 0.16;
+        ctx.fillStyle = isCenter ? '#ffe699' : '#d6eadb';
+        ctx.font = `bold ${variant === 'fantan52' ? 8.2 : narrow ? 8 : 8.5}px Georgia, serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(rankLabels[rank], sx + sw * 0.5, sy + (narrow ? 12 : 11.5));
-        drawSuitShape(ctx, suit, sx + sw * 0.5, sy + (narrow ? 25.5 : 24.5), narrow ? 9.5 : 11);
+        ctx.fillText(rankLabels[rank], sx + sw * 0.5, sy + sh * 0.3);
+        drawSuitShape(
+          ctx,
+          suit,
+          sx + sw * 0.5,
+          sy + sh * 0.67,
+          variant === 'fantan52' ? 9.8 : narrow ? 9.5 : 11,
+        );
         ctx.restore();
       }
     }
   });
-  cachedFeltTextures[aspectMode] = tex;
+  cachedFeltTextures.set(cacheKey, tex);
   return tex;
 }
 
@@ -459,6 +533,7 @@ export class GameTableScene implements Scene {
       ctx.sessionPlayer.clubCarryover,
       ctx.config.clubTable,
       this.rng,
+      ctx.ruleConfig,
     );
 
     this.buildVisuals();
@@ -511,9 +586,98 @@ export class GameTableScene implements Scene {
     return this.ctx?.getGraphicsMode() === 'hd' && this.ctx.stage.getAspectMode() === '1:1';
   }
 
+  private getMatchVariant(): GameVariant {
+    return resolveRoundRules(this.match?.round?.rules ?? this.match?.ruleConfig ?? this.ctx?.ruleConfig).variant;
+  }
+
+  private isCompactFanTanHdLayout(): boolean {
+    return this.ctx?.getGraphicsMode() === 'hd' && this.getMatchVariant() === 'fantan52';
+  }
+
+  private getHumanHandScale(): number {
+    if (!this.isCompactFanTanHdLayout()) return 1;
+    return this.isHdSquareAspect() ? 0.88 : 0.96;
+  }
+
+  private getHumanHandTopY(): number {
+    if (!this.isCompactFanTanHdLayout()) return HAND_TOP_Y;
+    return this.isHdSquareAspect() ? 269 : 257;
+  }
+
+  private getHdSeatLayout() {
+    const isSquare = this.isHdSquareAspect();
+    if (this.isCompactFanTanHdLayout()) {
+      if (!isSquare) {
+        return {
+          leftCenterX: 30,
+          rightCenterX: 610,
+          rivalRigY: 88,
+          rivalScale: 0.72,
+          haloY: 108,
+          haloRx: 28,
+          haloRy: 20,
+          oppCashY: 190,
+          oppCashTextH: 9.0,
+          candLeftX: 152,
+          candRightX: 488,
+          humanCashY: 243.5,
+          bannerY: 212,
+          coinLeftY: 174,
+          coinHumanY: 243,
+        };
+      }
+      return {
+        leftCenterX: 44,
+        rightCenterX: 596,
+        rivalRigY: 86,
+        rivalScale: 1,
+        haloY: 112,
+        haloRx: 44,
+        haloRy: 27,
+        oppCashY: 197,
+        oppCashTextH: 10.5,
+        candLeftX: 152,
+        candRightX: 488,
+        humanCashY: 257,
+        bannerY: 226,
+        coinLeftY: 176,
+        coinHumanY: 254,
+      };
+    }
+    return {
+      leftCenterX: 57,
+      rightCenterX: 569,
+      rivalRigY: 98,
+      rivalScale: 1,
+      haloY: 124,
+      haloRx: 46,
+      haloRy: 28,
+      oppCashY: 191,
+      oppCashTextH: 10.5,
+      candLeftX: isSquare ? 186 : 168,
+      candRightX: isSquare ? 454 : 471,
+      humanCashY: 248,
+      bannerY: 214,
+      coinLeftY: 170,
+      coinHumanY: 232,
+    };
+  }
+
   private getBoardMetrics(): HdBoardMetrics {
+    const variant = this.getMatchVariant();
+    if (this.ctx?.getGraphicsMode() === 'ega' && variant === 'fantan52') {
+      return EGA_FANTAN_BOARD_METRICS;
+    }
     const aspect: AspectMode = this.isHdSquareAspect() ? '1:1' : '4:3';
-    return HD_BOARD_METRICS[aspect];
+    return HD_BOARD_METRICS[variant][aspect];
+  }
+
+  onRuleConfigChanged(rules: GameRulesConfig): void {
+    const currentVariant = resolveRoundRules(this.match?.ruleConfig).variant;
+    const roundUntouched = this.match.roundNumber === 1 && (this.match.round?.playedCount ?? 0) === 0;
+    if (rules.variant !== currentVariant || roundUntouched) {
+      this.ctx?.goTo('table', 120);
+    }
   }
 
   onCoachModeChanged(enabled: boolean): void {
@@ -532,6 +696,14 @@ export class GameTableScene implements Scene {
     this.refreshAdvisorHint();
     this.renderHumanHand();
     this.emitTelemetry();
+  }
+
+  onAdvisorAutoPlayModeChanged(enabled: boolean): void {
+    if (enabled && this.phase === 'waitingTurn' && this.match.round?.currentTurn === 3) {
+      this.refreshAdvisorHint();
+      this.phaseTimerMs = Math.max(this.phaseTimerMs, 220);
+      this.emitTelemetry();
+    }
   }
 
   private buildVisuals(): void {
@@ -660,10 +832,11 @@ export class GameTableScene implements Scene {
 
     // Table coordinates; candelabras & gold pedestals stand directly behind y = 60 so their plinth bottom meets the top rail flush
     const aspect = ctx.stage.getAspectMode();
-    const bm = HD_BOARD_METRICS[aspect];
-    const isSquare = aspect === '1:1';
-    const candLeftX = isSquare ? 186 : 168;
-    const candRightX = isSquare ? 454 : 471;
+    const variant = this.getMatchVariant();
+    const bm = HD_BOARD_METRICS[variant][aspect];
+    const sl = this.getHdSeatLayout();
+    const candLeftX = sl.candLeftX;
+    const candRightX = sl.candRightX;
     const tableRailY = bm.tableY;
 
     const candLeft = createHdCandelabra(0, -16.2);
@@ -701,22 +874,28 @@ export class GameTableScene implements Scene {
       .fill({ color: 0x000000, alpha: 0.56 });
     this.bgLayer.addChild(tableShadow);
 
-    const tableBoard = new Sprite(getHdFeltTableTexture(aspect));
+    const tableBoard = new Sprite(getHdFeltTableTexture(aspect, variant));
     tableBoard.position.set(bm.tableX, bm.tableY);
     this.bgLayer.addChild(tableBoard);
 
     // Active turn spotlight halos
     const leftHalo = new Graphics();
-    leftHalo.ellipse(57, 124, 46, 28).fill({ color: 0xffe070, alpha: 0.16 }).stroke({ color: 0xffd564, width: 1.3, alpha: 0.75 });
+    leftHalo
+      .ellipse(sl.leftCenterX, sl.haloY, sl.haloRx, sl.haloRy)
+      .fill({ color: 0xffe070, alpha: 0.16 })
+      .stroke({ color: 0xffd564, width: 1.3, alpha: 0.75 });
     leftHalo.visible = false;
 
     const rightHalo = new Graphics();
-    rightHalo.ellipse(569, 124, 46, 28).fill({ color: 0xffe070, alpha: 0.16 }).stroke({ color: 0xffd564, width: 1.3, alpha: 0.75 });
+    rightHalo
+      .ellipse(sl.rightCenterX, sl.haloY, sl.haloRx, sl.haloRy)
+      .fill({ color: 0xffe070, alpha: 0.16 })
+      .stroke({ color: 0xffd564, width: 1.3, alpha: 0.75 });
     rightHalo.visible = false;
 
     const humanHalo = new Sprite(getHdSoftTurnHaloTexture());
     humanHalo.anchor.set(0.5);
-    humanHalo.position.set(320, 248);
+    humanHalo.position.set(320, sl.humanCashY);
     humanHalo.blendMode = 'add';
     humanHalo.visible = false;
 
@@ -725,27 +904,29 @@ export class GameTableScene implements Scene {
 
     // Left & Right Rival Rigs
     const leftRival = createHdRival('left');
-    leftRival.container.position.set(19, 98);
+    leftRival.container.scale.set(sl.rivalScale);
+    leftRival.container.position.set(sl.leftCenterX - 38 * sl.rivalScale, sl.rivalRigY);
     this.bgLayer.addChild(leftRival.container);
     this.hdLeftRival = leftRival;
 
     const rightRival = createHdRival('right');
-    rightRival.container.position.set(531, 98);
+    rightRival.container.scale.set(sl.rivalScale);
+    rightRival.container.position.set(sl.rightCenterX - 38 * sl.rivalScale, sl.rivalRigY);
     this.bgLayer.addChild(rightRival.container);
     this.hdRightRival = rightRival;
 
-    const leftCash = createHdGoldLabel(`${this.match.cash[1]}$`, { anchorY: 0.5, textHeight: 10.5 });
-    leftCash.container.position.set(57, 191);
+    const leftCash = createHdGoldLabel(`${this.match.cash[1]}$`, { anchorY: 0.5, textHeight: sl.oppCashTextH });
+    leftCash.container.position.set(sl.leftCenterX, sl.oppCashY);
     this.leftCashLayer.addChild(leftCash.container);
     this.hdLeftCashLabel = leftCash;
 
-    const rightCash = createHdGoldLabel(`${this.match.cash[2]}$`, { anchorY: 0.5, textHeight: 10.5 });
-    rightCash.container.position.set(569, 191);
+    const rightCash = createHdGoldLabel(`${this.match.cash[2]}$`, { anchorY: 0.5, textHeight: sl.oppCashTextH });
+    rightCash.container.position.set(sl.rightCenterX, sl.oppCashY);
     this.rightCashLayer.addChild(rightCash.container);
     this.hdRightCashLabel = rightCash;
 
     const humanCash = createHdGoldLabel(`${this.match.cash[3]}$`, { anchorY: 0.5, textHeight: 11.0 });
-    humanCash.container.position.set(320, 248);
+    humanCash.container.position.set(320, sl.humanCashY);
     this.humanCashLayer.addChild(humanCash.container);
     this.hdHumanCashLabel = humanCash;
 
@@ -791,11 +972,14 @@ export class GameTableScene implements Scene {
   private emitTelemetry(): void {
     if (!this.ctx) return;
     const r = this.match.round;
+    const activeRules = normalizeGameRulesConfig(this.match.ruleConfig);
     this.ctx.tableTelemetry = {
       roundNumber: this.match.roundNumber,
       phase: this.phase,
       currentTurn: r && !r.roundOver ? r.currentTurn : null,
       bank: r?.bank ?? 0,
+      variant: activeRules.variant,
+      ruleConfig: activeRules,
       handCounts: {
         1: r?.hands[1].length ?? 0,
         2: r?.hands[2].length ?? 0,
@@ -821,9 +1005,12 @@ export class GameTableScene implements Scene {
     this.renderStatusBanner();
 
     // $20 ante coins fly into BANK
-    this.spawnCoinFlight(56, 170, 165, 42, 420);
-    this.spawnCoinFlight(568, 170, 175, 42, 420);
-    this.spawnCoinFlight(316, 232, 170, 42, 420);
+    const sl = this.getHdSeatLayout();
+    const isHd = this.ctx?.getGraphicsMode() === 'hd';
+    const bankX = isHd ? sl.candLeftX : 165;
+    this.spawnCoinFlight(sl.leftCenterX, sl.coinLeftY, bankX, 42, 420);
+    this.spawnCoinFlight(sl.rightCenterX, sl.coinLeftY, bankX + 10, 42, 420);
+    this.spawnCoinFlight(316, sl.coinHumanY, bankX + 5, 42, 420);
     this.ctx?.audio.sfx.coinChime();
 
     this.passExclusions = { 1: new Set(), 2: new Set() };
@@ -851,28 +1038,64 @@ export class GameTableScene implements Scene {
     baseY: number;
     stepX: number;
     stepY: number;
+    cols: number;
     w: number;
     h: number;
   } {
-    if (this.isHdSquareAspect()) {
-      return { baseXLeft: 18, baseXRight: 530, baseY: 144, stepX: 16, stepY: 19, w: 12, h: 17 };
-    }
+    const isFanTan = this.getMatchVariant() === 'fantan52';
     const isHd = this.ctx?.getGraphicsMode() === 'hd';
+    if (isHd && isFanTan) {
+      if (this.isHdSquareAspect()) {
+        return {
+          baseXLeft: 10,
+          baseXRight: 562,
+          baseY: 132,
+          stepX: 14,
+          stepY: 12,
+          cols: 5,
+          w: 12,
+          h: 17,
+        };
+      }
+      return {
+        baseXLeft: 3,
+        baseXRight: 583,
+        baseY: 124,
+        stepX: 11,
+        stepY: 13,
+        cols: 5,
+        w: 10,
+        h: 11,
+      };
+    }
+    if (this.isHdSquareAspect()) {
+      return {
+        baseXLeft: 18,
+        baseXRight: 530,
+        baseY: isFanTan ? 140 : 144,
+        stepX: 16,
+        stepY: isFanTan ? 12 : 19,
+        cols: 6,
+        w: 12,
+        h: 17,
+      };
+    }
     return {
       baseXLeft: 14,
       baseXRight: 526,
-      baseY: isHd ? 144 : 145,
+      baseY: isFanTan ? 140 : isHd ? 144 : 145,
       stepX: 17,
-      stepY: 18,
+      stepY: isFanTan ? 12 : 18,
+      cols: 6,
       w: 14,
       h: 16,
     };
   }
 
   private getRivalCardSlotPos(seat: 1 | 2, index: number): { x: number; y: number } {
-    const col = index % 6;
-    const row = Math.floor(index / 6);
     const m = this.getRivalCardMetrics();
+    const col = index % m.cols;
+    const row = Math.floor(index / m.cols);
     const baseX = seat === 1 ? m.baseXLeft : m.baseXRight;
     return { x: baseX + col * m.stepX, y: m.baseY + row * m.stepY };
   }
@@ -890,9 +1113,10 @@ export class GameTableScene implements Scene {
       this.rivalCardsLayer.addChild(shadowGfx);
     }
 
+    const maxVisible = this.getMatchVariant() === 'fantan52' ? 18 : 12;
     const rm = this.getRivalCardMetrics();
     for (const seat of [1, 2] as const) {
-      const count = Math.min(12, this.match.round.hands[seat].length);
+      const count = Math.min(maxVisible, this.match.round.hands[seat].length);
       for (let i = 0; i < count; i++) {
         const { x, y } = this.getRivalCardSlotPos(seat, i);
         if (shadowGfx) {
@@ -900,6 +1124,10 @@ export class GameTableScene implements Scene {
         }
         const spr = new Sprite(tex);
         spr.position.set(x, y);
+        if (isHd) {
+          spr.width = rm.w;
+          spr.height = rm.h;
+        }
         this.rivalCardsLayer.addChild(spr);
       }
     }
@@ -937,8 +1165,9 @@ export class GameTableScene implements Scene {
     this.hdBannerLayer.removeChildren();
     if (!this.statusBanner || !this.ctx || this.ctx.getGraphicsMode() !== 'hd') return;
 
+    const bannerY = this.getHdSeatLayout().bannerY;
     const pill = new Graphics();
-    pill.roundRect(184, 214, 272, 18, 9).fill({ color: 0x3b0c12, alpha: 0.92 }).stroke({ color: 0xffb347, width: 1.1 });
+    pill.roundRect(184, bannerY, 272, 18, 9).fill({ color: 0x3b0c12, alpha: 0.92 }).stroke({ color: 0xffb347, width: 1.1 });
     this.hdBannerLayer.addChild(pill);
 
     const txt = createHdTextSprite(this.statusBanner, 266, 16, {
@@ -946,14 +1175,21 @@ export class GameTableScene implements Scene {
       fill: '#ffe8a8',
       align: 'center',
     });
-    txt.position.set(187, 215);
+    txt.position.set(187, bannerY + 1);
     this.hdBannerLayer.addChild(txt);
   }
 
   private getActiveMiniTexture(card: Card): Texture | undefined {
     const key = cardKey(card);
     if (this.ctx?.getGraphicsMode() === 'hd') {
-      return getHdCardLibrary(this.ctx.stage.getAspectMode()).miniCards.get(key);
+      const lib = getHdCardLibrary(this.ctx.stage.getAspectMode());
+      return this.getMatchVariant() === 'fantan52' ? lib.compactMiniCards.get(key) : lib.miniCards.get(key);
+    }
+    if (card.rank === 1) {
+      return this.ctx?.assets.miniCards.get(cardKey({ suit: card.suit, rank: 14 }));
+    }
+    if (card.rank < 6) {
+      return getEgaFallbackCardTexture(card.suit, card.rank, true);
     }
     return this.ctx?.assets.miniCards.get(key);
   }
@@ -963,6 +1199,12 @@ export class GameTableScene implements Scene {
     if (this.ctx?.getGraphicsMode() === 'hd') {
       return getHdCardLibrary(this.ctx.stage.getAspectMode()).cards.get(key);
     }
+    if (card.rank === 1) {
+      return this.ctx?.assets.cards.get(cardKey({ suit: card.suit, rank: 14 }));
+    }
+    if (card.rank < 6) {
+      return getEgaFallbackCardTexture(card.suit, card.rank, false);
+    }
     return this.ctx?.assets.cards.get(key);
   }
 
@@ -971,11 +1213,32 @@ export class GameTableScene implements Scene {
     this.handLayer.removeChildren();
     this.handCardEntries = [];
     const hand = this.match.round?.hands[3] ?? [];
-    const layoutOpts = this.isHdSquareAspect()
-      ? { cardWidth: 64, cardHitWidth: 64, overlapStep: 14, areaWidth: 480 }
-      : {};
-    this.currentHandLayouts = computeHandLayout(hand, layoutOpts);
     const isHd = this.ctx.getGraphicsMode() === 'hd';
+    const isFanTanHd = this.isCompactFanTanHdLayout();
+    const handScale = this.getHumanHandScale();
+    const handTopY = this.getHumanHandTopY();
+    const layoutOpts: HandLayoutOptions = this.isHdSquareAspect()
+      ? {
+          cardWidth: Math.round(64 * handScale),
+          cardHeight: Math.round(89 * handScale),
+          cardHitWidth: Math.round(64 * handScale),
+          overlapStep: isFanTanHd ? 17 : 14,
+          areaWidth: 480,
+          topY: handTopY,
+          centerHorizontal: isFanTanHd,
+        }
+      : isFanTanHd
+        ? {
+            cardWidth: Math.round(88 * handScale),
+            cardHeight: Math.round(89 * handScale),
+            cardHitWidth: Math.round(83 * handScale),
+            overlapStep: 18,
+            areaWidth: 464,
+            topY: handTopY,
+            centerHorizontal: true,
+          }
+        : {};
+    this.currentHandLayouts = computeHandLayout(hand, layoutOpts);
     const round = this.match.round;
     const isHumanTurn = round && !round.roundOver && round.currentTurn === 3 && this.phase === 'waitingTurn';
 
@@ -986,7 +1249,9 @@ export class GameTableScene implements Scene {
       const cardContainer = new Container();
       cardContainer.position.set(layout.x, layout.y);
 
-      const legal = isHumanTurn && isLegalMove(layout.card, round.tableBounds, round.isFirstTurnOfRound);
+      const legal =
+        isHumanTurn &&
+        isLegalMove(layout.card, round.tableBounds, round.isFirstTurnOfRound, round.rules ?? this.match.ruleConfig);
       const hint = this.ctx?.coachMode ? this.ctx.advisorHint : null;
       const isBestHint = Boolean(
         isHd &&
@@ -1012,13 +1277,16 @@ export class GameTableScene implements Scene {
       }
 
       const spr = new Sprite(tex);
+      if (isFanTanHd) {
+        spr.scale.set(handScale);
+      }
       cardContainer.addChild(spr);
 
       if (isBestHint) {
         const isSquare = this.isHdSquareAspect();
         const badgeX = 0.8;
-        const badgeY = isSquare ? 26.5 : 29;
-        const badgeW = 12;
+        const badgeY = isFanTanHd ? (isSquare ? 26 : 28) : isSquare ? 26.5 : 29;
+        const badgeW = isFanTanHd ? 11 : 12;
         const badgeH = isSquare ? 12 : 9;
         const badge = new Graphics();
         badge.roundRect(badgeX, badgeY, badgeW, badgeH, 3).fill({ color: 0x0d2d1b, alpha: 0.96 });
@@ -1051,8 +1319,9 @@ export class GameTableScene implements Scene {
 
   private getBoardCardSlotPos(card: Card): { x: number; y: number } {
     const m = this.getBoardMetrics();
+    const rules = resolveRoundRules(this.match.round?.rules ?? this.match.ruleConfig);
     return {
-      x: m.slotX0 + (card.rank - 6) * m.stepX,
+      x: m.slotX0 + (card.rank - rules.minRank) * m.stepX,
       y: m.slotY0 + (card.suit - 1) * m.stepY,
     };
   }
@@ -1060,9 +1329,14 @@ export class GameTableScene implements Scene {
   private placeMiniCardOnTable(card: Card): void {
     const tex = this.getActiveMiniTexture(card);
     if (!tex) return;
+    const bm = this.getBoardMetrics();
     const spr = new Sprite(tex);
     const pos = this.getBoardCardSlotPos(card);
     spr.position.set(pos.x, pos.y);
+    if (this.ctx?.getGraphicsMode() === 'ega' && this.getMatchVariant() === 'fantan52') {
+      spr.width = bm.cardW;
+      spr.height = bm.cardH;
+    }
     this.tableCardsLayer.addChild(spr);
   }
 
@@ -1111,12 +1385,13 @@ export class GameTableScene implements Scene {
     const miniTex = this.getActiveMiniTexture(card);
     const bm = this.getBoardMetrics();
     const { x: endX, y: endY } = this.getBoardCardSlotPos(card);
+    const maxSlotIdx = this.getMatchVariant() === 'fantan52' ? 17 : 11;
     const rivalSlot =
       seat === 1 || seat === 2
-        ? this.getRivalCardSlotPos(seat, Math.max(0, Math.min(11, (this.match.round?.hands[seat].length ?? 1) - 1)))
+        ? this.getRivalCardSlotPos(seat, Math.max(0, Math.min(maxSlotIdx, (this.match.round?.hands[seat].length ?? 1) - 1)))
         : null;
     const startX = originX ?? (rivalSlot ? rivalSlot.x : 300);
-    const startY = originY ?? (seat === 3 ? HAND_TOP_Y : rivalSlot ? rivalSlot.y : 120);
+    const startY = originY ?? (seat === 3 ? this.getHumanHandTopY() : rivalSlot ? rivalSlot.y : 120);
 
     this.ctx.audio.sfx.cardSlide();
     this.activeFlightSeat = seat;
@@ -1140,7 +1415,7 @@ export class GameTableScene implements Scene {
     });
     if (this.match.round?.roundOver) {
       this.roundWinner = this.match.round.winner;
-      this.roundWonPot = prevBank;
+      this.roundWonPot = prevBank + (this.match.round.lastHandPenaltyCollected ?? 0);
     } else {
       this.roundWinner = null;
       this.roundWonPot = 0;
@@ -1172,6 +1447,10 @@ export class GameTableScene implements Scene {
     }
 
     const spr = new Sprite(miniTex);
+    if (this.ctx.getGraphicsMode() === 'ega' && this.getMatchVariant() === 'fantan52') {
+      spr.width = bm.cardW;
+      spr.height = bm.cardH;
+    }
     spr.position.set(startX, startY);
     this.fxLayer.addChild(spr);
 
@@ -1220,6 +1499,7 @@ export class GameTableScene implements Scene {
       const excluded = getAllCurrentlyLegalCards(
         roundBeforePass.tableBounds,
         roundBeforePass.isFirstTurnOfRound,
+        roundBeforePass.rules ?? this.match.ruleConfig,
       );
       for (const card of excluded) {
         this.passExclusions[seat].add(advisorCardKey(card));
@@ -1239,12 +1519,15 @@ export class GameTableScene implements Scene {
       penalty: PASS_PENALTY,
     });
 
+    const sl = this.getHdSeatLayout();
+    const isHd = this.ctx?.getGraphicsMode() === 'hd';
+    const bankX = isHd ? sl.candLeftX : 165;
     if (seat === 1) {
-      this.spawnCoinFlight(56, 170, 165, 42, 380);
+      this.spawnCoinFlight(sl.leftCenterX, sl.coinLeftY, bankX, 42, 380);
     } else if (seat === 2) {
-      this.spawnCoinFlight(568, 170, 175, 42, 380);
+      this.spawnCoinFlight(sl.rightCenterX, sl.coinLeftY, bankX + 10, 42, 380);
     } else {
-      this.spawnCoinFlight(316, 232, 170, 42, 380);
+      this.spawnCoinFlight(316, sl.coinHumanY, bankX + 5, 42, 380);
     }
 
     this.passingSeat = seat;
@@ -1261,7 +1544,12 @@ export class GameTableScene implements Scene {
     if (!round || round.roundOver) return;
 
     if (round.currentTurn === 3) {
-      const legal = getLegalMoves(round.hands[3], round.tableBounds, round.isFirstTurnOfRound);
+      const legal = getLegalMoves(
+        round.hands[3],
+        round.tableBounds,
+        round.isFirstTurnOfRound,
+        round.rules ?? this.match.ruleConfig,
+      );
       if (legal.length === 0) {
         this.statusBanner = getTranslations(this.ctx?.getLanguage() ?? DEFAULT_LANGUAGE).scenes.tableNoLegalMovesPass(
           PASS_PENALTY,
@@ -1295,9 +1583,31 @@ export class GameTableScene implements Scene {
       round,
       difficulty: this.match.clubTable,
       passExclusions: this.passExclusions,
+      cash: this.match.cash,
       xrayMode: this.ctx.advisorXrayMode,
       language: this.ctx.getLanguage(),
     });
+  }
+
+  private executeAdvisorAutoMove(): void {
+    const round = this.match.round;
+    if (!this.ctx || !round || round.roundOver || round.currentTurn !== 3) return;
+    const hint =
+      this.ctx.advisorHint ??
+      evaluatePlayerMoves({
+        round,
+        difficulty: this.match.clubTable,
+        passExclusions: this.passExclusions,
+        cash: this.match.cash,
+        xrayMode: this.ctx.advisorXrayMode,
+        language: this.ctx.getLanguage(),
+      });
+    this.ctx.advisorHint = hint;
+    if (hint.action === 'play' && hint.bestCard) {
+      this.startCardFlight(3, hint.bestCard);
+    } else {
+      this.triggerSeatPass(3);
+    }
   }
 
   private enterRoundEnd(): void {
@@ -1322,13 +1632,17 @@ export class GameTableScene implements Scene {
       roundNumber: this.match.roundNumber,
       pot: this.roundWonPot,
     });
-    const dstX = winner === 1 ? 56 : winner === 2 ? 568 : 316;
-    const dstY = winner === 3 ? 232 : 170;
+    const sl = this.getHdSeatLayout();
+    const isHd = this.ctx?.getGraphicsMode() === 'hd';
+    const dstX = winner === 1 ? sl.leftCenterX : winner === 2 ? sl.rightCenterX : 316;
+    const dstY = winner === 3 ? sl.coinHumanY : sl.coinLeftY;
     if (this.roundWonPot > 0) {
-      this.spawnCoinFlight(168, 42, dstX, dstY, 520);
-      this.spawnCoinFlight(470, 48, dstX, dstY, 560);
-      if (this.ctx?.getGraphicsMode() === 'hd') {
-        this.spawnCoinFlight(175, 44, dstX, dstY, 610);
+      const bankLeftX = isHd ? sl.candLeftX : 168;
+      const bankRightX = isHd ? sl.candRightX : 470;
+      this.spawnCoinFlight(bankLeftX, 42, dstX, dstY, 520);
+      this.spawnCoinFlight(bankRightX, 48, dstX, dstY, 560);
+      if (isHd) {
+        this.spawnCoinFlight(bankLeftX + 7, 44, dstX, dstY, 610);
         this.spawnSparkBurst(dstX, dstY, 14, 0xffea88);
       }
     }
@@ -1368,18 +1682,27 @@ export class GameTableScene implements Scene {
     const sameProfile =
       this.ctx.sessionPlayer.loggedIn &&
       this.ctx.sessionPlayer.name.toLowerCase() === this.match.playerName.toLowerCase();
-    if (sameProfile && sameScoresSnapshot) {
-      this.ctx.highScores = upsertHighScore(
-        this.ctx.highScores,
+    const matchVariant = resolveRoundRules(this.match.ruleConfig).variant;
+    const sameVariant = matchVariant === this.ctx.ruleConfig.variant;
+    if (sameProfile && (matchVariant === 'fantan52' || sameScoresSnapshot)) {
+      const currentTables = this.ctx.getHighScoresForVariant(matchVariant);
+      const updated = upsertHighScore(
+        currentTables,
         this.match.clubTable,
         this.match.playerName,
         this.match.playerPassword,
         finalScore,
       );
-      if (this.match.clubTable === this.ctx.config.clubTable) {
+      if (matchVariant === 'fantan52') {
+        this.ctx.fanTanHighScores = updated;
+        this.ctx.persistFanTanHighScores();
+      } else {
+        this.ctx.highScores = updated;
+        this.ctx.persistHighScores();
+      }
+      if (sameVariant && this.match.clubTable === this.ctx.config.clubTable) {
         this.ctx.sessionPlayer.clubCarryover = finalScore - 200;
       }
-      this.ctx.persistHighScores();
     }
 
     this.drawMatchEndModal(humanWonMatch, finalScore);
@@ -1459,7 +1782,7 @@ export class GameTableScene implements Scene {
   }
 
   private findCardLayoutAt(x: number, y: number): HandCardLayout | null {
-    if (y < HAND_TOP_Y - 8 || y >= SCREEN_HEIGHT) return null;
+    if (y < this.getHumanHandTopY() - 8 || y >= SCREEN_HEIGHT) return null;
     for (let i = 0; i < this.currentHandLayouts.length; i++) {
       const l = this.currentHandLayouts[i];
       if (x >= l.x && x < l.x + l.hitWidth && y >= l.y - 6 && y < l.y + l.height) {
@@ -1492,7 +1815,12 @@ export class GameTableScene implements Scene {
       (e.key === ' ' || e.key === 'Enter' || e.key.toLowerCase() === 'p')
     ) {
       const round = this.match.round;
-      const legal = getLegalMoves(round.hands[3], round.tableBounds, round.isFirstTurnOfRound);
+      const legal = getLegalMoves(
+        round.hands[3],
+        round.tableBounds,
+        round.isFirstTurnOfRound,
+        round.rules ?? this.match.ruleConfig,
+      );
       if (legal.length === 0) {
         e.preventDefault();
         this.triggerSeatPass(3);
@@ -1525,7 +1853,8 @@ export class GameTableScene implements Scene {
     }
 
     const round = this.match.round;
-    const legal = getLegalMoves(round.hands[3], round.tableBounds, round.isFirstTurnOfRound);
+    const roundRules = round.rules ?? this.match.ruleConfig;
+    const legal = getLegalMoves(round.hands[3], round.tableBounds, round.isFirstTurnOfRound, roundRules);
 
     if (legal.length === 0) {
       this.triggerSeatPass(3);
@@ -1535,7 +1864,7 @@ export class GameTableScene implements Scene {
     const hit = this.findCardLayoutAt(pt.x, pt.y);
     if (!hit) return;
 
-    if (isLegalMove(hit.card, round.tableBounds, round.isFirstTurnOfRound)) {
+    if (isLegalMove(hit.card, round.tableBounds, round.isFirstTurnOfRound, roundRules)) {
       this.startCardFlight(3, hit.card, hit.x + 25, hit.y);
     } else {
       this.ctx?.audio.sfx.illegalMove();
@@ -1760,10 +2089,17 @@ export class GameTableScene implements Scene {
           }
         }
       } else {
-        if (this.statusBanner && this.phaseTimerMs >= 650) {
+        const autoPassDelayMs = this.ctx?.advisorAutoPlayMode ? 320 : 650;
+        if (this.statusBanner && this.phaseTimerMs >= autoPassDelayMs) {
           this.statusBanner = '';
           this.renderStatusBanner();
           this.triggerSeatPass(3);
+        } else if (
+          !this.statusBanner &&
+          this.ctx?.advisorAutoPlayMode &&
+          this.phaseTimerMs >= 420
+        ) {
+          this.executeAdvisorAutoMove();
         }
       }
       return;

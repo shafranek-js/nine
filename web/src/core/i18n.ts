@@ -62,9 +62,20 @@ export interface Translations {
     readonly moveLogTitle: string;
     readonly dealToSeeHistory: string;
     readonly waitingOpeningNine: string;
+    readonly waitingOpeningFanTan: (opening: 'sevenDiamonds' | 'anySeven') => string;
     readonly rulesTitle: string;
     readonly rules: readonly [string, string, string, string];
+    readonly fanTanRulesTitle: string;
+    readonly fanTanRules: (opening: 'sevenDiamonds' | 'anySeven', handPenalty: number) => readonly string[];
     readonly clubRoom: string;
+    readonly modeNine36: string;
+    readonly modeFanTan52: string;
+    readonly fanTanLead7D: string;
+    readonly fanTanLeadAny7: string;
+    readonly fanTanPenaltyOn: (penalty: number) => string;
+    readonly fanTanPenaltyOff: string;
+    readonly fanTanLeadersTag: string;
+    readonly nextMatchRulesNote: (opening: 'sevenDiamonds' | 'anySeven', handPenalty: number) => string;
     readonly signedIn: (name: string, carryover: number) => string;
     readonly guestSession: string;
     readonly topClubLeaders: string;
@@ -86,6 +97,13 @@ export interface Translations {
     readonly hideSidebars: string;
     readonly showPanels: string;
     readonly focusView: string;
+    readonly controlsTitle: string;
+    readonly settingsBtn: string;
+    readonly settingsTitle: string;
+    readonly settingsClose: string;
+    readonly settingsLangSection: string;
+    readonly settingsDisplaySection: string;
+    readonly settingsSavesSection: string;
     readonly navSave: string;
     readonly dealPlay: string;
     readonly switchTable: string;
@@ -96,6 +114,7 @@ export interface Translations {
     readonly importScores: string;
     readonly importTip: string;
     readonly resetSave: string;
+    readonly resetSaveConfirm: string;
   };
   readonly scenes: {
     readonly introPrompt: string;
@@ -130,6 +149,8 @@ export interface Translations {
     readonly coachOff: string;
     readonly xrayOn: string;
     readonly xrayOff: string;
+    readonly autoOn: string;
+    readonly autoOff: string;
     readonly xrayMeta: string;
     readonly xrayHandsHeader: (leftCount: number, rightCount: number) => string;
     readonly xrayLeftLabel: string;
@@ -210,6 +231,8 @@ const EN: Translations = {
     moveLogTitle: 'Move Log',
     dealToSeeHistory: 'Deal a round to see live play history.',
     waitingOpeningNine: 'Waiting for 9♦ opening move...',
+    waitingOpeningFanTan: (opening) =>
+      opening === 'anySeven' ? 'Waiting for any 7 opening move...' : 'Waiting for 7♦ opening move...',
     rulesTitle: 'Rules of Nine',
     rules: [
       '9♦ opens every round',
@@ -217,7 +240,29 @@ const EN: Translations = {
       'Playable cards glow gold in hand',
       `No move: Pass (-$${PASS_PENALTY}), Ante $${ANTE_AMOUNT}`,
     ],
+    fanTanRulesTitle: 'Rules of Fan Tan (52)',
+    fanTanRules: (opening, handPenalty) => [
+      opening === 'anySeven'
+        ? '52 cards (A low..K): Any 7 opens (or pass)'
+        : '52 cards (A low..K): 7♦ opens every round',
+      '7 opens a suit; build down to A & up to K',
+      handPenalty > 0
+        ? `End of round: +$${handPenalty} per opponent card left`
+        : 'End of round: winner takes pot (no card penalty)',
+      `No move: Pass (-$${PASS_PENALTY}), Ante $${ANTE_AMOUNT}`,
+    ],
     clubRoom: 'Club Room',
+    modeNine36: 'Nine (36)',
+    modeFanTan52: 'Fan Tan (52)',
+    fanTanLead7D: 'Open: 7♦',
+    fanTanLeadAny7: 'Open: Any 7',
+    fanTanPenaltyOn: (p) => `Tail fee: $${p}/card`,
+    fanTanPenaltyOff: 'Tail fee: OFF',
+    fanTanLeadersTag: 'Fan Tan 52',
+    nextMatchRulesNote: (opening, handPenalty) =>
+      `For next match · active now: ${opening === 'anySeven' ? 'Any 7' : '7♦'}, ${
+        handPenalty > 0 ? `$${handPenalty}/card` : 'no fee'
+      }`,
     signedIn: (name, carryover) => `Signed in: ${name} (Carryover $${200 + carryover})`,
     guestSession: 'Guest session · Press F4 in Menu to sign in',
     topClubLeaders: 'Top Club Leaders',
@@ -239,6 +284,13 @@ const EN: Translations = {
     hideSidebars: 'Hide Sidebars',
     showPanels: 'Show Club Panels',
     focusView: 'Focus View',
+    controlsTitle: 'Controls',
+    settingsBtn: 'Settings',
+    settingsTitle: 'Settings',
+    settingsClose: 'Done',
+    settingsLangSection: 'Language',
+    settingsDisplaySection: 'Display & Audio',
+    settingsSavesSection: 'Saves & DOS File (NINE.RES)',
     navSave: 'Navigation & Save',
     dealPlay: 'Deal / Play (F1)',
     switchTable: 'Switch Table (F3)',
@@ -249,6 +301,7 @@ const EN: Translations = {
     importScores: 'Import Scores',
     importTip: 'Load high-scores & profiles (NINE.RES)',
     resetSave: 'Reset Save',
+    resetSaveConfirm: 'Click again to reset',
   },
   scenes: {
     introPrompt: 'CLICK OR PRESS ANY KEY TO ENTER THE CLUB',
@@ -283,6 +336,8 @@ const EN: Translations = {
     coachOff: 'Coach: OFF',
     xrayOn: 'X-Ray: ON',
     xrayOff: 'X-Ray: OFF',
+    autoOn: 'Auto: ON',
+    autoOff: 'Auto: OFF',
     xrayMeta: 'X-Ray · Sees all hands',
     xrayHandsHeader: (l, r) => `X-Ray hands · L ${l}, R ${r}`,
     xrayLeftLabel: 'Left: ',
@@ -369,6 +424,8 @@ const RU: Translations = {
     moveLogTitle: 'Журнал ходов',
     dealToSeeHistory: 'Сыграйте раунд, чтобы увидеть историю ходов.',
     waitingOpeningNine: 'Ждём первый ход с 9♦…',
+    waitingOpeningFanTan: (opening) =>
+      opening === 'anySeven' ? 'Ждём первый ход с любой 7…' : 'Ждём первый ход с 7♦…',
     rulesTitle: 'Правила «Девятки»',
     rules: [
       'Каждый раунд открывает 9♦',
@@ -376,7 +433,29 @@ const RU: Translations = {
       'Доступные карты подсвечены золотым',
       `Нет хода: пас (-$${PASS_PENALTY}), анте $${ANTE_AMOUNT}`,
     ],
+    fanTanRulesTitle: 'Правила Fan Tan (52)',
+    fanTanRules: (opening, handPenalty) => [
+      opening === 'anySeven'
+        ? '52 карты (A младше 2): старт с любой 7'
+        : '52 карты (A младше 2): старт с 7♦',
+      '7 открывает масть; вниз до A и вверх до K',
+      handPenalty > 0
+        ? `Конец раунда: +$${handPenalty} за карту на руках у врагов`
+        : 'Конец раунда: банк победителю (без штрафа за карты)',
+      `Нет хода: пас (-$${PASS_PENALTY}), анте $${ANTE_AMOUNT}`,
+    ],
     clubRoom: 'Клубная комната',
+    modeNine36: 'Девятка (36)',
+    modeFanTan52: 'Fan Tan (52)',
+    fanTanLead7D: 'Старт: 7♦',
+    fanTanLeadAny7: 'Старт: Любая 7',
+    fanTanPenaltyOn: (p) => `За карты: $${p}`,
+    fanTanPenaltyOff: 'За карты: ВЫКЛ',
+    fanTanLeadersTag: 'Fan Tan 52',
+    nextMatchRulesNote: (opening, handPenalty) =>
+      `Для след. матча · сейчас: ${opening === 'anySeven' ? 'Любая 7' : '7♦'}, ${
+        handPenalty > 0 ? `$${handPenalty}/карта` : 'без штрафа'
+      }`,
     signedIn: (name, carryover) => `Игрок: ${name} (Перенос $${200 + carryover})`,
     guestSession: 'Гость · Нажмите F4 в меню для входа',
     topClubLeaders: 'Лидеры стола',
@@ -398,6 +477,13 @@ const RU: Translations = {
     hideSidebars: 'Скрыть панели',
     showPanels: 'Показать панели',
     focusView: 'На весь экран',
+    controlsTitle: 'Управление',
+    settingsBtn: 'Настройки',
+    settingsTitle: 'Настройки',
+    settingsClose: 'Готово',
+    settingsLangSection: 'Язык',
+    settingsDisplaySection: 'Экран и звук',
+    settingsSavesSection: 'Сейвы и файл DOS (NINE.RES)',
     navSave: 'Навигация и сейв',
     dealPlay: 'Играть (F1)',
     switchTable: 'Сменить стол (F3)',
@@ -408,6 +494,7 @@ const RU: Translations = {
     importScores: 'Импорт .RES',
     importTip: 'Загрузить файл рекордов и профилей (NINE.RES)',
     resetSave: 'Сброс сейва',
+    resetSaveConfirm: 'Нажмите ещё раз для сброса',
   },
   scenes: {
     introPrompt: 'КЛИКНИТЕ ИЛИ НАЖМИТЕ ЛЮБУЮ КЛАВИШУ ДЛЯ ВХОДА В КЛУБ',
@@ -442,6 +529,8 @@ const RU: Translations = {
     coachOff: 'Обучение: ВЫКЛ',
     xrayOn: 'Рентген: ВКЛ',
     xrayOff: 'Рентген: ВЫКЛ',
+    autoOn: 'Авто: ВКЛ',
+    autoOff: 'Авто: ВЫКЛ',
     xrayMeta: 'Рентген · Видит все карты',
     xrayHandsHeader: (l, r) => `Карты (рентген) · Л: ${l}, П: ${r}`,
     xrayLeftLabel: 'Левый: ',
@@ -530,6 +619,8 @@ const UK: Translations = {
     moveLogTitle: 'Журнал ходів',
     dealToSeeHistory: 'Зіграйте раунд, щоб побачити історію ходів.',
     waitingOpeningNine: 'Чекаємо на перший хід з 9♦…',
+    waitingOpeningFanTan: (opening) =>
+      opening === 'anySeven' ? 'Чекаємо на перший хід з будь-якої 7…' : 'Чекаємо на перший хід з 7♦…',
     rulesTitle: 'Правила «Дев’ятки»',
     rules: [
       'Кожен раунд відкриває 9♦',
@@ -537,7 +628,29 @@ const UK: Translations = {
       'Доступні карти підсвічені золотим',
       `Немає ходу: пас (-$${PASS_PENALTY}), анте $${ANTE_AMOUNT}`,
     ],
+    fanTanRulesTitle: 'Правила Fan Tan (52)',
+    fanTanRules: (opening, handPenalty) => [
+      opening === 'anySeven'
+        ? '52 карти (A молодше 2): старт з будь-якої 7'
+        : '52 карти (A молодше 2): старт з 7♦',
+      '7 відкриває масть; вниз до A та вгору до K',
+      handPenalty > 0
+        ? `Кінець раунду: +$${handPenalty} за карту на руках суперників`
+        : 'Кінець раунду: банк переможцю (без штрафу за карти)',
+      `Немає ходу: пас (-$${PASS_PENALTY}), анте $${ANTE_AMOUNT}`,
+    ],
     clubRoom: 'Клубна зала',
+    modeNine36: 'Дев’ятка (36)',
+    modeFanTan52: 'Fan Tan (52)',
+    fanTanLead7D: 'Старт: 7♦',
+    fanTanLeadAny7: 'Старт: Будь-яка 7',
+    fanTanPenaltyOn: (p) => `За карти: $${p}`,
+    fanTanPenaltyOff: 'За карти: ВИМК',
+    fanTanLeadersTag: 'Fan Tan 52',
+    nextMatchRulesNote: (opening, handPenalty) =>
+      `Для наст. матчу · зараз: ${opening === 'anySeven' ? 'Будь-яка 7' : '7♦'}, ${
+        handPenalty > 0 ? `$${handPenalty}/карта` : 'без штрафу'
+      }`,
     signedIn: (name, carryover) => `Гравець: ${name} (Перенос $${200 + carryover})`,
     guestSession: 'Гість · Натисніть F4 у меню для входу',
     topClubLeaders: 'Лідери столу',
@@ -559,6 +672,13 @@ const UK: Translations = {
     hideSidebars: 'Сховати панелі',
     showPanels: 'Показати панелі',
     focusView: 'На весь екран',
+    controlsTitle: 'Керування',
+    settingsBtn: 'Налаштування',
+    settingsTitle: 'Налаштування',
+    settingsClose: 'Готово',
+    settingsLangSection: 'Мова',
+    settingsDisplaySection: 'Екран і звук',
+    settingsSavesSection: 'Збереження і файл DOS (NINE.RES)',
     navSave: 'Навігація і сейв',
     dealPlay: 'Грати (F1)',
     switchTable: 'Змінити стіл (F3)',
@@ -569,6 +689,7 @@ const UK: Translations = {
     importScores: 'Імпорт .RES',
     importTip: 'Відкрити файл рекордів і профілів (NINE.RES)',
     resetSave: 'Скинути сейв',
+    resetSaveConfirm: 'Натисніть ще раз для скидання',
   },
   scenes: {
     introPrompt: 'КЛІКНІТЬ АБО НАТИСНІТЬ БУДЬ-ЯКУ КЛАВІШУ ДЛЯ ВХОДУ',
@@ -603,6 +724,8 @@ const UK: Translations = {
     coachOff: 'Навчання: ВИМК',
     xrayOn: 'Рентген: УВІМК',
     xrayOff: 'Рентген: ВИМК',
+    autoOn: 'Авто: УВІМК',
+    autoOff: 'Авто: ВИМК',
     xrayMeta: 'Рентген · Бачить усі карти',
     xrayHandsHeader: (l, r) => `Карти (рентген) · Л: ${l}, П: ${r}`,
     xrayLeftLabel: 'Лівий: ',
@@ -691,6 +814,8 @@ const DE: Translations = {
     moveLogTitle: 'Zugprotokoll',
     dealToSeeHistory: 'Starte eine Runde, um den Verlauf zu sehen.',
     waitingOpeningNine: 'Warte auf Eröffnung mit 9♦…',
+    waitingOpeningFanTan: (opening) =>
+      opening === 'anySeven' ? 'Warte auf beliebige 7 zum Start…' : 'Warte auf Eröffnung mit 7♦…',
     rulesTitle: 'Regeln von Neuner',
     rules: [
       '9♦ eröffnet jede Runde',
@@ -698,7 +823,29 @@ const DE: Translations = {
       'Spielbare Karten leuchten golden',
       `Kein Zug: Pass (-$${PASS_PENALTY}), Ante $${ANTE_AMOUNT}`,
     ],
+    fanTanRulesTitle: 'Regeln von Fan Tan (52)',
+    fanTanRules: (opening, handPenalty) => [
+      opening === 'anySeven'
+        ? '52 Karten (A niedrig..K): Beliebige 7 startet'
+        : '52 Karten (A niedrig..K): 7♦ eröffnet jede Runde',
+      '7 startet Farbe; runter bis A & rauf bis K',
+      handPenalty > 0
+        ? `Rundenende: +$${handPenalty} pro Restkarte der Gegner`
+        : 'Rundenende: Pott für Sieger (ohne Restkartenstrafe)',
+      `Kein Zug: Pass (-$${PASS_PENALTY}), Ante $${ANTE_AMOUNT}`,
+    ],
     clubRoom: 'Klubraum',
+    modeNine36: 'Neuner (36)',
+    modeFanTan52: 'Fan Tan (52)',
+    fanTanLead7D: 'Start: 7♦',
+    fanTanLeadAny7: 'Start: Jede 7',
+    fanTanPenaltyOn: (p) => `Restkarte: $${p}`,
+    fanTanPenaltyOff: 'Restkarte: AUS',
+    fanTanLeadersTag: 'Fan Tan 52',
+    nextMatchRulesNote: (opening, handPenalty) =>
+      `Für nächstes Spiel · aktiv: ${opening === 'anySeven' ? 'Jede 7' : '7♦'}, ${
+        handPenalty > 0 ? `$${handPenalty}/Karte` : 'ohne Strafe'
+      }`,
     signedIn: (name, carryover) => `Spieler: ${name} (Übertrag $${200 + carryover})`,
     guestSession: 'Gast · Drücke F4 im Menü zum Anmelden',
     topClubLeaders: 'Klub-Bestenliste',
@@ -720,6 +867,13 @@ const DE: Translations = {
     hideSidebars: 'Leisten aus',
     showPanels: 'Leisten zeigen',
     focusView: 'Fokus-Ansicht',
+    controlsTitle: 'Steuerung',
+    settingsBtn: 'Einstellungen',
+    settingsTitle: 'Einstellungen',
+    settingsClose: 'Fertig',
+    settingsLangSection: 'Sprache',
+    settingsDisplaySection: 'Anzeige & Ton',
+    settingsSavesSection: 'Spielstände & DOS (NINE.RES)',
     navSave: 'Navigation & Save',
     dealPlay: 'Spielen (F1)',
     switchTable: 'Tisch wechseln (F3)',
@@ -730,6 +884,7 @@ const DE: Translations = {
     importScores: 'Import .RES',
     importTip: 'Bestenliste & Profile laden (NINE.RES)',
     resetSave: 'Save zurücksetzen',
+    resetSaveConfirm: 'Zum Zurücksetzen erneut klicken',
   },
   scenes: {
     introPrompt: 'KLICKEN ODER BELIEBIGE TASTE DRÜCKEN',
@@ -764,6 +919,8 @@ const DE: Translations = {
     coachOff: 'Berater: AUS',
     xrayOn: 'Röntgen: EIN',
     xrayOff: 'Röntgen: AUS',
+    autoOn: 'Auto: EIN',
+    autoOff: 'Auto: AUS',
     xrayMeta: 'Röntgen · Sieht alle Hände',
     xrayHandsHeader: (l, r) => `Röntgen-Hände · L ${l}, R ${r}`,
     xrayLeftLabel: 'Links: ',

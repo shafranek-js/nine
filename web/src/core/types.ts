@@ -26,7 +26,29 @@ export enum Suit {
   Hearts = 4,   // C_* (Червы)
 }
 
-export type Rank = 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14;
+export type Rank = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14;
+
+/** Game ruleset variant: authentic 1993 36-card Nine or 52-card Fan Tan (Sevens). */
+export type GameVariant = 'nine36' | 'fantan52';
+
+/** First move rule in Fan Tan: mandatory 7♦ (like 9♦) or any 7 (pass if none). */
+export type FanTanOpeningMode = 'sevenDiamonds' | 'anySeven';
+
+export interface GameRulesConfig {
+  variant: GameVariant;
+  fanTanOpening: FanTanOpeningMode;
+  /** Dollars collected by round winner per card remaining in each opponent's hand. */
+  fanTanHandPenalty: number;
+}
+
+export interface ResolvedRoundRules {
+  variant: GameVariant;
+  minRank: number;
+  maxRank: number;
+  centerRank: number;
+  openingMode: 'nineDiamonds' | FanTanOpeningMode;
+  handCardPenalty: number;
+}
 
 /** 1 = Left Bot, 2 = Right Bot, 3 = Human player at bottom */
 export type SeatIndex = 1 | 2 | 3;
@@ -70,10 +92,14 @@ export interface RoundState {
   /** Played card sequence order on table (0x2fe7 / 0x3077) */
   playedCount: number;
   currentTurn: SeatIndex;
-  /** True before the mandatory 9 of Diamonds opening move of the round */
+  /** True before the opening move (9♦ in Nine, 7♦ or first 7 in Fan Tan) */
   isFirstTurnOfRound: boolean;
   /** Bank pot in dollars ($) */
   bank: number;
+  /** Active round rules (defaults to classic 36-card Nine when omitted) */
+  rules?: ResolvedRoundRules;
+  /** Additional cash collected from opponent remaining hands on round end */
+  lastHandPenaltyCollected?: number;
   /** Number of consecutive or total passes if needed for diagnostics */
   roundOver: boolean;
   winner: SeatIndex | null;
@@ -82,9 +108,10 @@ export interface RoundState {
 export interface MatchState {
   playerName: string;
   playerPassword: string;
-  /** Stored net carryover score bonus from Nine.res (row.score - 200) */
+  /** Stored net carryover score bonus from club leaderboard (row.score - 200) */
   clubCarryover: number;
   clubTable: ClubTableId;
+  ruleConfig?: GameRulesConfig;
   cash: Record<SeatIndex, number>;
   roundNumber: number;
   round: RoundState | null;

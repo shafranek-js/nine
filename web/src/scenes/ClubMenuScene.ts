@@ -148,6 +148,11 @@ export class ClubMenuScene implements Scene {
     this.cancelLoginFlow();
   }
 
+  onRuleConfigChanged(): void {
+    this.cancelLoginFlow();
+    this.renderLeaderboard();
+  }
+
   onSessionChanged(): void {
     this.renderLeaderboard();
     this.renderPromptInput();
@@ -496,7 +501,7 @@ export class ClubMenuScene implements Scene {
       this.f3Spr.texture = this.f3Frames[tableId - 1];
 
       this.tableTextLayer.removeChildren();
-      const rows = this.ctx.highScores[tableId];
+      const rows = this.ctx.getHighScoresForVariant()[tableId];
       for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
         const y = 116 + i * 10;
@@ -546,7 +551,7 @@ export class ClubMenuScene implements Scene {
     divG.moveTo(332, 242).lineTo(472, 242).stroke({ color: 0xc99c38, width: 0.65, alpha: 0.5 });
     this.hdTableLayer.addChild(divG);
 
-    const rows = this.ctx.highScores[tableId];
+    const rows = this.ctx.getHighScoresForVariant()[tableId];
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       const y = 145 + i * 9.5;
@@ -699,7 +704,11 @@ export class ClubMenuScene implements Scene {
       return;
     }
     this.pendingName = trimmed.slice(0, 8);
-    const existing = lookupPlayer(this.ctx.highScores, this.ctx.config.clubTable, this.pendingName);
+    const existing = lookupPlayer(
+      this.ctx.getHighScoresForVariant(),
+      this.ctx.config.clubTable,
+      this.pendingName,
+    );
     if (existing) {
       this.existingPasswordToMatch = existing.password;
     } else {
@@ -879,7 +888,7 @@ export class ClubMenuScene implements Scene {
       idx = Math.floor((pt.y - 115) / 10);
     }
     if (idx < 0 || idx >= 10) return null;
-    const row = this.ctx.highScores[this.ctx.config.clubTable]?.[idx];
+    const row = this.ctx.getHighScoresForVariant()[this.ctx.config.clubTable]?.[idx];
     if (!row || row.name.trim().length === 0 || row.name === 'Noname') return null;
     return idx;
   }
@@ -915,7 +924,7 @@ export class ClubMenuScene implements Scene {
     // One-click sign-in on an existing player row in the leaderboard
     const rowIdx = this.hitTestLeaderboardRow(pt);
     if (rowIdx !== null) {
-      const row = this.ctx.highScores[this.ctx.config.clubTable]?.[rowIdx];
+      const row = this.ctx.getHighScoresForVariant()[this.ctx.config.clubTable]?.[rowIdx];
       if (row && row.name !== 'Noname') {
         this.cancelLoginFlow();
         this.ctx.signInPlayer(row.name, row.password);

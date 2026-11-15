@@ -7,7 +7,7 @@ import {
 } from '../src/core/advisor.js';
 import { DEFAULT_LANGUAGE, getTranslations, normalizeLanguage, SUPPORTED_LANGUAGES } from '../src/core/i18n.js';
 import { createSeededRng } from '../src/core/rng.js';
-import { cardKey, createEmptyTableBounds, SUITS } from '../src/core/rules.js';
+import { cardKey, createEmptyTableBounds, resolveRoundRules, SUITS } from '../src/core/rules.js';
 import { Suit, type Card, type Rank, type RoundState } from '../src/core/types.js';
 
 function emptyExclusions(): PassExclusions {
@@ -383,5 +383,148 @@ describe('Advisor / Coach engine (fair-play deduction & EV search)', () => {
     expect(rec.deduction.certainLeft.map(formatCardLabel)).toEqual(['6♣', '7♣']);
     expect(rec.deduction.certainRight.map(formatCardLabel)).toEqual(['6♠', '7♠']);
     expect(rec.reasons.some((r) => r.includes('Рентген'))).toBe(true);
+  });
+
+  it('evaluates Fan Tan 52-card hands and accounts for per-card tail penalties in EV', () => {
+    const rules = resolveRoundRules({ variant: 'fantan52', fanTanOpening: 'sevenDiamonds', fanTanHandPenalty: 5 });
+    const bounds = createEmptyTableBounds();
+    bounds[Suit.Diamonds] = { low: 2, high: 7 };
+    bounds[Suit.Spades] = { low: 7, high: 12 };
+
+    const round: RoundState = {
+      hands: {
+        1: [{ suit: Suit.Diamonds, rank: 8 }],
+        2: [{ suit: Suit.Spades, rank: 13 }],
+        3: [
+          { suit: Suit.Diamonds, rank: 1 }, // Plays low Ace (1) cleanly
+          { suit: Suit.Hearts, rank: 7 },
+        ],
+      },
+      tableBounds: bounds,
+      playedCount: 12,
+      currentTurn: 3,
+      isFirstTurnOfRound: false,
+      bank: 60,
+      rules,
+      roundOver: false,
+      winner: null,
+    };
+
+    const rec = evaluatePlayerMoves({
+      round,
+      difficulty: 2,
+      passExclusions: emptyExclusions(),
+      xrayMode: true,
+      rng: createSeededRng(5),
+    });
+
+    expect(rec.action).toBe('play');
+    expect(rec.bestCard).toBeTruthy();
+    expect(['A♦', '7♥']).toContain(formatCardLabel(rec.bestCard!));
+  });
+
+  it('caps opponent tail-card penalty by each opponent cash in both immediate win and simulation EV', () => {
+    const rules = resolveRoundRules({
+      variant: 'fantan52',
+      fanTanOpening: 'sevenDiamonds',
+      fanTanHandPenalty: 5,
+    });
+    const bounds = createEmptyTableBounds();
+    bounds[Suit.Diamonds] = { low: 2, high: 7 };
+
+    // Immediate last-card win: bank $260, Left has 3 cards ($200 -> pays $15),
+    // Right has 4 cards ($15 -> pays only $15 instead of $20). Total expected = $290.
+    const lastCardRound: RoundState = {
+      hands: {
+        1: [
+          { suit: Suit.Clubs, rank: 2 },
+          { suit: Suit.Clubs, rank: 3 },
+          { suit: Suit.Clubs, rank: 4 },
+        ],
+        2: [
+          { suit: Suit.Hearts, rank: 2 },
+          { suit: Suit.Hearts, rank: 3 },
+          { suit: Suit.Hearts, rank: 4 },
+          { suit: Suit.Hearts, rank: 5 },
+        ],
+        3: [{ suit: Suit.Diamonds, rank: 1 }],
+      },
+      tableBounds: bounds,
+      playedCount: 44,
+      currentTurn: 3,
+      isFirstTurnOfRound: false,
+      bank: 260,
+      rules,
+      roundOver: false,
+      winner: null,
+    };
+
+    const immediateRec = evaluatePlayerMoves({
+      round: lastCardRound,
+      difficulty: 2,
+      passExclusions: emptyExclusions(),
+      cash: { 1: 200, 2: 15, 3: 100 },
+      xrayMode: true,
+      rng: createSeededRng(7),
+      language: 'ru',
+    });
+
+    expect(immediateRec.candidates[0]?.expectedNetCash).toBe(290);
+    expect(immediateRec.reasons[0]).toContain('$290');
+
+    // Multi-card X-Ray rollout: human always wins after 1 more move, Left has 1 card ($0 left),
+    // Right has 2 cards ($100 left -> pays $10) -> EV equals bank ($100) + $10 = $110.
+    const simBounds = createEmptyTableBounds();
+    simBounds[Suit.Diamonds] = { low: 4, high: 7 };
+    simBounds[Suit.Spades] = { low: 7, high: 9 };
+    const multiCardRound: RoundState = {
+      hands: {
+        1: [{ suit: Suit.Hearts, rank: 13 }], // cannot play yet
+        2: [
+          { suit: Suit.Clubs, rank: 12 },
+          { suit: Suit.Clubs, rank: 13 },
+        ],
+        3: [
+          { suit: Suit.Diamonds, rank: 3 },
+          { suit: Suit.Diamonds, rank: 2 },
+        ],
+      },
+      tableBounds: simBounds,
+      playedCount: 20,
+      currentTurn: 3,
+      isFirstTurnOfRound: false,
+      bank: 100,
+      rules,
+      roundOver: false,
+      winner: null,
+    };
+
+    const simRec = evaluatePlayerMoves({
+      round: multiCardRound,
+      difficulty: 2,
+      passExclusions: emptyExclusions(),
+      cash: { 1: 0, 2: 24, 3: 120 },
+      xrayMode: true,
+      rng: createSeededRng(9),
+    });
+
+    // After human plays 3♦: Left passes (-PASS_PENALTY = -$20), Right passes (-$20 -> $4 left),
+    // human plays 2♦ and wins: pot = 100 + 20 + 20 = 140; Left pays $0 (capped at 0), Right pays $4 (capped from $10).
+    expect(simRec.candidates[0]?.winRate).toBe(1);
+    expect(simRec.candidates[0]?.expectedNetCash).toBe(144);
+  });
+
+  it('provides localized next-match rule notices across all supported languages', () => {
+    for (const lang of SUPPORTED_LANGUAGES) {
+      const s = getTranslations(lang.code).shell;
+      expect(s.nextMatchRulesNote('sevenDiamonds', 5)).toContain('7♦');
+      expect(s.nextMatchRulesNote('sevenDiamonds', 5)).toContain('$5');
+      expect(s.nextMatchRulesNote('anySeven', 0).length).toBeGreaterThan(10);
+      expect(s.controlsTitle.length).toBeGreaterThan(0);
+      expect(s.settingsBtn.length).toBeGreaterThan(0);
+      expect(s.settingsTitle.length).toBeGreaterThan(0);
+      expect(s.settingsClose.length).toBeGreaterThan(0);
+      expect(s.resetSaveConfirm.length).toBeGreaterThan(0);
+    }
   });
 });

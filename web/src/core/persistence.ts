@@ -4,12 +4,16 @@ import {
   RES_TABLES_COUNT,
   RES_TOTAL_SIZE,
   type ClubTableId,
+  type GameRulesConfig,
   type HighScoreRow,
   type NineConfig,
 } from './types.js';
+import { DEFAULT_GAME_RULES } from './rules.js';
 
 const STORAGE_RES_KEY = 'nine_club_res_b64_v1';
+const STORAGE_FANTAN_RES_KEY = 'nine_fantan_scores_v1';
 const STORAGE_CFG_KEY = 'nine_club_cfg_v2';
+const STORAGE_RULES_CFG_KEY = 'nine_rules_cfg_v1';
 const STORAGE_LAST_PLAYER_KEY = 'nine_last_player_v1';
 
 export interface StoredLastPlayer {
@@ -266,6 +270,70 @@ export function saveStoredLastPlayer(player: StoredLastPlayer | null): void {
       STORAGE_LAST_PLAYER_KEY,
       JSON.stringify({ name: player.name.trim().slice(0, 8), password: player.password.slice(0, 8) }),
     );
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+export function normalizeGameRulesConfig(raw?: Partial<GameRulesConfig> | null): GameRulesConfig {
+  return {
+    variant: raw?.variant === 'fantan52' ? 'fantan52' : 'nine36',
+    fanTanOpening: raw?.fanTanOpening === 'anySeven' ? 'anySeven' : 'sevenDiamonds',
+    fanTanHandPenalty:
+      typeof raw?.fanTanHandPenalty === 'number' && Number.isFinite(raw.fanTanHandPenalty) && raw.fanTanHandPenalty >= 0
+        ? Math.round(raw.fanTanHandPenalty)
+        : DEFAULT_GAME_RULES.fanTanHandPenalty,
+  };
+}
+
+export function loadStoredRuleConfig(): GameRulesConfig {
+  try {
+    const raw = localStorage.getItem(STORAGE_RULES_CFG_KEY);
+    if (!raw) return { ...DEFAULT_GAME_RULES };
+    return normalizeGameRulesConfig(JSON.parse(raw) as Partial<GameRulesConfig>);
+  } catch {
+    return { ...DEFAULT_GAME_RULES };
+  }
+}
+
+export function saveStoredRuleConfig(rules: GameRulesConfig): void {
+  try {
+    localStorage.setItem(STORAGE_RULES_CFG_KEY, JSON.stringify(normalizeGameRulesConfig(rules)));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+export function loadStoredFanTanHighScores(): HighScoreTables {
+  try {
+    const raw = localStorage.getItem(STORAGE_FANTAN_RES_KEY);
+    if (!raw) return createDefaultHighScoreTables();
+    const parsed = JSON.parse(raw) as Partial<Record<ClubTableId, HighScoreRow[]>>;
+    const base = createDefaultHighScoreTables();
+    for (const id of [1, 2, 3] as const) {
+      const rows = parsed[id];
+      if (Array.isArray(rows)) {
+        base[id] = rows
+          .slice(0, RES_ROWS_PER_TABLE)
+          .map((r) => ({
+            name: typeof r?.name === 'string' ? r.name.slice(0, 8) : 'Noname',
+            password: typeof r?.password === 'string' ? r.password.slice(0, 8) : '',
+            score: typeof r?.score === 'number' && Number.isFinite(r.score) ? Math.round(r.score) : 0,
+          }));
+        while (base[id].length < RES_ROWS_PER_TABLE) {
+          base[id].push({ name: 'Noname', password: '', score: 0 });
+        }
+      }
+    }
+    return base;
+  } catch {
+    return createDefaultHighScoreTables();
+  }
+}
+
+export function saveStoredFanTanHighScores(tables: HighScoreTables): void {
+  try {
+    localStorage.setItem(STORAGE_FANTAN_RES_KEY, JSON.stringify(tables));
   } catch {
     // Ignore storage errors
   }

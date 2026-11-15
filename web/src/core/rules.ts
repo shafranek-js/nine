@@ -3,11 +3,14 @@ import {
   ANTE_AMOUNT,
   INITIAL_PLAYER_CASH,
   PASS_PENALTY,
+  SCREEN_WIDTH,
   Suit,
   type Card,
   type ClubTableId,
+  type GameRulesConfig,
   type MatchState,
   type Rank,
+  type ResolvedRoundRules,
   type RoundState,
   type SeatIndex,
   type TableBounds,
@@ -17,6 +20,48 @@ export const CARDS_PER_SUIT = 9;
 export const CARDS_PER_PLAYER = 12;
 export const TOTAL_CARDS = 36;
 export const SUITS: readonly Suit[] = [Suit.Spades, Suit.Clubs, Suit.Diamonds, Suit.Hearts];
+
+export const DEFAULT_GAME_RULES: GameRulesConfig = {
+  variant: 'nine36',
+  fanTanOpening: 'sevenDiamonds',
+  fanTanHandPenalty: 5,
+};
+
+export function resolveRoundRules(
+  rules?: Partial<GameRulesConfig> | ResolvedRoundRules,
+): ResolvedRoundRules {
+  if (rules && 'minRank' in rules && typeof rules.minRank === 'number') {
+    return rules as ResolvedRoundRules;
+  }
+  const cfg = rules as Partial<GameRulesConfig> | undefined;
+  if (cfg?.variant === 'fantan52') {
+    return {
+      variant: 'fantan52',
+      minRank: 1,
+      maxRank: 13,
+      centerRank: 7,
+      openingMode: cfg.fanTanOpening === 'anySeven' ? 'anySeven' : 'sevenDiamonds',
+      handCardPenalty: Math.max(0, cfg.fanTanHandPenalty ?? 5),
+    };
+  }
+  return {
+    variant: 'nine36',
+    minRank: 6,
+    maxRank: 14,
+    centerRank: 9,
+    openingMode: 'nineDiamonds',
+    handCardPenalty: 0,
+  };
+}
+
+export function getDeckRanks(rules?: Partial<GameRulesConfig> | ResolvedRoundRules): readonly Rank[] {
+  const r = resolveRoundRules(rules);
+  const ranks: Rank[] = [];
+  for (let rk = r.minRank; rk <= r.maxRank; rk++) {
+    ranks.push(rk as Rank);
+  }
+  return ranks;
+}
 export const HAND_CARD_WIDTH = 88;
 export const HAND_CARD_HEIGHT = 89;
 export const HAND_CARD_HIT_WIDTH = 83; // DS:3A9Eh (0x53) from CS:519E
@@ -52,7 +97,7 @@ export function sortKey(card: Card): number {
 }
 
 export function sortHand(cards: readonly Card[]): Card[] {
-  return [...cards].sort((a, b) => sortKey(a) - sortKey(b));
+  return [...cards].sort((a, b) => (a.suit - b.suit) || (a.rank - b.rank));
 }
 
 export function nextSeat(seat: SeatIndex): SeatIndex {
@@ -60,13 +105,48 @@ export function nextSeat(seat: SeatIndex): SeatIndex {
 }
 
 /**
- * Deals 36 cards across 3 seats × 12 slots matching ShuffleAndDeal36Cards (CS:825C..842D).
- * Holder of 9♦ takes the opening turn of the round.
+ * Deals 36 cards (classic Nine, 1:1 ShuffleAndDeal36Cards) or 52 cards (Fan Tan: 17/17/18).
  */
-export function shuffleAndDeal(rng: Rng): {
+export function shuffleAndDeal(
+  rng: Rng,
+  rulesInput?: Partial<GameRulesConfig> | ResolvedRoundRules,
+  roundIndex = 0,
+): {
   hands: Record<SeatIndex, Card[]>;
   firstTurn: SeatIndex;
 } {
+  const rules = resolveRoundRules(rulesInput);
+
+  if (rules.variant === 'fantan52') {
+    const deck: Card[] = [];
+    for (const suit of SUITS) {
+      for (let rank = rules.minRank; rank <= rules.maxRank; rank++) {
+        deck.push({ suit, rank: rank as Rank });
+      }
+    }
+    for (let i = deck.length - 1; i > 0; i--) {
+      const j = rng.nextInt(i + 1);
+      const tmp = deck[i];
+      deck[i] = deck[j];
+      deck[j] = tmp;
+    }
+
+    const extraSeat = (((roundIndex % 3) + 1) as SeatIndex);
+    const dealOrder: SeatIndex[] = [extraSeat, nextSeat(extraSeat), nextSeat(nextSeat(extraSeat))];
+    const hands: Record<SeatIndex, Card[]> = { 1: [], 2: [], 3: [] };
+    let firstTurn: SeatIndex = extraSeat;
+
+    for (let i = 0; i < deck.length; i++) {
+      const seat = dealOrder[i % 3];
+      const card = deck[i];
+      hands[seat].push(card);
+      if (rules.openingMode === 'sevenDiamonds' && card.suit === Suit.Diamonds && card.rank === rules.centerRank) {
+        firstTurn = seat;
+      }
+    }
+    return { hands, firstTurn };
+  }
+
   const used = new Array<boolean>(TOTAL_CARDS).fill(false);
   let remaining = TOTAL_CARDS;
   const hands: Record<SeatIndex, Card[]> = { 1: [], 2: [], 3: [] };
@@ -103,13 +183,21 @@ export function isLegalMove(
   card: Card,
   tableBounds: TableBounds,
   isFirstTurnOfRound: boolean,
+  rulesInput?: Partial<GameRulesConfig> | ResolvedRoundRules,
 ): boolean {
+  const rules = resolveRoundRules(rulesInput);
   if (isFirstTurnOfRound) {
-    return card.suit === Suit.Diamonds && card.rank === 9;
+    if (rules.openingMode === 'nineDiamonds') {
+      return card.suit === Suit.Diamonds && card.rank === 9;
+    }
+    if (rules.openingMode === 'sevenDiamonds') {
+      return card.suit === Suit.Diamonds && card.rank === rules.centerRank;
+    }
+    return card.rank === rules.centerRank;
   }
   const bounds = tableBounds[card.suit];
   if (bounds.low === 0) {
-    return card.rank === 9;
+    return card.rank === rules.centerRank;
   }
   return card.rank === bounds.low - 1 || card.rank === bounds.high + 1;
 }
@@ -118,8 +206,9 @@ export function getLegalMoves(
   hand: readonly Card[],
   tableBounds: TableBounds,
   isFirstTurnOfRound: boolean,
+  rulesInput?: Partial<GameRulesConfig> | ResolvedRoundRules,
 ): Card[] {
-  return hand.filter((c) => isLegalMove(c, tableBounds, isFirstTurnOfRound));
+  return hand.filter((c) => isLegalMove(c, tableBounds, isFirstTurnOfRound, rulesInput));
 }
 
 export function createMatch(
@@ -128,12 +217,14 @@ export function createMatch(
   clubCarryover: number,
   clubTable: ClubTableId,
   rng: Rng,
+  ruleConfig: GameRulesConfig = DEFAULT_GAME_RULES,
 ): MatchState {
   const base: MatchState = {
     playerName,
     playerPassword,
     clubCarryover,
     clubTable,
+    ruleConfig: { ...ruleConfig },
     cash: {
       1: INITIAL_PLAYER_CASH,
       2: INITIAL_PLAYER_CASH,
@@ -148,10 +239,11 @@ export function createMatch(
 
 /**
  * Starts a round: collects $20 ante from each player into BANK ($60),
- * shuffles 36 cards across 3 seats, and assigns first turn to 9♦ holder.
+ * shuffles cards across 3 seats, and assigns opening turn.
  */
 export function startNextRound(match: MatchState, rng: Rng): MatchState {
-  const { hands, firstTurn } = shuffleAndDeal(rng);
+  const resolvedRules = resolveRoundRules(match.ruleConfig);
+  const { hands, firstTurn } = shuffleAndDeal(rng, resolvedRules, match.roundNumber);
   const cash: Record<SeatIndex, number> = {
     1: match.cash[1] - ANTE_AMOUNT,
     2: match.cash[2] - ANTE_AMOUNT,
@@ -168,6 +260,8 @@ export function startNextRound(match: MatchState, rng: Rng): MatchState {
     currentTurn: firstTurn,
     isFirstTurnOfRound: true,
     bank: ANTE_AMOUNT * 3,
+    rules: resolvedRules,
+    lastHandPenaltyCollected: 0,
     roundOver: false,
     winner: null,
   };
@@ -184,13 +278,14 @@ export function applyMove(state: MatchState, card: Card): MatchState {
   if (!round || round.roundOver || state.matchOver) {
     throw new Error('Cannot apply move when round or match is over');
   }
+  const rules = resolveRoundRules(round.rules ?? state.ruleConfig);
   const seat = round.currentTurn;
   const hand = round.hands[seat];
   const idx = hand.findIndex((c) => c.suit === card.suit && c.rank === card.rank);
   if (idx === -1) {
     throw new Error(`Card s${card.suit}_${card.rank} is not in seat ${seat}'s hand`);
   }
-  if (!isLegalMove(card, round.tableBounds, round.isFirstTurnOfRound)) {
+  if (!isLegalMove(card, round.tableBounds, round.isFirstTurnOfRound, rules)) {
     throw new Error(`Card s${card.suit}_${card.rank} is not a legal move`);
   }
 
@@ -217,11 +312,19 @@ export function applyMove(state: MatchState, card: Card): MatchState {
   };
 
   if (nextSeatHand.length === 0) {
-    // Round won: winner collects entire bank (CS:3DBA..3E49)
-    const nextCash: Record<SeatIndex, number> = {
-      ...state.cash,
-      [seat]: state.cash[seat] + round.bank,
-    };
+    // Round won: winner collects entire bank + optional per-card opponent hand penalty
+    const nextCash: Record<SeatIndex, number> = { ...state.cash };
+    let handPenaltyTotal = 0;
+    if (rules.handCardPenalty > 0) {
+      for (const other of [1, 2, 3] as const) {
+        if (other === seat) continue;
+        const due = nextHands[other].length * rules.handCardPenalty;
+        const paid = Math.min(Math.max(0, nextCash[other]), due);
+        nextCash[other] -= paid;
+        handPenaltyTotal += paid;
+      }
+    }
+    nextCash[seat] += round.bank + handPenaltyTotal;
     const matchOver = nextCash[1] <= 0 || nextCash[2] <= 0 || nextCash[3] <= 0;
     return {
       ...state,
@@ -234,6 +337,7 @@ export function applyMove(state: MatchState, card: Card): MatchState {
         playedCount: round.playedCount + 1,
         isFirstTurnOfRound: false,
         bank: 0,
+        lastHandPenaltyCollected: handPenaltyTotal,
         roundOver: true,
         winner: seat,
       },
@@ -261,8 +365,9 @@ export function applyPass(state: MatchState): MatchState {
   if (!round || round.roundOver || state.matchOver) {
     throw new Error('Cannot pass when round or match is over');
   }
+  const rules = resolveRoundRules(round.rules ?? state.ruleConfig);
   const seat = round.currentTurn;
-  const legal = getLegalMoves(round.hands[seat], round.tableBounds, round.isFirstTurnOfRound);
+  const legal = getLegalMoves(round.hands[seat], round.tableBounds, round.isFirstTurnOfRound, rules);
   if (legal.length > 0) {
     throw new Error(`Seat ${seat} has ${legal.length} legal move(s) and cannot pass`);
   }
@@ -283,9 +388,12 @@ export function applyPass(state: MatchState): MatchState {
 
 export interface HandLayoutOptions {
   readonly cardWidth?: number;
+  readonly cardHeight?: number;
   readonly cardHitWidth?: number;
   readonly overlapStep?: number;
   readonly areaWidth?: number;
+  readonly topY?: number;
+  readonly centerHorizontal?: boolean;
 }
 
 /**
@@ -295,15 +403,41 @@ export interface HandLayoutOptions {
 export function computeHandLayout(cards: readonly Card[], opts: HandLayoutOptions = {}): HandCardLayout[] {
   if (cards.length === 0) return [];
   const cardWidth = opts.cardWidth ?? HAND_CARD_WIDTH;
+  const cardHeight = opts.cardHeight ?? HAND_CARD_HEIGHT;
   const cardHitWidth = opts.cardHitWidth ?? HAND_CARD_HIT_WIDTH;
-  const overlapStep = opts.overlapStep ?? HAND_OVERLAP_STEP;
+  const baseOverlapStep = opts.overlapStep ?? HAND_OVERLAP_STEP;
   const areaWidth = opts.areaWidth ?? HAND_AREA_WIDTH;
+  const topY = opts.topY ?? HAND_TOP_Y;
 
   const sorted = sortHand(cards);
   const suitsPresent = new Set<Suit>();
   for (const c of sorted) suitsPresent.add(c.suit);
 
-  const baseX = Math.floor((areaWidth - suitsPresent.size * cardHitWidth) / 2);
+  let suitTransitions = 0;
+  let intraSuitSteps = 0;
+  for (let i = 0; i < sorted.length - 1; i++) {
+    if (sorted[i + 1].suit === sorted[i].suit) intraSuitSteps++;
+    else suitTransitions++;
+  }
+
+  let overlapStep = baseOverlapStep;
+  if (cards.length > 12) {
+    const maxRowWidth = SCREEN_WIDTH - 24;
+    const fixedWidth = suitTransitions * cardHitWidth + cardWidth;
+    const totalSteps = suitTransitions + intraSuitSteps;
+    if (totalSteps > 0) {
+      const maxStepToFit = Math.floor((maxRowWidth - fixedWidth) / totalSteps);
+      overlapStep = Math.max(11, Math.min(baseOverlapStep, maxStepToFit));
+    }
+  }
+
+  const totalWidth =
+    suitTransitions * (cardHitWidth + overlapStep) + intraSuitSteps * overlapStep + cardWidth;
+
+  const baseX =
+    cards.length > 12 || opts.centerHorizontal
+      ? Math.max(14, Math.floor((SCREEN_WIDTH - totalWidth) / 2))
+      : Math.floor((areaWidth - suitsPresent.size * cardHitWidth) / 2);
   const result: HandCardLayout[] = [];
   let curX = baseX;
 
@@ -316,10 +450,10 @@ export function computeHandLayout(cards: readonly Card[], opts: HandLayoutOption
     result.push({
       card,
       x: curX,
-      y: HAND_TOP_Y,
+      y: topY,
       hitWidth,
       width: cardWidth,
-      height: HAND_CARD_HEIGHT,
+      height: cardHeight,
     });
 
     if (next) {

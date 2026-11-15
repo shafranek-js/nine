@@ -1,13 +1,23 @@
 import { analyzeSuitBranches, selectBotMove } from './ai.js';
 import { DEFAULT_LANGUAGE, getTranslations, type Language } from './i18n.js';
 import { createDefaultRng, type Rng } from './rng.js';
-import { cardKey, getLegalMoves, nextSeat, sortHand, SUITS } from './rules.js';
+import {
+  cardKey,
+  getDeckRanks,
+  getLegalMoves,
+  nextSeat,
+  resolveRoundRules,
+  sortHand,
+  SUITS,
+} from './rules.js';
 import {
   PASS_PENALTY,
   Suit,
   type Card,
   type ClubTableId,
+  type GameRulesConfig,
   type Rank,
+  type ResolvedRoundRules,
   type RoundState,
   type SeatIndex,
   type TableBounds,
@@ -53,27 +63,44 @@ const SUIT_SYMBOLS: Record<Suit, string> = {
   [Suit.Hearts]: '♥',
 };
 
-const ALL_RANKS: readonly Rank[] = [6, 7, 8, 9, 10, 11, 12, 13, 14];
-
 export function formatCardLabel(card: Card): string {
   const rank =
-    card.rank === 11 ? 'J' : card.rank === 12 ? 'Q' : card.rank === 13 ? 'K' : card.rank === 14 ? 'A' : String(card.rank);
+    card.rank === 1 || card.rank === 14
+      ? 'A'
+      : card.rank === 11
+        ? 'J'
+        : card.rank === 12
+          ? 'Q'
+          : card.rank === 13
+            ? 'K'
+            : String(card.rank);
   return `${rank}${SUIT_SYMBOLS[card.suit]}`;
 }
 
-/** Returns all cards from the 36-card deck that are currently legal to play under `bounds`. */
-export function getAllCurrentlyLegalCards(bounds: TableBounds, isFirstTurnOfRound: boolean): Card[] {
+/** Returns all cards from the active deck that are currently legal to play under `bounds`. */
+export function getAllCurrentlyLegalCards(
+  bounds: TableBounds,
+  isFirstTurnOfRound: boolean,
+  rulesInput?: Partial<GameRulesConfig> | ResolvedRoundRules,
+): Card[] {
+  const rules = resolveRoundRules(rulesInput);
   if (isFirstTurnOfRound) {
-    return [{ suit: Suit.Diamonds, rank: 9 }];
+    if (rules.openingMode === 'nineDiamonds') {
+      return [{ suit: Suit.Diamonds, rank: 9 }];
+    }
+    if (rules.openingMode === 'sevenDiamonds') {
+      return [{ suit: Suit.Diamonds, rank: rules.centerRank as Rank }];
+    }
+    return SUITS.map((suit) => ({ suit, rank: rules.centerRank as Rank }));
   }
   const legal: Card[] = [];
   for (const suit of SUITS) {
     const b = bounds[suit];
     if (b.low === 0) {
-      legal.push({ suit, rank: 9 });
+      legal.push({ suit, rank: rules.centerRank as Rank });
     } else {
-      if (b.low > 6) legal.push({ suit, rank: (b.low - 1) as Rank });
-      if (b.high < 14) legal.push({ suit, rank: (b.high + 1) as Rank });
+      if (b.low > rules.minRank) legal.push({ suit, rank: (b.low - 1) as Rank });
+      if (b.high < rules.maxRank) legal.push({ suit, rank: (b.high + 1) as Rank });
     }
   }
   return legal;
@@ -141,6 +168,21 @@ interface RolloutOutcome {
   humanPasses: number;
   oppPasses: number;
   finalPot: number;
+  wonHandBonus: number;
+  humanHandPenalty: number;
+}
+
+/** Computes actual hand-card penalty owed by `seat`, capped by available cash when known. */
+function computeSeatHandPenalty(
+  seat: SeatIndex,
+  remainingCards: number,
+  handCardPenalty: number,
+  cash?: Readonly<Record<SeatIndex, number>>,
+): number {
+  if (handCardPenalty <= 0 || remainingCards <= 0) return 0;
+  const due = remainingCards * handCardPenalty;
+  if (!cash) return due;
+  return Math.min(Math.max(0, cash[seat]), due);
 }
 
 /**
@@ -154,12 +196,15 @@ function simulateAfterHumanCard(
   rightHand: readonly Card[],
   difficulty: ClubTableId,
   rng: Rng,
+  rules: ResolvedRoundRules,
+  cash?: Readonly<Record<SeatIndex, number>>,
 ): RolloutOutcome {
   const hands: Record<SeatIndex, Card[]> = {
     1: [...leftHand],
     2: [...rightHand],
     3: baseRound.hands[3].filter((c) => !(c.suit === candidate.suit && c.rank === candidate.rank)),
   };
+  const simCash: Record<SeatIndex, number> | null = cash ? { ...cash } : null;
   const bounds = cloneBounds(baseRound.tableBounds);
   applyCardToBounds(bounds, candidate);
 
@@ -168,15 +213,18 @@ function simulateAfterHumanCard(
   let oppPasses = 0;
 
   if (hands[3].length === 0) {
-    return { winner: 3, humanPasses: 0, oppPasses: 0, finalPot: bank };
+    const wonHandBonus =
+      computeSeatHandPenalty(1, hands[1].length, rules.handCardPenalty, simCash ?? undefined) +
+      computeSeatHandPenalty(2, hands[2].length, rules.handCardPenalty, simCash ?? undefined);
+    return { winner: 3, humanPasses: 0, oppPasses: 0, finalPot: bank, wonHandBonus, humanHandPenalty: 0 };
   }
 
   let turn: SeatIndex = nextSeat(3);
   let playedCount = baseRound.playedCount + 1;
   let isFirst = false;
 
-  // Guard against degenerate cycles (max 36 plays + passes)
-  for (let step = 0; step < 96; step++) {
+  // Guard against degenerate cycles (up to 52 plays + passes)
+  for (let step = 0; step < 128; step++) {
     const simRound: RoundState = {
       hands,
       tableBounds: bounds,
@@ -184,6 +232,7 @@ function simulateAfterHumanCard(
       currentTurn: turn,
       isFirstTurnOfRound: isFirst,
       bank,
+      rules,
       roundOver: false,
       winner: null,
     };
@@ -197,17 +246,34 @@ function simulateAfterHumanCard(
       playedCount++;
       isFirst = false;
       if (h.length === 0) {
-        return { winner: turn, humanPasses, oppPasses, finalPot: bank };
+        const wonHandBonus =
+          turn === 3
+            ? computeSeatHandPenalty(1, hands[1].length, rules.handCardPenalty, simCash ?? undefined) +
+              computeSeatHandPenalty(2, hands[2].length, rules.handCardPenalty, simCash ?? undefined)
+            : 0;
+        const humanHandPenalty =
+          turn !== 3
+            ? computeSeatHandPenalty(3, hands[3].length, rules.handCardPenalty, simCash ?? undefined)
+            : 0;
+        return { winner: turn, humanPasses, oppPasses, finalPot: bank, wonHandBonus, humanHandPenalty };
       }
     } else {
       bank += PASS_PENALTY;
+      if (simCash) simCash[turn] -= PASS_PENALTY;
       if (turn === 3) humanPasses++;
       else oppPasses++;
     }
     turn = nextSeat(turn);
   }
 
-  return { winner: 1, humanPasses, oppPasses, finalPot: bank };
+  return {
+    winner: 1,
+    humanPasses,
+    oppPasses,
+    finalPot: bank,
+    wonHandBonus: 0,
+    humanHandPenalty: computeSeatHandPenalty(3, hands[3].length, rules.handCardPenalty, simCash ?? undefined),
+  };
 }
 
 function buildSplits(
@@ -248,39 +314,48 @@ function buildSplits(
 }
 
 /** Lists player cards on the same suit branch unlocked further out from `card`. */
-function getUnlockedChainCards(hand: readonly Card[], card: Card, bounds: TableBounds): Card[] {
+function getUnlockedChainCards(
+  hand: readonly Card[],
+  card: Card,
+  bounds: TableBounds,
+  rules: ResolvedRoundRules,
+): Card[] {
   const unlocked: Card[] = [];
-  if (card.rank <= 9) {
-    for (let r = card.rank - 1; r >= 6; r--) {
+  if (card.rank <= rules.centerRank) {
+    for (let r = card.rank - 1; r >= rules.minRank; r--) {
       const found = hand.find((c) => c.suit === card.suit && c.rank === r);
       if (found) unlocked.push(found);
       else break;
     }
   }
-  if (card.rank >= 9) {
-    for (let r = card.rank + 1; r <= 14; r++) {
+  if (card.rank >= rules.centerRank) {
+    for (let r = card.rank + 1; r <= rules.maxRank; r++) {
       const found = hand.find((c) => c.suit === card.suit && c.rank === r);
       if (found) unlocked.push(found);
       else break;
     }
   }
-  // If playing a 9 on unopened suit, also collect non-contiguous deeper cards of this suit
-  if (bounds[card.suit].low === 0 && card.rank === 9) {
-    return hand.filter((c) => c.suit === card.suit && c.rank !== 9);
+  // If playing a center card on unopened suit, also collect non-contiguous deeper cards of this suit
+  if (bounds[card.suit].low === 0 && card.rank === rules.centerRank) {
+    return hand.filter((c) => c.suit === card.suit && c.rank !== rules.centerRank);
   }
   return unlocked;
 }
 
 /** Counts missing ranks between `card` and our deepest card in that branch (holes rivals could block). */
-function getMissingGapTowardsAnchor(hand: readonly Card[], card: Card): number {
+function getMissingGapTowardsAnchor(
+  hand: readonly Card[],
+  card: Card,
+  rules: ResolvedRoundRules,
+): number {
   let missing = 0;
-  if (card.rank < 9) {
+  if (card.rank < rules.centerRank) {
     let minRank = card.rank;
     for (const c of hand) if (c.suit === card.suit && c.rank < minRank) minRank = c.rank;
     for (let r = minRank + 1; r < card.rank; r++) {
       if (!hand.some((c) => c.suit === card.suit && c.rank === r)) missing++;
     }
-  } else if (card.rank > 9) {
+  } else if (card.rank > rules.centerRank) {
     let maxRank = card.rank;
     for (const c of hand) if (c.suit === card.suit && c.rank > maxRank) maxRank = c.rank;
     for (let r = card.rank + 1; r < maxRank; r++) {
@@ -295,19 +370,20 @@ function detectImmediateForcedPass(
   candidate: Card,
   leftHand: readonly Card[],
   rightHand: readonly Card[],
+  rules: ResolvedRoundRules,
 ): 'left' | 'right' | 'both' | null {
   const afterHuman = cloneBounds(bounds);
   applyCardToBounds(afterHuman, candidate);
 
-  const leftLegal = getLegalMoves(leftHand, afterHuman, false);
+  const leftLegal = getLegalMoves(leftHand, afterHuman, false, rules);
   const leftPasses = leftLegal.length === 0;
 
-  let rightPasses = getLegalMoves(rightHand, afterHuman, false).length === 0;
+  let rightPasses = getLegalMoves(rightHand, afterHuman, false, rules).length === 0;
   if (rightPasses && leftLegal.length > 0) {
     for (const lc of leftLegal) {
       const afterLeft = cloneBounds(afterHuman);
       applyCardToBounds(afterLeft, lc);
-      if (getLegalMoves(rightHand, afterLeft, false).length > 0) {
+      if (getLegalMoves(rightHand, afterLeft, false, rules).length > 0) {
         rightPasses = false;
         break;
       }
@@ -328,13 +404,14 @@ function buildStrategicReasons(params: {
   rightHand: readonly Card[];
   bounds: TableBounds;
   isFirstTurn: boolean;
+  forced: boolean;
   difficulty: ClubTableId;
   deduction: AdvisorDeductionSummary;
   leftCount: number;
   rightCount: number;
-  bank: number;
   xrayMode: boolean;
   language: Language;
+  rules: ResolvedRoundRules;
 }): string[] {
   const {
     best,
@@ -344,25 +421,26 @@ function buildStrategicReasons(params: {
     rightHand,
     bounds,
     isFirstTurn,
+    forced,
     difficulty,
     deduction,
     leftCount,
     rightCount,
-    bank,
     xrayMode,
     language,
+    rules,
   } = params;
   const tr = getTranslations(language).advisor;
   const c = best.card;
   const reasons: string[] = [];
 
-  if (isFirstTurn) {
-    reasons.push(tr.forcedNineReason);
+  if (isFirstTurn && forced) {
+    reasons.push(tr.forcedNineReason.replace(/9♦/g, formatCardLabel(c)));
     return reasons;
   }
 
   if (hand.length === 1) {
-    reasons.push(tr.lastCardWinReason(bank));
+    reasons.push(tr.lastCardWinReason(Math.round(best.expectedNetCash)));
     return reasons;
   }
 
@@ -379,43 +457,43 @@ function buildStrategicReasons(params: {
   }
 
   // 1b. Immediate X-Ray forced-pass insight (high-signal tactical payoff)
-  const passTarget = xrayMode ? detectImmediateForcedPass(bounds, c, leftHand, rightHand) : null;
+  const passTarget = xrayMode ? detectImmediateForcedPass(bounds, c, leftHand, rightHand, rules) : null;
   if (passTarget) {
     reasons.push(tr.xrayForceImmediatePassReason(passTarget, PASS_PENALTY));
   }
 
   // 2. Hand chain / gap structure
-  const unlocked = getUnlockedChainCards(hand, c, bounds);
-  const analysis = analyzeSuitBranches(hand, bounds, difficulty);
+  const unlocked = getUnlockedChainCards(hand, c, bounds, rules);
+  const analysis = analyzeSuitBranches(hand, bounds, difficulty, rules);
   const suitInfo = analysis[c.suit];
 
-  if (c.rank === 9) {
+  if (c.rank === rules.centerRank) {
     if (unlocked.length >= 2) {
       reasons.push(tr.openSuitMultipleReason(unlocked.map(formatCardLabel).join(', ')));
     } else if (unlocked.length === 1) {
       reasons.push(tr.openSuitSingleReason(formatCardLabel(unlocked[0])));
-    } else if (runnerUp && runnerUp.card.rank !== 9) {
+    } else if (runnerUp && runnerUp.card.rank !== rules.centerRank) {
       reasons.push(tr.closedSuitRiskyReason);
     }
   } else {
     if (unlocked.length > 0) {
       reasons.push(tr.chainExtendReason(unlocked.map(formatCardLabel).join(', ')));
-    } else if (c.rank === 6 || c.rank === 14) {
+    } else if (c.rank === rules.minRank || c.rank === rules.maxRank) {
       reasons.push(tr.closeEndReason);
     }
-    const branchGap = c.rank < 9 ? suitInfo.leadGapBelow : suitInfo.leadGapAbove;
-    const hole = getMissingGapTowardsAnchor(hand, c);
+    const branchGap = c.rank < rules.centerRank ? suitInfo.leadGapBelow : suitInfo.leadGapAbove;
+    const hole = getMissingGapTowardsAnchor(hand, c, rules);
     if (hole === 0 && branchGap === 0 && unlocked.length === 0) {
       reasons.push(tr.safeDiscardReason);
     }
   }
 
-  // 3. Rival restraint when holding another 9 or deep cards
-  const altNine = runnerUp && runnerUp.card.rank === 9 ? runnerUp.card : null;
-  if (altNine && c.rank !== 9) {
-    const oppNineCards = getUnlockedChainCards(hand, altNine, bounds);
-    if (oppNineCards.length <= 1) {
-      reasons.push(tr.holdNineReason(formatCardLabel(altNine)));
+  // 3. Rival restraint when holding another center card or deep cards
+  const altCenter = runnerUp && runnerUp.card.rank === rules.centerRank ? runnerUp.card : null;
+  if (altCenter && c.rank !== rules.centerRank) {
+    const oppCenterCards = getUnlockedChainCards(hand, altCenter, bounds, rules);
+    if (oppCenterCards.length <= 1) {
+      reasons.push(tr.holdNineReason(formatCardLabel(altCenter)));
     }
   }
 
@@ -456,6 +534,7 @@ export function evaluatePlayerMoves(params: {
   round: RoundState;
   difficulty: ClubTableId;
   passExclusions: PassExclusions;
+  cash?: Readonly<Record<SeatIndex, number>>;
   maxSamples?: number;
   rng?: Rng;
   xrayMode?: boolean;
@@ -465,12 +544,15 @@ export function evaluatePlayerMoves(params: {
     round,
     difficulty,
     passExclusions,
+    cash,
     maxSamples = 96,
     rng = createDefaultRng(),
     xrayMode = false,
     language = DEFAULT_LANGUAGE,
   } = params;
   const tr = getTranslations(language).advisor;
+  const rules = resolveRoundRules(round.rules);
+  const deckRanks = getDeckRanks(rules);
   const hand = round.hands[3];
   const leftCount = round.hands[1].length;
   const rightCount = round.hands[2].length;
@@ -489,7 +571,7 @@ export function evaluatePlayerMoves(params: {
     const unseenPool: Card[] = [];
     for (const suit of SUITS) {
       const b = round.tableBounds[suit];
-      for (const rank of ALL_RANKS) {
+      for (const rank of deckRanks) {
         const onTable = b.low > 0 && rank >= b.low && rank <= b.high;
         const inHuman = hand.some((c) => c.suit === suit && c.rank === rank);
         if (!onTable && !inHuman) {
@@ -535,7 +617,7 @@ export function evaluatePlayerMoves(params: {
     excludedRightCount: passExclusions[2].size,
   };
 
-  const legal = getLegalMoves(hand, round.tableBounds, round.isFirstTurnOfRound);
+  const legal = getLegalMoves(hand, round.tableBounds, round.isFirstTurnOfRound, rules);
 
   if (legal.length === 0) {
     // Explain which blocked cards are waiting in player's hand
@@ -575,10 +657,13 @@ export function evaluatePlayerMoves(params: {
   const evaluations: CandidateAdvice[] = [];
   for (const card of legal) {
     if (hand.length === 1) {
+      const cappedBonus =
+        computeSeatHandPenalty(1, leftCount, rules.handCardPenalty, cash) +
+        computeSeatHandPenalty(2, rightCount, rules.handCardPenalty, cash);
       evaluations.push({
         card,
         winRate: 1,
-        expectedNetCash: round.bank,
+        expectedNetCash: round.bank + cappedBonus,
         avgOppPasses: 0,
         avgHumanPasses: 0,
         isExact: true,
@@ -593,10 +678,12 @@ export function evaluatePlayerMoves(params: {
     let totalHumanPasses = 0;
 
     for (const split of splits) {
-      const res = simulateAfterHumanCard(round, card, split.left, split.right, difficulty, rng);
+      const res = simulateAfterHumanCard(round, card, split.left, split.right, difficulty, rng, rules, cash);
       if (res.winner === 3) {
         wins++;
-        totalNet += res.finalPot;
+        totalNet += res.finalPot + res.wonHandBonus;
+      } else {
+        totalNet -= res.humanHandPenalty;
       }
       totalNet -= res.humanPasses * PASS_PENALTY;
       totalOppPasses += res.oppPasses;
@@ -623,6 +710,7 @@ export function evaluatePlayerMoves(params: {
     return b.avgOppPasses - a.avgOppPasses;
   });
 
+  const forced = legal.length === 1;
   const best = evaluations[0];
   const runnerUp = evaluations.length > 1 ? evaluations[1] : null;
   const reasons = buildStrategicReasons({
@@ -633,17 +721,17 @@ export function evaluatePlayerMoves(params: {
     rightHand: certainRight,
     bounds: round.tableBounds,
     isFirstTurn: round.isFirstTurnOfRound,
+    forced,
     difficulty,
     deduction,
     leftCount,
     rightCount,
-    bank: round.bank,
     xrayMode,
     language,
+    rules,
   });
   best.reasons = reasons;
 
-  const forced = legal.length === 1;
   const winPct = Math.round(best.winRate * 100);
   const evSign = best.expectedNetCash >= 0 ? '+' : '-';
   const evAbs = Math.abs(Math.round(best.expectedNetCash));
