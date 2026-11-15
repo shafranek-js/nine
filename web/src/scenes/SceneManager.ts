@@ -1,22 +1,28 @@
 import { Container, Graphics, type Ticker } from 'pixi.js';
 import type { AudioController } from '../audio/opl2Engine';
+import type { AdvisorRecommendation } from '../core/advisor';
 import {
   decodeNineCfg,
   decodeNineRes,
   encodeNineRes,
   loadStoredConfig,
   loadStoredHighScores,
+  loadStoredLastPlayer,
+  lookupPlayer,
   saveStoredConfig,
   saveStoredHighScores,
+  saveStoredLastPlayer,
+  upsertHighScore,
   type HighScoreTables,
 } from '../core/persistence';
 import { SCREEN_HEIGHT, SCREEN_WIDTH, type NineConfig, type SeatIndex } from '../core/types';
 import type { GraphicsMode, LoadedAssets } from '../engine/AssetManager';
 import { HudDigitFont, MenuBitmapFont } from '../engine/BitmapFont';
 import type { InputController } from '../engine/InputController';
-import type { StageApp } from '../engine/StageApp';
+import type { AspectMode, StageApp } from '../engine/StageApp';
 
 const GRAPHICS_STORAGE_KEY = 'nine_graphics_mode_v1';
+const COACH_STORAGE_KEY = 'nine_coach_mode_v1';
 
 function loadStoredGraphicsMode(): GraphicsMode {
   try {
@@ -26,6 +32,14 @@ function loadStoredGraphicsMode(): GraphicsMode {
     // Ignore storage restriction
   }
   return 'hd';
+}
+
+function loadStoredCoachMode(): boolean {
+  try {
+    return localStorage.getItem(COACH_STORAGE_KEY) !== '0';
+  } catch {
+    return true;
+  }
 }
 
 export type SceneId = 'intro' | 'dealer' | 'menu' | 'table';
@@ -65,10 +79,16 @@ export interface GameContext {
   highScores: HighScoreTables;
   sessionPlayer: SessionPlayer;
   tableTelemetry: TableTelemetry | null;
+  coachMode: boolean;
+  advisorHint: AdvisorRecommendation | null;
   persistConfig(): void;
   persistHighScores(): void;
   getGraphicsMode(): GraphicsMode;
   setGraphicsMode(mode: GraphicsMode): void;
+  setAspectMode(mode: AspectMode): void;
+  setCoachMode(enabled: boolean): void;
+  signInPlayer(name: string, password: string): void;
+  signOutPlayer(): void;
   getCurrentSceneId(): SceneId | null;
   goTo(scene: SceneId, fadeMs?: number): void;
   onStateChange?: () => void;
@@ -79,6 +99,9 @@ export interface Scene {
   update(dtMs: number): void;
   unmount(): void;
   onGraphicsModeChanged?(mode: GraphicsMode): void;
+  onAspectModeChanged?(mode: AspectMode): void;
+  onCoachModeChanged?(enabled: boolean): void;
+  onSessionChanged?(): void;
 }
 
 export class SceneManager {
@@ -106,6 +129,21 @@ export class SceneManager {
 
     const config = loadStoredConfig() ?? decodeNineCfg(assets.cfgBytes);
     const highScores = loadStoredHighScores() ?? decodeNineRes(assets.resBytes);
+    const lastPlayer = loadStoredLastPlayer();
+    const lastHit = lastPlayer ? lookupPlayer(highScores, config.clubTable, lastPlayer.name) : null;
+    const initialSession: SessionPlayer = lastPlayer
+      ? {
+          loggedIn: true,
+          name: lastHit?.name ?? lastPlayer.name,
+          password: lastHit?.password ?? lastPlayer.password,
+          clubCarryover: lastHit ? lastHit.score - 200 : 0,
+        }
+      : {
+          loggedIn: false,
+          name: '',
+          password: '',
+          clubCarryover: 0,
+        };
     const initialGraphics = loadStoredGraphicsMode();
     stage.setGraphicsMode(initialGraphics);
     audio.sfx.setSoundProfile(initialGraphics);
@@ -127,13 +165,10 @@ export class SceneManager {
       audio,
       config,
       highScores,
-      sessionPlayer: {
-        loggedIn: false,
-        name: '',
-        password: '',
-        clubCarryover: 0,
-      },
+      sessionPlayer: initialSession,
       tableTelemetry: null,
+      coachMode: loadStoredCoachMode(),
+      advisorHint: null,
       persistConfig: () => {
         saveStoredConfig(this.ctx.config);
         this.ctx.onStateChange?.();
@@ -153,6 +188,62 @@ export class SceneManager {
           // Ignore storage errors
         }
         this.activeScene?.onGraphicsModeChanged?.(mode);
+        this.ctx.onStateChange?.();
+      },
+      setAspectMode: (mode: AspectMode) => {
+        if (this.ctx.stage.getAspectMode() === mode) return;
+        this.ctx.stage.setAspectMode(mode);
+        this.activeScene?.onAspectModeChanged?.(mode);
+        this.ctx.onStateChange?.();
+      },
+      setCoachMode: (enabled: boolean) => {
+        if (this.ctx.coachMode === enabled) return;
+        this.ctx.coachMode = enabled;
+        try {
+          localStorage.setItem(COACH_STORAGE_KEY, enabled ? '1' : '0');
+        } catch {
+          // Ignore storage errors
+        }
+        if (!enabled) {
+          this.ctx.advisorHint = null;
+        }
+        this.activeScene?.onCoachModeChanged?.(enabled);
+        this.ctx.onStateChange?.();
+      },
+      signInPlayer: (name: string, password: string) => {
+        const cleanName = name.trim().slice(0, 8);
+        if (!cleanName || cleanName.toLowerCase() === 'noname') return;
+        const cleanPwd = password.slice(0, 8);
+        const existing = lookupPlayer(this.ctx.highScores, this.ctx.config.clubTable, cleanName);
+        if (!existing) {
+          this.ctx.highScores = upsertHighScore(
+            this.ctx.highScores,
+            this.ctx.config.clubTable,
+            cleanName,
+            cleanPwd,
+            200,
+          );
+          this.ctx.persistHighScores();
+        }
+        this.ctx.sessionPlayer = {
+          loggedIn: true,
+          name: existing?.name ?? cleanName,
+          password: cleanPwd,
+          clubCarryover: existing ? existing.score - 200 : 0,
+        };
+        saveStoredLastPlayer({ name: this.ctx.sessionPlayer.name, password: cleanPwd });
+        this.activeScene?.onSessionChanged?.();
+        this.ctx.onStateChange?.();
+      },
+      signOutPlayer: () => {
+        this.ctx.sessionPlayer = {
+          loggedIn: false,
+          name: '',
+          password: '',
+          clubCarryover: 0,
+        };
+        saveStoredLastPlayer(null);
+        this.activeScene?.onSessionChanged?.();
         this.ctx.onStateChange?.();
       },
       getCurrentSceneId: () => this.currentId,
@@ -181,6 +272,7 @@ export class SceneManager {
       password: '',
       clubCarryover: 0,
     };
+    saveStoredLastPlayer(null);
     this.ctx.audio.setEnabled(this.ctx.config.soundMusicEnabled);
     this.ctx.persistConfig();
     this.ctx.persistHighScores();
@@ -224,6 +316,7 @@ export class SceneManager {
     this.activeScene = nextScene;
     this.currentId = nextId;
     this.ctx.tableTelemetry = null;
+    this.ctx.advisorHint = null;
     nextScene.mount(this.sceneLayer, this.ctx);
     this.ctx.onStateChange?.();
   }

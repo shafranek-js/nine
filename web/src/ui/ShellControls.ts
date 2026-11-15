@@ -17,7 +17,19 @@ function loadSidebarHidden(): boolean {
   }
 }
 
+import { AdvisorMascot, type AdvisorMascotMood } from './AdvisorMascot';
+import { formatCardLabel, type AdvisorRecommendation } from '../core/advisor';
+
 export class ShellControls {
+  private readonly advisorMascot = new AdvisorMascot();
+  private advisorToggleBtn!: HTMLButtonElement;
+  private advisorHeadlineEl!: HTMLElement;
+  private advisorMetaEl!: HTMLElement;
+  private advisorReasonsEl!: HTMLUListElement;
+  private advisorCandidatesEl!: HTMLElement;
+  private advisorDeductionEl!: HTMLElement;
+  private lastAdvisorRenderSig = '';
+  private lastLeadersRenderSig = '';
   private readonly manager: SceneManager;
   private readonly appRoot: HTMLElement;
   private readonly leftPanel: HTMLElement;
@@ -168,7 +180,7 @@ export class ShellControls {
     });
     this.aspectBtn = this.makeButton('', () => {
       const next = this.manager.ctx.stage.getAspectMode() === '1:1' ? '4:3' : '1:1';
-      this.manager.ctx.stage.setAspectMode(next);
+      this.manager.ctx.setAspectMode(next);
       this.sync();
     });
     this.scanlineBtn = this.makeButton('', () => {
@@ -213,7 +225,7 @@ export class ShellControls {
     const introBtn = this.makeButton('Intro (F5)', () => {
       this.manager.ctx.goTo('intro', 180);
     });
-    const exportBtn = this.makeButton('Export NINE.RES', () => {
+    const exportBtn = this.makeButton('Export Scores', () => {
       const bytes = this.manager.exportNineResBytes();
       const blob = new Blob([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], {
         type: 'application/octet-stream',
@@ -225,6 +237,7 @@ export class ShellControls {
       a.click();
       URL.revokeObjectURL(url);
     });
+    exportBtn.title = 'Скачать файл рекордов и профилей (NINE.RES)';
 
     this.fileInput = document.createElement('input');
     this.fileInput.type = 'file';
@@ -241,9 +254,10 @@ export class ShellControls {
       this.fileInput.value = '';
     });
 
-    const importBtn = this.makeButton('Import NINE.RES', () => {
+    const importBtn = this.makeButton('Import Scores', () => {
       this.fileInput.click();
     });
+    importBtn.title = 'Загрузить файл рекордов и профилей (NINE.RES)';
     const resetBtn = this.makeButton('Reset Save', () => {
       this.manager.resetLocalSave();
       this.sync();
@@ -252,7 +266,221 @@ export class ShellControls {
     navGrid.append(playBtn, tableBtn, menuBtn, introBtn, exportBtn, importBtn, resetBtn);
     navCard.append(navGrid, this.fileInput);
 
-    this.rightPanel.append(clubCard, settingsCard, navCard);
+    const coachCard = this.buildCoachCard();
+
+    this.rightPanel.append(clubCard, settingsCard, navCard, coachCard);
+  }
+
+  private buildCoachCard(): HTMLElement {
+    const card = document.createElement('section');
+    card.className = 'panel-card panel-card-grow advisor-card';
+
+    const header = document.createElement('div');
+    header.className = 'advisor-header';
+
+    const titleWrap = document.createElement('div');
+    titleWrap.className = 'advisor-title-wrap';
+    const title = document.createElement('h2');
+    title.className = 'panel-title';
+    title.textContent = 'Советник';
+    titleWrap.append(title);
+
+    this.advisorToggleBtn = document.createElement('button');
+    this.advisorToggleBtn.type = 'button';
+    this.advisorToggleBtn.className = 'shell-btn advisor-toggle-btn';
+    this.advisorToggleBtn.addEventListener('click', () => {
+      this.manager.ctx.setCoachMode(!this.manager.ctx.coachMode);
+      this.sync();
+    });
+
+    header.append(titleWrap, this.advisorToggleBtn);
+
+    const topRow = document.createElement('div');
+    topRow.className = 'advisor-top-row';
+
+    const mascotFrame = document.createElement('div');
+    mascotFrame.className = 'advisor-mascot-frame';
+    mascotFrame.append(this.advisorMascot.canvas);
+
+    const bubble = document.createElement('div');
+    bubble.className = 'advisor-bubble';
+
+    this.advisorHeadlineEl = document.createElement('div');
+    this.advisorHeadlineEl.className = 'advisor-headline';
+
+    this.advisorMetaEl = document.createElement('div');
+    this.advisorMetaEl.className = 'advisor-meta';
+
+    bubble.append(this.advisorHeadlineEl, this.advisorMetaEl);
+    topRow.append(mascotFrame, bubble);
+
+    this.advisorReasonsEl = document.createElement('ul');
+    this.advisorReasonsEl.className = 'advisor-reasons';
+
+    this.advisorCandidatesEl = document.createElement('div');
+    this.advisorCandidatesEl.className = 'advisor-candidates';
+
+    this.advisorDeductionEl = document.createElement('div');
+    this.advisorDeductionEl.className = 'advisor-deduction';
+
+    card.append(
+      header,
+      topRow,
+      this.advisorReasonsEl,
+      this.advisorCandidatesEl,
+      this.advisorDeductionEl,
+    );
+    return card;
+  }
+
+  private renderAdvisor(inTableScene: boolean): void {
+    const coachOn = this.manager.ctx.coachMode;
+    const hint: AdvisorRecommendation | null = coachOn ? this.manager.ctx.advisorHint : null;
+
+    let mood: AdvisorMascotMood = 'idle';
+    if (!coachOn) {
+      mood = 'sleep';
+    } else if (hint) {
+      mood = hint.action === 'pass' ? 'warnPass' : hint.forced ? 'forced' : 'recommend';
+    }
+    this.advisorMascot.setMood(mood);
+
+    const sig = `${coachOn ? 1 : 0}|${inTableScene ? 1 : 0}|${
+      hint
+        ? `${hint.action}|${hint.headline}|${hint.sampleCount}|${hint.reasons.join(';')}|${hint.candidates.length}|${hint.deduction.unseenTotal}|${hint.deduction.excludedLeftCount}|${hint.deduction.excludedRightCount}`
+        : 'none'
+    }`;
+    if (sig === this.lastAdvisorRenderSig) {
+      return;
+    }
+    this.lastAdvisorRenderSig = sig;
+
+    this.advisorToggleBtn.textContent = coachOn ? 'Обучение: ВКЛ' : 'Обучение: ВЫКЛ';
+    this.advisorToggleBtn.classList.toggle('is-active', coachOn);
+
+    this.advisorHeadlineEl.replaceChildren();
+    this.advisorMetaEl.textContent = '';
+    this.advisorReasonsEl.replaceChildren();
+    this.advisorCandidatesEl.replaceChildren();
+    this.advisorDeductionEl.replaceChildren();
+
+    if (!coachOn) {
+      this.advisorHeadlineEl.textContent = 'Подсказки выключены';
+      this.advisorMetaEl.textContent = 'Нажмите «Обучение: ВЫКЛ», чтобы включить разбор.';
+      this.appendReasonItem(
+        'Включите режим обучения — советник оценит скрытые карты и объяснит оптимальный ход.',
+      );
+      return;
+    }
+
+    if (!hint) {
+      this.advisorHeadlineEl.textContent = inTableScene ? 'Слежу за раздачей…' : 'Готов к обучению';
+      this.advisorMetaEl.textContent = inTableScene
+        ? 'Ходят соперники'
+        : 'Начните партию за любым столом';
+      this.appendReasonItem(
+        inTableScene
+          ? 'Когда наступит ваш ход, я переберу допустимые расклады и объясню лучший выбор.'
+          : 'Во время вашего хода здесь появится оптимальная карта и аргументация.',
+      );
+      return;
+    }
+
+    this.appendCardStyledText(this.advisorHeadlineEl, hint.headline);
+    this.advisorMetaEl.textContent = hint.isExact
+      ? `Точный перебор (${hint.sampleCount} раскл.)`
+      : `Оценка по ${hint.sampleCount} раскл.`;
+
+    for (const reason of hint.reasons) {
+      this.appendReasonItem(reason);
+    }
+
+    if (hint.candidates.length > 1) {
+      const titleEl = document.createElement('div');
+      titleEl.className = 'advisor-subhead';
+      titleEl.textContent = 'Сравнение ходов';
+      this.advisorCandidatesEl.append(titleEl);
+
+      for (let i = 0; i < Math.min(3, hint.candidates.length); i++) {
+        const cand = hint.candidates[i];
+        const row = document.createElement('div');
+        row.className = `advisor-cand-row${i === 0 ? ' is-best' : ''}`;
+        if (cand.reasons.length > 0) {
+          row.title = cand.reasons.join(' · ');
+        }
+
+        const labelSpan = document.createElement('span');
+        labelSpan.className = 'advisor-cand-card';
+        const prefix = i === 0 ? '★ ' : `${i + 1}. `;
+        labelSpan.append(document.createTextNode(prefix));
+        this.appendCardStyledText(labelSpan, formatCardLabel(cand.card));
+
+        const statsSpan = document.createElement('span');
+        statsSpan.className = 'advisor-cand-stats';
+        const winPct = Math.round(cand.winRate * 100);
+        const evRounded = Math.round(cand.expectedNetCash);
+        const evStr = evRounded >= 0 ? `+$${evRounded}` : `-$${Math.abs(evRounded)}`;
+        statsSpan.textContent = `${winPct}% · ${evStr}`;
+
+        row.append(labelSpan, statsSpan);
+        this.advisorCandidatesEl.append(row);
+      }
+    }
+
+    const dedParts: string[] = [`Вне руки: ${hint.deduction.unseenTotal} карт`];
+    if (hint.deduction.excludedLeftCount > 0 || hint.deduction.excludedRightCount > 0) {
+      dedParts.push(
+        `Пасы исключили: Л ${hint.deduction.excludedLeftCount}, П ${hint.deduction.excludedRightCount}`,
+      );
+    }
+    const dedMain = document.createElement('div');
+    dedMain.textContent = dedParts.join(' · ');
+    this.advisorDeductionEl.append(dedMain);
+
+    if (hint.deduction.certainLeft.length > 0) {
+      const leftLine = document.createElement('div');
+      leftLine.append(document.createTextNode('Точно слева: '));
+      this.appendCardStyledText(
+        leftLine,
+        hint.deduction.certainLeft.slice(0, 4).map(formatCardLabel).join(', '),
+      );
+      this.advisorDeductionEl.append(leftLine);
+    }
+    if (hint.deduction.certainRight.length > 0) {
+      const rightLine = document.createElement('div');
+      rightLine.append(document.createTextNode('Точно справа: '));
+      this.appendCardStyledText(
+        rightLine,
+        hint.deduction.certainRight.slice(0, 4).map(formatCardLabel).join(', '),
+      );
+      this.advisorDeductionEl.append(rightLine);
+    }
+  }
+
+  private appendReasonItem(text: string): void {
+    const li = document.createElement('li');
+    this.appendCardStyledText(li, text);
+    this.advisorReasonsEl.append(li);
+  }
+
+  private appendCardStyledText(parent: HTMLElement, text: string): void {
+    const tokenRe = /(10|[6789JQKA])([♥♦♠♣])/g;
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = tokenRe.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        parent.append(document.createTextNode(text.slice(lastIndex, match.index)));
+      }
+      const span = document.createElement('span');
+      const isRed = match[2] === '♥' || match[2] === '♦';
+      span.className = isRed ? 'advisor-card-chip is-red' : 'advisor-card-chip is-black';
+      span.textContent = match[0];
+      parent.append(span);
+      lastIndex = match.index + match[0].length;
+    }
+    if (lastIndex < text.length) {
+      parent.append(document.createTextNode(text.slice(lastIndex)));
+    }
   }
 
   private setSidebarsHidden(hidden: boolean): void {
@@ -359,17 +587,44 @@ export class ShellControls {
       })
       .sort((a, b) => b.score - a.score)
       .slice(0, 3);
-    this.leadersListEl.innerHTML = '';
-    if (topRows.length === 0) {
-      this.leadersListEl.append(this.makeEl('li', 'leader-empty', 'No recorded scores yet'));
-    } else {
-      for (const row of topRows) {
-        const li = this.makeEl('li', 'leader-row');
-        li.append(this.makeEl('span', 'leader-name', row.name.trim()), this.makeEl('span', 'leader-score', `$${row.score}`));
-        this.leadersListEl.append(li);
+    const canSwitch = tableTelemetry === null;
+    const leadersSig = `${config.clubTable}|${canSwitch ? 1 : 0}|${
+      sessionPlayer.loggedIn ? sessionPlayer.name.toLowerCase() : ''
+    }|${topRows.map((r) => `${r.name.trim()}:${r.score}:${r.password}`).join(',')}`;
+
+    if (leadersSig !== this.lastLeadersRenderSig) {
+      this.lastLeadersRenderSig = leadersSig;
+      this.leadersListEl.innerHTML = '';
+      if (topRows.length === 0) {
+        this.leadersListEl.append(this.makeEl('li', 'leader-empty', 'No recorded scores yet'));
+      } else {
+        for (const row of topRows) {
+          const cleanName = row.name.trim();
+          const isCurrent =
+            sessionPlayer.loggedIn && cleanName.toLowerCase() === sessionPlayer.name.toLowerCase();
+          const li = this.makeEl(
+            'li',
+            `leader-row${canSwitch ? ' is-clickable' : ''}${isCurrent ? ' is-current' : ''}`,
+          );
+          if (canSwitch && cleanName !== 'Noname') {
+            li.title = isCurrent
+              ? `Активный игрок: ${cleanName}`
+              : `Выбрать игрока ${cleanName} в один клик`;
+            li.addEventListener('click', () => {
+              this.manager.ctx.signInPlayer(cleanName, row.password);
+              this.manager.ctx.audio.sfx.coinChime();
+            });
+          }
+          li.append(
+            this.makeEl('span', 'leader-name', isCurrent ? `▶ ${cleanName}` : cleanName),
+            this.makeEl('span', 'leader-score', `$${row.score}`),
+          );
+          this.leadersListEl.append(li);
+        }
       }
     }
 
     this.renderTelemetry(tableTelemetry, playerLabel);
+    this.renderAdvisor(tableTelemetry !== null);
   }
 }

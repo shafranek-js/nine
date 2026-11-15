@@ -28,17 +28,25 @@ import {
 import { sliceMaskedTexture, sliceTexture } from '../engine/BitmapFont';
 import { createHdTexture, drawSuitShape, getHdCardLibrary, getHdRivalCardBackTexture } from '../engine/hdCards';
 import {
+  createHdCandelabra,
   createHdDealer,
+  createHdGoldLabel,
   createHdRival,
   createHdTextSprite,
-  getHdCandelabraTexture,
   getHdCoinTexture,
-  getWarmGlowTexture,
+  type HdCandelabraController,
   type HdDealerController,
+  type HdGoldLabelController,
   type HdRivalController,
   type RivalAnimMode,
 } from '../engine/hdCharacters';
+import type { AspectMode } from '../engine/StageApp';
 import type { GameContext, MoveLogEntry, Scene } from './SceneManager';
+import {
+  evaluatePlayerMoves,
+  getAllCurrentlyLegalCards,
+} from '../core/advisor';
+import { cardKey as advisorCardKey } from '../core/rules';
 
 const SUIT_SYMBOLS: Record<Suit, string> = {
   [Suit.Spades]: '♠',
@@ -108,24 +116,162 @@ const CANDLE_POSITIONS: readonly { x: number; y: number }[] = [
   { x: 482, y: 15 },
 ];
 
-let cachedFeltTexture: Texture | null = null;
-function getHdFeltTableTexture(): Texture {
-  if (cachedFeltTexture) return cachedFeltTexture;
-  cachedFeltTexture = createHdTexture(384, 174, (ctx, w, h) => {
-    // Rich mahogany frame with brass trim
-    ctx.fillStyle = '#2d1409';
+interface HdBoardMetrics {
+  readonly tableX: number;
+  readonly tableY: number;
+  readonly tableW: number;
+  readonly tableH: number;
+  readonly slotX0: number;
+  readonly slotY0: number;
+  readonly stepX: number;
+  readonly stepY: number;
+  readonly cardW: number;
+  readonly cardH: number;
+  readonly cornerRadius: number;
+}
+
+const HD_BOARD_METRICS: Record<AspectMode, HdBoardMetrics> = {
+  '4:3': {
+    tableX: 128,
+    tableY: 60,
+    tableW: 384,
+    tableH: 174,
+    slotX0: 145,
+    slotY0: 71,
+    stepX: 39,
+    stepY: 38,
+    cardW: 38,
+    cardH: 37,
+    cornerRadius: 3.6,
+  },
+  '1:1': {
+    tableX: 158,
+    tableY: 60,
+    tableW: 324,
+    tableH: 174,
+    slotX0: 174,
+    slotY0: 69,
+    stepX: 33,
+    stepY: 40,
+    cardW: 28,
+    cardH: 38,
+    cornerRadius: 3.2,
+  },
+};
+
+const cachedFeltTextures: Record<AspectMode, Texture | null> = {
+  '4:3': null,
+  '1:1': null,
+};
+
+let cachedDealerSpotlightTex: Texture | null = null;
+
+function getHdDealerSpotlightTexture(): Texture {
+  if (cachedDealerSpotlightTex) return cachedDealerSpotlightTex;
+
+  const w = 280;
+  const h = 64;
+  const tex = createHdTexture(w, h, (ctx) => {
+    const pw = ctx.canvas.width;
+    const ph = ctx.canvas.height;
+    const imgData = ctx.createImageData(pw, ph);
+    const data = imgData.data;
+
+    for (let py = 0; py < ph; py++) {
+      const y = (py / ph) * h;
+      const t = Math.min(1, y / 60);
+      const halfW = 48 + t * 28;
+      const v = 1 - 0.34 * t;
+
+      for (let px = 0; px < pw; px++) {
+        const dx = Math.abs((px / pw) * w - w * 0.5);
+        // Smooth horizontal mask feathering out between dx=95 and dx=140 so background ledge is cleanly hidden
+        const maskA = dx <= 95 ? 1 : dx >= 140 ? 0 : 1 - (dx - 95) / 45;
+        const smoothMask = maskA * maskA * (3 - 2 * maskA);
+
+        const norm = Math.min(1, dx / halfW);
+        const beam = Math.pow(1 - norm * norm, 1.85);
+
+        const r = 5 + beam * v * 204;
+        const g = 6 + beam * v * 158;
+        const b = 3 + beam * v * 102;
+
+        const idx = (py * pw + px) * 4;
+        data[idx] = Math.round(r);
+        data[idx + 1] = Math.round(g);
+        data[idx + 2] = Math.round(b);
+        data[idx + 3] = Math.round(smoothMask * 255);
+      }
+    }
+
+    ctx.putImageData(imgData, 0, 0);
+  });
+
+  cachedDealerSpotlightTex = tex;
+  return tex;
+}
+
+let cachedSoftTurnHaloTex: Texture | null = null;
+
+function getHdSoftTurnHaloTexture(): Texture {
+  if (cachedSoftTurnHaloTex) return cachedSoftTurnHaloTex;
+  cachedSoftTurnHaloTex = createHdTexture(118, 34, (ctx, w, h) => {
+    ctx.save();
+    ctx.translate(w * 0.5, h * 0.5);
+    ctx.scale(1, h / w);
+    const r = w * 0.5;
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+    g.addColorStop(0.0, 'rgba(255, 224, 118, 0.56)');
+    g.addColorStop(0.28, 'rgba(255, 210, 96, 0.38)');
+    g.addColorStop(0.58, 'rgba(248, 186, 68, 0.14)');
+    g.addColorStop(0.84, 'rgba(240, 168, 48, 0.03)');
+    g.addColorStop(1.0, 'rgba(240, 168, 48, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  });
+  return cachedSoftTurnHaloTex;
+}
+
+function getHdFeltTableTexture(aspectMode: AspectMode): Texture {
+  const existing = cachedFeltTextures[aspectMode];
+  if (existing) return existing;
+
+  const m = HD_BOARD_METRICS[aspectMode];
+  const tex = createHdTexture(m.tableW, m.tableH, (ctx, w, h) => {
+    // Rich mahogany frame with warm top bevel (no dark seam under overhead spotlight) and brass trim
+    const outerRim = ctx.createLinearGradient(0, 0, 0, h);
+    outerRim.addColorStop(0, '#723b1e');
+    outerRim.addColorStop(0.08, '#4a2210');
+    outerRim.addColorStop(1, '#2d1409');
+    ctx.fillStyle = outerRim;
     ctx.beginPath();
     ctx.roundRect(0, 0, w, h, 10);
     ctx.fill();
 
     const mahog = ctx.createLinearGradient(0, 0, 0, h);
-    mahog.addColorStop(0, '#6e381d');
+    mahog.addColorStop(0, '#784022');
     mahog.addColorStop(0.5, '#4c2210');
     mahog.addColorStop(1, '#311408');
     ctx.fillStyle = mahog;
     ctx.beginPath();
-    ctx.roundRect(1.5, 1.5, w - 3, h - 3, 9);
+    ctx.roundRect(1, 0.5, w - 2, h - 2, 9.5);
     ctx.fill();
+
+    // Warm overhead light pool across the top mahogany rail behind the dealer
+    const railGlow = ctx.createRadialGradient(w * 0.5, 1.5, 4, w * 0.5, 2, 88);
+    railGlow.addColorStop(0, 'rgba(255, 214, 134, 0.36)');
+    railGlow.addColorStop(0.55, 'rgba(245, 184, 92, 0.14)');
+    railGlow.addColorStop(1, 'rgba(245, 184, 92, 0)');
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(0, 0, w, 7.5, [10, 10, 0, 0]);
+    ctx.clip();
+    ctx.fillStyle = railGlow;
+    ctx.fillRect(0, 0, w, 8);
+    ctx.restore();
 
     // Brass inlay rim
     ctx.strokeStyle = '#d4a63d';
@@ -152,7 +298,7 @@ function getHdFeltTableTexture(): Texture {
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
-    // Subtle recessed 9x4 grid slots (matching exact 145 + (r-6)*39, 71 + (s-1)*38 relative to table top-left (128, 60))
+    // Subtle recessed 9x4 grid slots aligned with placed mini cards
     const ranks: readonly Rank[] = [6, 7, 8, 9, 10, 11, 12, 13, 14];
     const suits: readonly Suit[] = [1, 2, 3, 4];
     const rankLabels: Record<Rank, string> = {
@@ -166,18 +312,19 @@ function getHdFeltTableTexture(): Texture {
       13: 'K',
       14: 'A',
     };
+    const narrow = aspectMode === '1:1';
 
     for (const suit of suits) {
       for (const rank of ranks) {
-        const sx = 145 - 128 + (rank - 6) * 39;
-        const sy = 71 - 60 + (suit - 1) * 38;
-        const sw = 38;
-        const sh = 37;
+        const sx = m.slotX0 - m.tableX + (rank - 6) * m.stepX;
+        const sy = m.slotY0 - m.tableY + (suit - 1) * m.stepY;
+        const sw = m.cardW;
+        const sh = m.cardH;
         const isNine = rank === 9;
 
         ctx.fillStyle = isNine ? 'rgba(218, 176, 68, 0.10)' : 'rgba(0, 0, 0, 0.14)';
         ctx.beginPath();
-        ctx.roundRect(sx, sy, sw, sh, 3.6);
+        ctx.roundRect(sx, sy, sw, sh, m.cornerRadius);
         ctx.fill();
 
         ctx.strokeStyle = isNine ? 'rgba(230, 188, 82, 0.46)' : 'rgba(212, 175, 55, 0.18)';
@@ -187,16 +334,17 @@ function getHdFeltTableTexture(): Texture {
         ctx.save();
         ctx.globalAlpha = isNine ? 0.34 : 0.16;
         ctx.fillStyle = isNine ? '#ffe699' : '#d6eadb';
-        ctx.font = 'bold 8.5px Georgia, serif';
+        ctx.font = `bold ${narrow ? 8 : 8.5}px Georgia, serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(rankLabels[rank], sx + sw * 0.5, sy + 11.5);
-        drawSuitShape(ctx, suit, sx + sw * 0.5, sy + 24.5, 11);
+        ctx.fillText(rankLabels[rank], sx + sw * 0.5, sy + (narrow ? 12 : 11.5));
+        drawSuitShape(ctx, suit, sx + sw * 0.5, sy + (narrow ? 25.5 : 24.5), narrow ? 9.5 : 11);
         ctx.restore();
       }
     }
   });
-  return cachedFeltTexture;
+  cachedFeltTextures[aspectMode] = tex;
+  return tex;
 }
 
 export class GameTableScene implements Scene {
@@ -236,9 +384,12 @@ export class GameTableScene implements Scene {
   private hdDealer: HdDealerController | null = null;
   private hdLeftRival: HdRivalController | null = null;
   private hdRightRival: HdRivalController | null = null;
-  private hdFlames: { container: Container; glow: Sprite }[] = [];
-  private hdTurnHalos: { left: Graphics; right: Graphics; human: Graphics } | null = null;
-  private hdBankBarFill: Graphics | null = null;
+  private hdCandelabras: HdCandelabraController[] = [];
+  private hdTurnHalos: { left: Container; right: Container; human: Container } | null = null;
+  private hdPotPedestal: HdGoldLabelController | null = null;
+  private hdLeftCashLabel: HdGoldLabelController | null = null;
+  private hdRightCashLabel: HdGoldLabelController | null = null;
+  private hdHumanCashLabel: HdGoldLabelController | null = null;
   private hdBankTextLayer = new Container();
   private hdBannerLayer = new Container();
 
@@ -261,6 +412,10 @@ export class GameTableScene implements Scene {
   private statusBanner = '';
   private moveLog: MoveLogEntry[] = [];
   private nextMoveId = 1;
+  private passExclusions: Record<1 | 2, Set<string>> = {
+    1: new Set(),
+    2: new Set(),
+  };
 
   private unbindKey: (() => void) | null = null;
   private unbindPtr: (() => void) | null = null;
@@ -280,6 +435,10 @@ export class GameTableScene implements Scene {
     this.statusBanner = '';
     this.moveLog = [];
     this.nextMoveId = 1;
+    this.passExclusions = { 1: new Set(), 2: new Set() };
+    if (this.ctx) {
+      this.ctx.advisorHint = null;
+    }
 
     this.root.addChild(this.bgLayer);
     this.root.addChild(this.tableCardsLayer);
@@ -310,6 +469,16 @@ export class GameTableScene implements Scene {
   }
 
   onGraphicsModeChanged(): void {
+    this.rebuildVisualsForModeChange();
+  }
+
+  onAspectModeChanged(): void {
+    if (this.ctx?.getGraphicsMode() === 'hd') {
+      this.rebuildVisualsForModeChange();
+    }
+  }
+
+  private rebuildVisualsForModeChange(): void {
     this.buildVisuals();
     this.restoreBoardFromMatch();
     this.renderRivalCardBacks();
@@ -322,6 +491,27 @@ export class GameTableScene implements Scene {
       const humanWon = humanCash > 0 && (botsOut || (humanCash >= this.match.cash[1] && humanCash >= this.match.cash[2]));
       this.drawMatchEndModal(humanWon, getFinalClubScore(this.match));
     }
+  }
+
+  private isHdSquareAspect(): boolean {
+    return this.ctx?.getGraphicsMode() === 'hd' && this.ctx.stage.getAspectMode() === '1:1';
+  }
+
+  private getBoardMetrics(): HdBoardMetrics {
+    const aspect: AspectMode = this.isHdSquareAspect() ? '1:1' : '4:3';
+    return HD_BOARD_METRICS[aspect];
+  }
+
+  onCoachModeChanged(enabled: boolean): void {
+    if (!enabled) {
+      if (this.ctx) {
+        this.ctx.advisorHint = null;
+      }
+    } else {
+      this.refreshAdvisorHint();
+    }
+    this.renderHumanHand();
+    this.emitTelemetry();
   }
 
   private buildVisuals(): void {
@@ -338,7 +528,7 @@ export class GameTableScene implements Scene {
     this.hdBankTextLayer.removeChildren();
     this.hdBannerLayer.removeChildren();
     this.flameSprites = [];
-    this.hdFlames = [];
+    this.hdCandelabras = [];
     this.thermoSpr = null;
     this.dealerSpr = null;
     this.leftBotSpr = null;
@@ -348,7 +538,10 @@ export class GameTableScene implements Scene {
     this.hdLeftRival = null;
     this.hdRightRival = null;
     this.hdTurnHalos = null;
-    this.hdBankBarFill = null;
+    this.hdPotPedestal = null;
+    this.hdLeftCashLabel = null;
+    this.hdRightCashLabel = null;
+    this.hdHumanCashLabel = null;
 
     if (this.ctx.getGraphicsMode() === 'ega') {
       this.buildEgaVisuals(this.ctx);
@@ -433,13 +626,62 @@ export class GameTableScene implements Scene {
     bg.height = SCREEN_HEIGHT;
     this.bgLayer.addChild(bg);
 
-    // Table shadow & mahogany emerald felt board aligned exactly over card slots
+    // Smooth overhead spotlight cone above the dealer (replaces background wall cornice shadow band)
+    const dealerSpotlight = new Sprite(getHdDealerSpotlightTexture());
+    dealerSpotlight.anchor.set(0.5, 0);
+    dealerSpotlight.position.set(SCREEN_WIDTH * 0.5, 0);
+    this.bgLayer.addChild(dealerSpotlight);
+
+    // Center dealer stands behind the top mahogany edge (y = 60); scale 0.84 keeps top hat below y = 0 at 1:1
+    const dealer = createHdDealer(0.84);
+    dealer.container.position.set(294.8, 23.3);
+    this.bgLayer.addChild(dealer.container);
+    this.hdDealer = dealer;
+
+    // Table coordinates; candelabras & gold pedestals stand directly behind y = 60 so their plinth bottom meets the top rail flush
+    const aspect = ctx.stage.getAspectMode();
+    const bm = HD_BOARD_METRICS[aspect];
+    const isSquare = aspect === '1:1';
+    const candLeftX = isSquare ? 186 : 168;
+    const candRightX = isSquare ? 454 : 471;
+    const tableRailY = bm.tableY;
+
+    const candLeft = createHdCandelabra(0, -16.2);
+    candLeft.container.position.set(candLeftX, tableRailY);
+    const candRight = createHdCandelabra(435, -16.2);
+    candRight.container.position.set(candRightX, tableRailY);
+    this.bgLayer.addChild(candLeft.container, candRight.container);
+    this.hdCandelabras.push(candLeft, candRight);
+
+    const pedestalAnchorY = 16.2 / 17;
+    const bankPedestal = createHdGoldLabel('BANK', {
+      anchorY: pedestalAnchorY,
+      textHeight: 9.0,
+      withPedestal: true,
+      pedestalWidth: 40,
+    });
+    bankPedestal.container.position.set(candLeftX, tableRailY);
+    this.hdBankTextLayer.addChild(bankPedestal.container);
+
+    const potPedestal = createHdGoldLabel(`${this.match.round?.bank ?? 0}$`, {
+      anchorY: pedestalAnchorY,
+      textHeight: 9.0,
+      withPedestal: true,
+      pedestalWidth: 40,
+    });
+    potPedestal.container.position.set(candRightX, tableRailY);
+    this.hdBankTextLayer.addChild(potPedestal.container);
+    this.hdPotPedestal = potPedestal;
+    this.bgLayer.addChild(this.hdBankTextLayer);
+
     const tableShadow = new Graphics();
-    tableShadow.roundRect(126, 63, 388, 178, 12).fill({ color: 0x000000, alpha: 0.56 });
+    tableShadow
+      .roundRect(bm.tableX - 2, bm.tableY + 3, bm.tableW + 4, bm.tableH + 4, 12)
+      .fill({ color: 0x000000, alpha: 0.56 });
     this.bgLayer.addChild(tableShadow);
 
-    const tableBoard = new Sprite(getHdFeltTableTexture());
-    tableBoard.position.set(128, 60);
+    const tableBoard = new Sprite(getHdFeltTableTexture(aspect));
+    tableBoard.position.set(bm.tableX, bm.tableY);
     this.bgLayer.addChild(tableBoard);
 
     // Active turn spotlight halos
@@ -451,55 +693,16 @@ export class GameTableScene implements Scene {
     rightHalo.ellipse(569, 124, 46, 28).fill({ color: 0xffe070, alpha: 0.16 }).stroke({ color: 0xffd564, width: 1.3, alpha: 0.75 });
     rightHalo.visible = false;
 
-    const humanHalo = new Graphics();
-    humanHalo.roundRect(262, 238, 116, 19, 8).stroke({ color: 0xffd564, width: 1.4, alpha: 0.8 });
+    const humanHalo = new Sprite(getHdSoftTurnHaloTexture());
+    humanHalo.anchor.set(0.5);
+    humanHalo.position.set(320, 248);
+    humanHalo.blendMode = 'add';
     humanHalo.visible = false;
 
     this.bgLayer.addChild(leftHalo, rightHalo, humanHalo);
     this.hdTurnHalos = { left: leftHalo, right: rightHalo, human: humanHalo };
 
-    // Left & Right Brass Candelabras with dynamic 60fps flames & ambient light
-    const candTex = getHdCandelabraTexture();
-    const candLeft = new Sprite(candTex);
-    candLeft.position.set(146, 13);
-    const candRight = new Sprite(candTex);
-    candRight.position.set(448, 13);
-    this.bgLayer.addChild(candLeft, candRight);
-
-    const candleTipPositions: readonly { x: number; y: number }[] = [
-      { x: 154, y: 20 },
-      { x: 168, y: 15 },
-      { x: 182, y: 20 },
-      { x: 456, y: 20 },
-      { x: 470, y: 15 },
-      { x: 484, y: 20 },
-    ];
-    for (const pos of candleTipPositions) {
-      const glow = new Sprite(getWarmGlowTexture());
-      glow.anchor.set(0.5);
-      glow.position.set(pos.x, pos.y - 2);
-      glow.scale.set(0.75);
-      glow.blendMode = 'add';
-      glow.alpha = 0.42;
-      this.bgLayer.addChild(glow);
-
-      const flameC = new Container();
-      flameC.position.set(pos.x, pos.y);
-      const outer = new Graphics();
-      outer.ellipse(0, -3.5, 2.3, 4.6).fill({ color: 0xff9b21, alpha: 0.92 });
-      outer.ellipse(0, -2.5, 1.2, 2.7).fill(0xfff6b8);
-      flameC.addChild(outer);
-      this.bgLayer.addChild(flameC);
-
-      this.hdFlames.push({ container: flameC, glow });
-    }
-
-    // Dealer & Rival Rigs
-    const dealer = createHdDealer(1.0);
-    dealer.container.position.set(290, 17);
-    this.bgLayer.addChild(dealer.container);
-    this.hdDealer = dealer;
-
+    // Left & Right Rival Rigs
     const leftRival = createHdRival('left');
     leftRival.container.position.set(19, 98);
     this.bgLayer.addChild(leftRival.container);
@@ -510,39 +713,21 @@ export class GameTableScene implements Scene {
     this.bgLayer.addChild(rightRival.container);
     this.hdRightRival = rightRival;
 
-    // Brass plaques for Bank, Thermo & Player Cash
-    const plaques = new Graphics();
-    const drawPlaque = (x: number, y: number, w: number, h: number) => {
-      plaques.roundRect(x + 1, y + 1.5, w, h, 5).fill({ color: 0x000000, alpha: 0.5 });
-      plaques.roundRect(x, y, w, h, 5).fill({ color: 0x101417, alpha: 0.9 }).stroke({ color: 0xc99c38, width: 1 });
-    };
-    // Bank left plaque & pot gauge right plaque
-    drawPlaque(140, 40, 56, 17);
-    drawPlaque(432, 40, 78, 17);
-    // Cash plaques
-    drawPlaque(22, 182, 70, 18);
-    drawPlaque(534, 182, 70, 18);
-    drawPlaque(264, 239, 112, 17);
-    this.hudLayer.addChild(plaques);
+    const leftCash = createHdGoldLabel(`${this.match.cash[1]}$`, { anchorY: 0.5, textHeight: 10.5 });
+    leftCash.container.position.set(57, 191);
+    this.leftCashLayer.addChild(leftCash.container);
+    this.hdLeftCashLabel = leftCash;
 
-    const bankLbl = createHdTextSprite('BANK', 54, 15, {
-      font: 'bold 8.5px Georgia, serif',
-      fill: '#ffe599',
-      align: 'center',
-    });
-    bankLbl.position.set(141, 41);
-    this.hudLayer.addChild(bankLbl);
+    const rightCash = createHdGoldLabel(`${this.match.cash[2]}$`, { anchorY: 0.5, textHeight: 10.5 });
+    rightCash.container.position.set(569, 191);
+    this.rightCashLayer.addChild(rightCash.container);
+    this.hdRightCashLabel = rightCash;
 
-    // Thermometer progress rail inside right plaque
-    const barBg = new Graphics();
-    barBg.roundRect(437, 51, 68, 3.5, 1.75).fill(0x1f2824).stroke({ color: 0x7a5c1d, width: 0.6 });
-    this.hudLayer.addChild(barBg);
+    const humanCash = createHdGoldLabel(`${this.match.cash[3]}$`, { anchorY: 0.5, textHeight: 11.0 });
+    humanCash.container.position.set(320, 248);
+    this.humanCashLayer.addChild(humanCash.container);
+    this.hdHumanCashLabel = humanCash;
 
-    const barFill = new Graphics();
-    this.hudLayer.addChild(barFill);
-    this.hdBankBarFill = barFill;
-
-    this.hudLayer.addChild(this.hdBankTextLayer);
     this.hudLayer.addChild(this.leftCashLayer);
     this.hudLayer.addChild(this.rightCashLayer);
     this.hudLayer.addChild(this.humanCashLayer);
@@ -614,18 +799,46 @@ export class GameTableScene implements Scene {
     this.spawnCoinFlight(316, 232, 170, 42, 420);
     this.ctx?.audio.sfx.coinChime();
 
+    this.passExclusions = { 1: new Set(), 2: new Set() };
+    if (this.ctx) {
+      this.ctx.advisorHint = null;
+    }
     this.phase = 'anteIntro';
     this.phaseTimerMs = 0;
     this.pushMoveLog('round', `Round #${this.match.roundNumber} · Pot $${this.match.round?.bank ?? 0}`);
     this.emitTelemetry();
   }
 
+  private getRivalCardMetrics(): {
+    baseXLeft: number;
+    baseXRight: number;
+    baseY: number;
+    stepX: number;
+    stepY: number;
+    w: number;
+    h: number;
+  } {
+    if (this.isHdSquareAspect()) {
+      return { baseXLeft: 18, baseXRight: 530, baseY: 144, stepX: 16, stepY: 19, w: 12, h: 17 };
+    }
+    const isHd = this.ctx?.getGraphicsMode() === 'hd';
+    return {
+      baseXLeft: 14,
+      baseXRight: 526,
+      baseY: isHd ? 144 : 145,
+      stepX: 17,
+      stepY: 18,
+      w: 14,
+      h: 16,
+    };
+  }
+
   private getRivalCardSlotPos(seat: 1 | 2, index: number): { x: number; y: number } {
     const col = index % 6;
     const row = Math.floor(index / 6);
-    const baseX = seat === 1 ? 14 : 526;
-    const baseY = this.ctx?.getGraphicsMode() === 'hd' ? 144 : 145;
-    return { x: baseX + col * 17, y: baseY + row * 18 };
+    const m = this.getRivalCardMetrics();
+    const baseX = seat === 1 ? m.baseXLeft : m.baseXRight;
+    return { x: baseX + col * m.stepX, y: m.baseY + row * m.stepY };
   }
 
   private renderRivalCardBacks(): void {
@@ -633,7 +846,7 @@ export class GameTableScene implements Scene {
     if (!this.ctx || !this.match.round) return;
 
     const isHd = this.ctx.getGraphicsMode() === 'hd';
-    const tex = isHd ? getHdRivalCardBackTexture() : this.egaMiniBackTex;
+    const tex = isHd ? getHdRivalCardBackTexture(this.ctx.stage.getAspectMode()) : this.egaMiniBackTex;
     if (!tex) return;
 
     const shadowGfx = isHd ? new Graphics() : null;
@@ -641,12 +854,13 @@ export class GameTableScene implements Scene {
       this.rivalCardsLayer.addChild(shadowGfx);
     }
 
+    const rm = this.getRivalCardMetrics();
     for (const seat of [1, 2] as const) {
       const count = Math.min(12, this.match.round.hands[seat].length);
       for (let i = 0; i < count; i++) {
         const { x, y } = this.getRivalCardSlotPos(seat, i);
         if (shadowGfx) {
-          shadowGfx.roundRect(x + 1, y + 1.5, 14, 16, 2.2).fill({ color: 0x000000, alpha: 0.42 });
+          shadowGfx.roundRect(x + 1, y + 1.5, rm.w, rm.h, 2.2).fill({ color: 0x000000, alpha: 0.42 });
         }
         const spr = new Sprite(tex);
         spr.position.set(x, y);
@@ -671,55 +885,16 @@ export class GameTableScene implements Scene {
       return;
     }
 
-    // HD Cash & Bank HUD
+    // HD Cash & Bank HUD (sculpted solid gold labels without frames or progress bars)
     this.leftCashLayer.position.set(0, 0);
     this.rightCashLayer.position.set(0, 0);
     this.humanCashLayer.position.set(0, 0);
-    this.leftCashLayer.removeChildren();
-    this.rightCashLayer.removeChildren();
-    this.humanCashLayer.removeChildren();
-    this.hdBankTextLayer.removeChildren();
-
-    const makeCash = (val: number, color: string) =>
-      createHdTextSprite(`$${val}`, 66, 16, {
-        font: 'bold 9.5px "Segoe UI", system-ui, sans-serif',
-        fill: color,
-        align: 'center',
-      });
-
-    const lSpr = makeCash(this.match.cash[1], '#f3deb0');
-    lSpr.position.set(24, 183);
-    this.leftCashLayer.addChild(lSpr);
-
-    const rSpr = makeCash(this.match.cash[2], '#f3deb0');
-    rSpr.position.set(536, 183);
-    this.rightCashLayer.addChild(rSpr);
-
-    const playerName = this.match.playerName.slice(0, 8).toUpperCase();
-    const hSpr = createHdTextSprite(`${playerName}: $${this.match.cash[3]}`, 108, 15, {
-      font: 'bold 9.5px "Segoe UI", system-ui, sans-serif',
-      fill: '#ffe696',
-      align: 'center',
-    });
-    hSpr.position.set(266, 240);
-    this.humanCashLayer.addChild(hSpr);
 
     const bank = this.match.round?.bank ?? 0;
-    const potSpr = createHdTextSprite(`POT $${bank}`, 74, 11, {
-      font: 'bold 7.5px "Segoe UI", system-ui, sans-serif',
-      fill: '#ffe89c',
-      align: 'center',
-    });
-    potSpr.position.set(434, 40.5);
-    this.hdBankTextLayer.addChild(potSpr);
-
-    if (this.hdBankBarFill) {
-      this.hdBankBarFill.clear();
-      const frac = Math.max(0, Math.min(1, bank / 320));
-      if (frac > 0) {
-        this.hdBankBarFill.roundRect(437.5, 51.3, Math.max(3, 67 * frac), 2.8, 1.4).fill(0xebb538);
-      }
-    }
+    this.hdLeftCashLabel?.setText(`${this.match.cash[1]}$`);
+    this.hdRightCashLabel?.setText(`${this.match.cash[2]}$`);
+    this.hdHumanCashLabel?.setText(`${this.match.cash[3]}$`);
+    this.hdPotPedestal?.setText(`${bank}$`);
   }
 
   private renderStatusBanner(): void {
@@ -742,7 +917,7 @@ export class GameTableScene implements Scene {
   private getActiveMiniTexture(card: Card): Texture | undefined {
     const key = cardKey(card);
     if (this.ctx?.getGraphicsMode() === 'hd') {
-      return getHdCardLibrary().miniCards.get(key);
+      return getHdCardLibrary(this.ctx.stage.getAspectMode()).miniCards.get(key);
     }
     return this.ctx?.assets.miniCards.get(key);
   }
@@ -750,7 +925,7 @@ export class GameTableScene implements Scene {
   private getActiveCardTexture(card: Card): Texture | undefined {
     const key = cardKey(card);
     if (this.ctx?.getGraphicsMode() === 'hd') {
-      return getHdCardLibrary().cards.get(key);
+      return getHdCardLibrary(this.ctx.stage.getAspectMode()).cards.get(key);
     }
     return this.ctx?.assets.cards.get(key);
   }
@@ -760,7 +935,10 @@ export class GameTableScene implements Scene {
     this.handLayer.removeChildren();
     this.handCardEntries = [];
     const hand = this.match.round?.hands[3] ?? [];
-    this.currentHandLayouts = computeHandLayout(hand);
+    const layoutOpts = this.isHdSquareAspect()
+      ? { cardWidth: 64, cardHitWidth: 64, overlapStep: 14, areaWidth: 480 }
+      : {};
+    this.currentHandLayouts = computeHandLayout(hand, layoutOpts);
     const isHd = this.ctx.getGraphicsMode() === 'hd';
     const round = this.match.round;
     const isHumanTurn = round && !round.roundOver && round.currentTurn === 3 && this.phase === 'waitingTurn';
@@ -772,21 +950,58 @@ export class GameTableScene implements Scene {
       const cardContainer = new Container();
       cardContainer.position.set(layout.x, layout.y);
 
+      const legal = isHumanTurn && isLegalMove(layout.card, round.tableBounds, round.isFirstTurnOfRound);
+      const hint = this.ctx?.coachMode ? this.ctx.advisorHint : null;
+      const isBestHint = Boolean(
+        isHd &&
+        legal &&
+        hint?.bestCard &&
+        hint.candidates.length > 1 &&
+        hint.bestCard.suit === layout.card.suit &&
+        hint.bestCard.rank === layout.card.rank,
+      );
+
       if (isHd) {
         const shadow = new Graphics();
-        shadow.roundRect(3, 4, 86, 86, 6).fill({ color: 0x000000, alpha: 0.36 });
+        shadow.roundRect(3, 4, layout.width - 2, layout.height - 3, 6).fill({ color: 0x000000, alpha: 0.36 });
         cardContainer.addChild(shadow);
 
-        const legal = isHumanTurn && isLegalMove(layout.card, round.tableBounds, round.isFirstTurnOfRound);
         if (legal) {
           const glow = new Graphics();
-          glow.roundRect(-1.5, -1.5, 91, 92, 7.5).stroke({ color: 0xffd75e, width: 1.8, alpha: 0.9 });
+          glow
+            .roundRect(-1.5, -1.5, layout.width + 3, layout.height + 3, 7.5)
+            .stroke({ color: isBestHint ? 0x44d984 : 0xffd75e, width: isBestHint ? 2.4 : 1.8, alpha: 0.94 });
           cardContainer.addChild(glow);
         }
       }
 
       const spr = new Sprite(tex);
       cardContainer.addChild(spr);
+
+      if (isBestHint) {
+        const isSquare = this.isHdSquareAspect();
+        const badgeX = 0.8;
+        const badgeY = isSquare ? 26.5 : 29;
+        const badgeW = 12;
+        const badgeH = isSquare ? 12 : 9;
+        const badge = new Graphics();
+        badge.roundRect(badgeX, badgeY, badgeW, badgeH, 3).fill({ color: 0x0d2d1b, alpha: 0.96 });
+        badge.roundRect(badgeX, badgeY, badgeW, badgeH, 3).stroke({ color: 0x52e090, width: 1.2 });
+        const cx = badgeX + badgeW * 0.5;
+        const cy = badgeY + badgeH * 0.5;
+        const rxOuter = 4.2;
+        const rxInner = 1.85;
+        const yScale = isSquare ? 1 : 35 / 48;
+        const starPts: number[] = [];
+        for (let i = 0; i < 10; i++) {
+          const angle = -Math.PI / 2 + (i * Math.PI) / 5;
+          const rad = i % 2 === 0 ? rxOuter : rxInner;
+          starPts.push(cx + Math.cos(angle) * rad, cy + Math.sin(angle) * rad * yScale);
+        }
+        badge.poly(starPts).fill({ color: 0xffdf6e });
+        cardContainer.addChild(badge);
+      }
+
       this.handLayer.addChild(cardContainer);
 
       this.handCardEntries.push({
@@ -798,11 +1013,20 @@ export class GameTableScene implements Scene {
     }
   }
 
+  private getBoardCardSlotPos(card: Card): { x: number; y: number } {
+    const m = this.getBoardMetrics();
+    return {
+      x: m.slotX0 + (card.rank - 6) * m.stepX,
+      y: m.slotY0 + (card.suit - 1) * m.stepY,
+    };
+  }
+
   private placeMiniCardOnTable(card: Card): void {
     const tex = this.getActiveMiniTexture(card);
     if (!tex) return;
     const spr = new Sprite(tex);
-    spr.position.set(145 + (card.rank - 6) * 39, 71 + (card.suit - 1) * 38);
+    const pos = this.getBoardCardSlotPos(card);
+    spr.position.set(pos.x, pos.y);
     this.tableCardsLayer.addChild(spr);
   }
 
@@ -849,8 +1073,8 @@ export class GameTableScene implements Scene {
   private startCardFlight(seat: SeatIndex, card: Card, originX?: number, originY?: number): void {
     if (!this.ctx) return;
     const miniTex = this.getActiveMiniTexture(card);
-    const endX = 145 + (card.rank - 6) * 39;
-    const endY = 71 + (card.suit - 1) * 38;
+    const bm = this.getBoardMetrics();
+    const { x: endX, y: endY } = this.getBoardCardSlotPos(card);
     const rivalSlot =
       seat === 1 || seat === 2
         ? this.getRivalCardSlotPos(seat, Math.max(0, Math.min(11, (this.match.round?.hands[seat].length ?? 1) - 1)))
@@ -897,7 +1121,7 @@ export class GameTableScene implements Scene {
     let shadow: Graphics | null = null;
     if (isHd) {
       shadow = new Graphics();
-      shadow.roundRect(3, 5, 38, 37, 3.6).fill({ color: 0x000000, alpha: 0.34 });
+      shadow.roundRect(3, 5, bm.cardW, bm.cardH, bm.cornerRadius).fill({ color: 0x000000, alpha: 0.34 });
       shadow.position.set(startX, startY);
       this.fxLayer.addChild(shadow);
     }
@@ -924,7 +1148,8 @@ export class GameTableScene implements Scene {
   private finishCardFlight(): void {
     this.activeFlightSeat = null;
     if (this.flyingCard) {
-      this.spawnSparkBurst(this.flyingCard.endX + 19, this.flyingCard.endY + 18, 6, 0xffe48a);
+      const bm = this.getBoardMetrics();
+      this.spawnSparkBurst(this.flyingCard.endX + bm.cardW * 0.5, this.flyingCard.endY + bm.cardH * 0.5, 6, 0xffe48a);
       this.fxLayer.removeChild(this.flyingCard.sprite);
       if (this.flyingCard.shadow) this.fxLayer.removeChild(this.flyingCard.shadow);
       this.flyingCard = null;
@@ -945,6 +1170,16 @@ export class GameTableScene implements Scene {
   }
 
   private triggerSeatPass(seat: SeatIndex): void {
+    const roundBeforePass = this.match.round;
+    if (roundBeforePass && (seat === 1 || seat === 2)) {
+      const excluded = getAllCurrentlyLegalCards(
+        roundBeforePass.tableBounds,
+        roundBeforePass.isFirstTurnOfRound,
+      );
+      for (const card of excluded) {
+        this.passExclusions[seat].add(advisorCardKey(card));
+      }
+    }
     this.ctx?.audio.sfx.passAlert();
     this.match = applyPass(this.match);
     this.renderCashAndBankHud();
@@ -982,12 +1217,36 @@ export class GameTableScene implements Scene {
     } else {
       this.statusBanner = '';
     }
+    this.refreshAdvisorHint();
     this.renderHumanHand();
     this.renderStatusBanner();
     this.emitTelemetry();
   }
 
+  private refreshAdvisorHint(): void {
+    if (!this.ctx) return;
+    const round = this.match.round;
+    if (
+      !this.ctx.coachMode ||
+      this.phase !== 'waitingTurn' ||
+      !round ||
+      round.roundOver ||
+      round.currentTurn !== 3
+    ) {
+      this.ctx.advisorHint = null;
+      return;
+    }
+    this.ctx.advisorHint = evaluatePlayerMoves({
+      round,
+      difficulty: this.match.clubTable,
+      passExclusions: this.passExclusions,
+    });
+  }
+
   private enterRoundEnd(): void {
+    if (this.ctx) {
+      this.ctx.advisorHint = null;
+    }
     this.ctx?.audio.sfx.victoryBeep();
     this.phase = 'roundEnd';
     this.phaseTimerMs = 0;
@@ -1018,11 +1277,23 @@ export class GameTableScene implements Scene {
     const botsOut = this.match.cash[1] <= 0 || this.match.cash[2] <= 0;
     const humanWonMatch = humanCash > 0 && (botsOut || (humanCash >= this.match.cash[1] && humanCash >= this.match.cash[2]));
 
-    if (humanWonMatch) {
-      this.ctx.audio.sfx.victoryBeep();
-      this.spawnSparkBurst(SCREEN_WIDTH * 0.5, 160, 22, 0xffdf70);
+    if (this.ctx.audio.music.getMusicMode() === 'mp3') {
+      this.ctx.audio.music.stop();
+      this.ctx.audio.music.playStinger(humanWonMatch ? 'victory' : 'bankrupt', () => {
+        if (humanWonMatch) {
+          this.ctx?.audio.sfx.matchVictory();
+        } else {
+          this.ctx?.audio.sfx.matchDefeat();
+        }
+      });
+    } else if (humanWonMatch) {
+      this.ctx.audio.sfx.matchVictory();
     } else {
-      this.ctx.audio.sfx.passAlert();
+      this.ctx.audio.sfx.matchDefeat();
+    }
+
+    if (humanWonMatch) {
+      this.spawnSparkBurst(SCREEN_WIDTH * 0.5, 160, 22, 0xffdf70);
     }
 
     const finalScore = getFinalClubScore(this.match);
@@ -1255,12 +1526,8 @@ export class GameTableScene implements Scene {
     // Candle flicker & dealer idle blinking
     this.idleBlinkMs += dtMs;
     if (isHd) {
-      for (let i = 0; i < this.hdFlames.length; i++) {
-        const f = this.hdFlames[i];
-        const phase = this.idleBlinkMs * 0.012 + i * 1.7;
-        f.container.scale.set(1 + Math.sin(phase * 1.3) * 0.14, 1 + Math.cos(phase * 1.9) * 0.2);
-        f.container.rotation = Math.sin(phase * 0.9) * 0.1;
-        f.glow.alpha = 0.36 + Math.sin(phase) * 0.09;
+      for (const cand of this.hdCandelabras) {
+        cand.update(this.idleBlinkMs);
       }
     } else {
       const flameStep = Math.floor(this.idleBlinkMs / 130);

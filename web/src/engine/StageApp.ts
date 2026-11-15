@@ -1,6 +1,7 @@
 import { Application, Container, TextureStyle } from 'pixi.js';
 import { SCREEN_HEIGHT, SCREEN_WIDTH } from '../core/types';
 import type { GraphicsMode } from './AssetManager';
+import { setHdCharacterAspectMode } from './hdCharacters';
 
 export type AspectMode = '1:1' | '4:3';
 
@@ -50,6 +51,7 @@ export class StageApp {
     this.scanlineOverlay = overlay;
 
     this.applyGraphicsStyling();
+    setHdCharacterAspectMode(this.aspectMode);
     this.applyViewportFit();
     window.addEventListener('resize', this.onResize);
     if (typeof ResizeObserver !== 'undefined' && host.parentElement) {
@@ -89,6 +91,7 @@ export class StageApp {
 
   setAspectMode(mode: AspectMode): void {
     this.aspectMode = mode;
+    setHdCharacterAspectMode(mode);
     this.applyViewportFit();
   }
 

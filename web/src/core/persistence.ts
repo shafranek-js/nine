@@ -10,15 +10,43 @@ import {
 
 const STORAGE_RES_KEY = 'nine_club_res_b64_v1';
 const STORAGE_CFG_KEY = 'nine_club_cfg_v2';
+const STORAGE_LAST_PLAYER_KEY = 'nine_last_player_v1';
+
+export interface StoredLastPlayer {
+  name: string;
+  password: string;
+}
 
 export type HighScoreTables = Record<ClubTableId, HighScoreRow[]>;
 
-/** Encode printable ASCII/CP437 up to 8 bytes with XOR 0xFF obfuscation (CS:6E10). */
+function unicodeToCp866Byte(code: number): number {
+  if (code >= 0x20 && code <= 0x7e) return code;
+  if (code >= 0x0410 && code <= 0x042f) return 0x80 + (code - 0x0410); // А..Я
+  if (code >= 0x0430 && code <= 0x043f) return 0xa0 + (code - 0x0430); // а..п
+  if (code >= 0x0440 && code <= 0x044f) return 0xe0 + (code - 0x0440); // р..я
+  if (code === 0x0401) return 0xf0; // Ё
+  if (code === 0x0451) return 0xf1; // ё
+  if (code === 0x2116) return 0xfc; // №
+  return 0x3f; // '?'
+}
+
+function cp866ByteToChar(byte: number): string {
+  if (byte >= 0x20 && byte <= 0x7e) return String.fromCharCode(byte);
+  if (byte >= 0x80 && byte <= 0x9f) return String.fromCharCode(0x0410 + (byte - 0x80)); // А..Я
+  if (byte >= 0xa0 && byte <= 0xaf) return String.fromCharCode(0x0430 + (byte - 0xa0)); // а..п
+  if (byte >= 0xe0 && byte <= 0xef) return String.fromCharCode(0x0440 + (byte - 0xe0)); // р..я
+  if (byte === 0xf0) return 'Ё';
+  if (byte === 0xf1) return 'ё';
+  if (byte === 0xfc) return '№';
+  return '';
+}
+
+/** Encode printable ASCII + Cyrillic (CP866) up to 8 bytes with XOR 0xFF obfuscation (CS:6E10). */
 function encodePascalString8XorFF(text: string, out: Uint8Array, offset: number): void {
   const clean = text.slice(0, 8);
   out[offset] = clean.length;
   for (let i = 0; i < 8; i++) {
-    const ch = i < clean.length ? clean.charCodeAt(i) & 0xff : 0x20;
+    const ch = i < clean.length ? unicodeToCp866Byte(clean.charCodeAt(i)) : 0x20;
     out[offset + 1 + i] = ch ^ 0xff;
   }
 }
@@ -28,9 +56,7 @@ function decodePascalString8XorFF(bytes: Uint8Array, offset: number): string {
   let out = '';
   for (let i = 0; i < len; i++) {
     const code = (bytes[offset + 1 + i] ?? 0xff) ^ 0xff;
-    if (code >= 0x20 && code <= 0x7e) {
-      out += String.fromCharCode(code);
-    }
+    out += cp866ByteToChar(code);
   }
   return out;
 }
@@ -104,8 +130,13 @@ export function lookupPlayer(
   playerName: string,
 ): HighScoreRow | null {
   const rows = tables[clubTable];
-  const hit = rows.find((r) => r.name === playerName && r.name !== 'Noname');
-  return hit ? { ...hit } : null;
+  const trimmed = playerName.trim();
+  if (!trimmed || trimmed.toLowerCase() === 'noname') return null;
+  const exact = rows.find((r) => r.name === trimmed && r.name !== 'Noname');
+  if (exact) return { ...exact };
+  const lower = trimmed.toLowerCase();
+  const ci = rows.find((r) => r.name.toLowerCase() === lower && r.name.toLowerCase() !== 'noname');
+  return ci ? { ...ci } : null;
 }
 
 /**
@@ -184,6 +215,35 @@ export function saveStoredHighScores(tables: HighScoreTables): void {
     let bin = '';
     for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
     localStorage.setItem(STORAGE_RES_KEY, btoa(bin));
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+export function loadStoredLastPlayer(): StoredLastPlayer | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_LAST_PLAYER_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<StoredLastPlayer>;
+    const name = typeof parsed.name === 'string' ? parsed.name.trim().slice(0, 8) : '';
+    if (!name || name.toLowerCase() === 'noname') return null;
+    const password = typeof parsed.password === 'string' ? parsed.password.slice(0, 8) : '';
+    return { name, password };
+  } catch {
+    return null;
+  }
+}
+
+export function saveStoredLastPlayer(player: StoredLastPlayer | null): void {
+  try {
+    if (!player || !player.name.trim()) {
+      localStorage.removeItem(STORAGE_LAST_PLAYER_KEY);
+      return;
+    }
+    localStorage.setItem(
+      STORAGE_LAST_PLAYER_KEY,
+      JSON.stringify({ name: player.name.trim().slice(0, 8), password: player.password.slice(0, 8) }),
+    );
   } catch {
     // Ignore storage errors
   }

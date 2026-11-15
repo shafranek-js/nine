@@ -60,6 +60,7 @@ export class DealerTransitionScene implements Scene {
     this.hdTotalElapsedMs = 0;
     this.finished = false;
     ctx.audio.music.stop();
+    ctx.audio.music.playStinger('welcome');
 
     parent.addChild(this.viewRoot);
     this.buildVisuals();

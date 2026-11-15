@@ -154,6 +154,26 @@ export class MenuBitmapFont {
       return this.getBlackDigitGlyph(charCode - 0x30);
     }
 
+    if (charCode > 0x7a) {
+      const cachedExt = this.asciiCache.get(charCode);
+      if (cachedExt) return cachedExt;
+      const canvas = document.createElement('canvas');
+      canvas.width = 10;
+      canvas.height = 9;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.fillStyle = '#aa0000';
+        ctx.font = 'bold 9px monospace';
+        ctx.textBaseline = 'middle';
+        ctx.textAlign = 'center';
+        ctx.fillText(String.fromCharCode(charCode), 5, 5);
+      }
+      const extTex = Texture.from(canvas);
+      extTex.source.scaleMode = 'nearest';
+      this.asciiCache.set(charCode, extTex);
+      return extTex;
+    }
+
     const code = Math.max(0x20, Math.min(0x7a, charCode));
     const cached = this.asciiCache.get(code);
     if (cached) return cached;

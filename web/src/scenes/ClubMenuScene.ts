@@ -2,11 +2,13 @@ import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
 import { lookupPlayer } from '../core/persistence';
 import { SCREEN_HEIGHT, SCREEN_WIDTH, type ClubTableId } from '../core/types';
 import { sliceTexture } from '../engine/BitmapFont';
-import { getHdCardLibrary } from '../engine/hdCards';
 import {
+  createHdClubBannerSprite,
   createHdDealer,
+  createHdMenuRigSprite,
   createHdTextSprite,
   getWarmGlowTexture,
+  sliceLinearSheet,
   type HdDealerController,
 } from '../engine/hdCharacters';
 import type { GameContext, Scene } from './SceneManager';
@@ -21,12 +23,20 @@ interface AnimStep {
   onComplete: () => void;
 }
 
-const BUTTON_HITBOXES: readonly { id: 1 | 2 | 3 | 4 | 5; x: number; w: number; key: string; label: string }[] = [
-  { id: 1, x: 0, w: 120, key: 'F1', label: 'PLAY' },
-  { id: 2, x: 140, w: 118, key: 'F2', label: 'AUDIO' },
-  { id: 3, x: 278, w: 112, key: 'F3', label: 'TABLE' },
-  { id: 4, x: 405, w: 120, key: 'F4', label: 'SIGN IN' },
-  { id: 5, x: 542, w: 98, key: 'F5', label: 'EXIT' },
+const BUTTON_HITBOXES: readonly {
+  id: 1 | 2 | 3 | 4 | 5;
+  x: number;
+  w: number;
+  mascotX: number;
+  keyX: number;
+  key: string;
+  label: string;
+}[] = [
+  { id: 1, x: 0, w: 124, mascotX: 46, keyX: 98, key: 'F1', label: 'PLAY' },
+  { id: 2, x: 134, w: 118, mascotX: 175, keyX: 224, key: 'F2', label: 'AUDIO' },
+  { id: 3, x: 268, w: 116, mascotX: 304, keyX: 350, key: 'F3', label: 'TABLE' },
+  { id: 4, x: 394, w: 124, mascotX: 431, keyX: 483, key: 'F4', label: 'SIGN IN' },
+  { id: 5, x: 524, w: 116, mascotX: 559, keyX: 607, key: 'F5', label: 'EXIT' },
 ];
 
 export class ClubMenuScene implements Scene {
@@ -65,16 +75,28 @@ export class ClubMenuScene implements Scene {
   private hdTableLayer = new Container();
   private hdInputLayer = new Container();
   private hdButtonsLayer = new Container();
+  private hdHoverHaloLayer = new Container();
+  private hdHoverTooltipLayer = new Container();
   private hdDealLayer = new Container();
   private hdDealer: HdDealerController | null = null;
-  private hdDealCards: Sprite[] = [];
+  private hdF2Frames: Texture[] = [];
+  private hdF3Frames: Texture[] = [];
+  private hdF4IdleTex: Texture | null = null;
+  private hdF4ActiveTex: Texture | null = null;
+  private hdF5Frames: Texture[] = [];
+  private hdF2Spr: Sprite | null = null;
+  private hdF3Spr: Sprite | null = null;
+  private hdF4Spr: Sprite | null = null;
+  private hdF5Spr: Sprite | null = null;
+  private hdKeyRigs: Container[] = [];
+  private hdKeySprites: Sprite[] = [];
   private hoveredButtonId: number | null = null;
+  private hoveredRowIndex: number | null = null;
 
   private loginPhase: LoginPhase = 'idle';
   private pendingName = '';
   private pendingPassword = '';
   private existingPasswordToMatch: string | null = null;
-  private existingScoreForMatch = 0;
   private autoLaunchAfterLogin = false;
 
   private inputBlocked = false;
@@ -97,6 +119,7 @@ export class ClubMenuScene implements Scene {
     this.loginPhase = 'idle';
     this.activeAnim = null;
     this.hoveredButtonId = null;
+    this.hoveredRowIndex = null;
     this.hdElapsedMs = 0;
     this.dealStage = { step: 'none', timer: 0, frameIdx: 0 };
 
@@ -114,8 +137,18 @@ export class ClubMenuScene implements Scene {
     this.buildVisuals();
   }
 
+  onSessionChanged(): void {
+    this.renderLeaderboard();
+    this.renderPromptInput();
+  }
+
   private buildVisuals(): void {
     if (!this.ctx) return;
+    if (this.activeAnim) {
+      const done = this.activeAnim.onComplete;
+      this.activeAnim = null;
+      done();
+    }
     this.root.removeChildren();
     this.tableTextLayer.removeChildren();
     this.inputLayer.removeChildren();
@@ -123,9 +156,16 @@ export class ClubMenuScene implements Scene {
     this.hdTableLayer.removeChildren();
     this.hdInputLayer.removeChildren();
     this.hdButtonsLayer.removeChildren();
+    this.hdHoverHaloLayer.removeChildren();
+    this.hdHoverTooltipLayer.removeChildren();
     this.hdDealLayer.removeChildren();
     this.hdDealer = null;
-    this.hdDealCards = [];
+    this.hdF2Spr = null;
+    this.hdF3Spr = null;
+    this.hdF4Spr = null;
+    this.hdF5Spr = null;
+    this.hdKeyRigs = [];
+    this.hdKeySprites = [];
 
     if (this.ctx.getGraphicsMode() === 'ega') {
       this.buildEgaVisuals(this.ctx);
@@ -235,9 +275,9 @@ export class ClubMenuScene implements Scene {
     scrim.rect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT).fill({ color: 0x05070a, alpha: 0.16 });
     this.root.addChild(scrim);
 
-    // Top fanned Art-Deco letter cards: N I N E   &   C L U B
-    this.drawFannedBannerWord('NINE', 132, 54, -1);
-    this.drawFannedBannerWord('CLUB', SCREEN_WIDTH - 132, 54, 1);
+    // Top arched NINE / CLUB card fans extracted cleanly from reference art flanking the central alcove
+    this.root.addChild(createHdClubBannerSprite(ctx.assets.hdBanners.nine, 'left'));
+    this.root.addChild(createHdClubBannerSprite(ctx.assets.hdBanners.club, 'right'));
 
     // Twin luxury Ivory Leaderboard Scorecards aligned cleanly with the prompt area
     const cardsGfx = new Graphics();
@@ -253,6 +293,8 @@ export class ClubMenuScene implements Scene {
     this.root.addChild(this.hdTableLayer);
     this.root.addChild(this.hdInputLayer);
     this.root.addChild(this.cursorGfx);
+
+    this.buildHdBottomBar(ctx);
     this.root.addChild(this.hdButtonsLayer);
 
     this.renderHdButtons();
@@ -275,17 +317,6 @@ export class ClubMenuScene implements Scene {
     this.hdDealLayer.addChild(dealer.container);
     this.hdDealer = dealer;
 
-    const hdLib = getHdCardLibrary();
-    for (let i = 0; i < 12; i++) {
-      const cardSpr = new Sprite(hdLib.miniCardBack);
-      cardSpr.anchor.set(0.5);
-      cardSpr.scale.set(0.85);
-      cardSpr.position.set(SCREEN_WIDTH * 0.5, 184);
-      cardSpr.visible = false;
-      this.hdDealLayer.addChild(cardSpr);
-      this.hdDealCards.push(cardSpr);
-    }
-
     const dealCaption = createHdTextSprite('SHUFFLING THE DECK...', 320, 22, {
       font: '600 10px Georgia, "Times New Roman", serif',
       fill: ['#fff1bd', '#d49a24'],
@@ -298,95 +329,145 @@ export class ClubMenuScene implements Scene {
     this.root.addChild(this.hdDealLayer);
   }
 
-  private drawFannedBannerWord(word: string, centerX: number, centerY: number, tiltSign: -1 | 1): void {
-    const g = new Container();
-    g.position.set(centerX, centerY);
-    const total = word.length;
-    for (let i = 0; i < total; i++) {
-      const offset = i - (total - 1) * 0.5;
-      const cardContainer = new Container();
-      cardContainer.position.set(offset * 34, Math.abs(offset) * 3.5);
-      cardContainer.rotation = (offset * 0.08 + tiltSign * 0.04);
+  private buildHdBottomBar(ctx: GameContext): void {
+    const baseY = 344;
+    const { hdMenu } = ctx.assets;
 
-      const cardG = new Graphics();
-      cardG.roundRect(-16, -23, 34, 48, 4).fill({ color: 0x000000, alpha: 0.4 });
-      cardG.roundRect(-17, -24, 34, 48, 4).fill(0xfff9ea).stroke({ color: 0xd4a438, width: 1.2 });
-      cardG.roundRect(-14, -21, 28, 42, 2.5).stroke({ color: 0x8f1a24, width: 0.7, alpha: 0.7 });
-      cardContainer.addChild(cardG);
+    this.hdF2Frames = sliceLinearSheet(hdMenu.f2, 3);
+    this.hdF3Frames = sliceLinearSheet(hdMenu.f3, 3);
+    const f4Frames = sliceLinearSheet(hdMenu.f4, 2);
+    this.hdF4IdleTex = f4Frames[0];
+    this.hdF4ActiveTex = f4Frames[1];
+    this.hdF5Frames = sliceLinearSheet(hdMenu.f5, 3);
+    const keyFrames = sliceLinearSheet(hdMenu.keys, 5);
 
-      const letter = createHdTextSprite(word[i], 30, 36, {
-        font: 'bold 22px Georgia, "Times New Roman", serif',
-        fill: ['#d91e2e', '#850d17'],
-        align: 'center',
-        shadowColor: 'rgba(0,0,0,0.18)',
-        shadowBlur: 2,
-      });
-      letter.anchor.set(0.5);
-      cardContainer.addChild(letter);
-
-      g.addChild(cardContainer);
+    // Grounded contact shadows beneath mascots and mechanical keycaps
+    const shadowGfx = new Graphics();
+    for (const btn of BUTTON_HITBOXES) {
+      shadowGfx.ellipse(btn.mascotX, baseY - 1, 25, 4.2).fill({ color: 0x000000, alpha: 0.44 });
+      shadowGfx.ellipse(btn.keyX, baseY - 0.5, 17, 3.2).fill({ color: 0x000000, alpha: 0.48 });
     }
-    this.root.addChild(g);
+    this.hdButtonsLayer.addChild(shadowGfx);
+
+    this.hdHoverHaloLayer.removeChildren();
+    this.hdButtonsLayer.addChild(this.hdHoverHaloLayer);
+
+    const f1 = createHdMenuRigSprite(hdMenu.f1, BUTTON_HITBOXES[0].mascotX, baseY, 42);
+    this.hdButtonsLayer.addChild(f1.rig);
+
+    const f2 = createHdMenuRigSprite(
+      this.hdF2Frames[ctx.config.soundMusicEnabled ? 0 : 2],
+      BUTTON_HITBOXES[1].mascotX,
+      baseY,
+      54,
+    );
+    this.hdF2Spr = f2.sprite;
+    this.hdButtonsLayer.addChild(f2.rig);
+
+    const f3 = createHdMenuRigSprite(
+      this.hdF3Frames[ctx.config.clubTable - 1] ?? this.hdF3Frames[0],
+      BUTTON_HITBOXES[2].mascotX,
+      baseY,
+      50,
+    );
+    this.hdF3Spr = f3.sprite;
+    this.hdButtonsLayer.addChild(f3.rig);
+
+    const f4Tex = this.loginPhase !== 'idle' ? this.hdF4ActiveTex : this.hdF4IdleTex;
+    const f4 = createHdMenuRigSprite(f4Tex, BUTTON_HITBOXES[3].mascotX, baseY, 46);
+    this.hdF4Spr = f4.sprite;
+    this.hdButtonsLayer.addChild(f4.rig);
+
+    const f5 = createHdMenuRigSprite(this.hdF5Frames[0], BUTTON_HITBOXES[4].mascotX, baseY, 50);
+    this.hdF5Spr = f5.sprite;
+    this.hdButtonsLayer.addChild(f5.rig);
+
+    this.hdKeyRigs = [];
+    this.hdKeySprites = [];
+    for (let i = 0; i < BUTTON_HITBOXES.length; i++) {
+      const k = createHdMenuRigSprite(keyFrames[i], BUTTON_HITBOXES[i].keyX, baseY, 31);
+      this.hdKeyRigs.push(k.rig);
+      this.hdKeySprites.push(k.sprite);
+      this.hdButtonsLayer.addChild(k.rig);
+    }
+
+    this.hdHoverTooltipLayer.removeChildren();
+    this.hdButtonsLayer.addChild(this.hdHoverTooltipLayer);
   }
 
   private renderHdButtons(): void {
-    if (!this.ctx || this.ctx.getGraphicsMode() !== 'hd') return;
-    this.hdButtonsLayer.removeChildren();
+    if (!this.ctx || this.ctx.getGraphicsMode() !== 'hd' || this.hdKeySprites.length === 0) return;
+
+    this.hdHoverHaloLayer.removeChildren();
+    this.hdHoverTooltipLayer.removeChildren();
 
     const { config } = this.ctx;
     const romanTable = ['I', 'II', 'III'][config.clubTable - 1] ?? 'I';
+    const baseY = 344;
 
-    for (const btn of BUTTON_HITBOXES) {
+    for (let i = 0; i < BUTTON_HITBOXES.length; i++) {
+      const btn = BUTTON_HITBOXES[i];
       const hovered = this.hoveredButtonId === btn.id;
       const active =
         (btn.id === 4 && this.loginPhase !== 'idle') ||
         (btn.id === 2 && !config.soundMusicEnabled);
 
-      const bx = btn.x + 8;
-      const bw = btn.w - 12;
-      const by = 298;
-      const bh = 42;
+      const rig = this.hdKeyRigs[i];
+      const keySpr = this.hdKeySprites[i];
+      if (rig && keySpr) {
+        rig.y = baseY + (active ? 1.2 : hovered ? -1.5 : 0);
+        keySpr.tint = hovered ? 0xfff2c2 : active ? 0xd9cbb8 : 0xffffff;
+      }
 
-      const pill = new Graphics();
-      pill
-        .roundRect(bx, by + 2, bw, bh, 7)
-        .fill({ color: 0x000000, alpha: 0.45 });
-      pill
-        .roundRect(bx, by, bw, bh, 7)
-        .fill({ color: hovered ? 0x1e2824 : 0x111618, alpha: 0.94 })
-        .stroke({
-          color: hovered ? 0xffe28a : active ? 0xe07050 : 0xc89d3c,
-          width: hovered ? 1.6 : 1.1,
+      if (!hovered && !active) continue;
+
+      if (hovered) {
+        const glow = new Sprite(getWarmGlowTexture());
+        glow.anchor.set(0.5);
+        glow.position.set(btn.mascotX + 18, 322);
+        glow.scale.set(1.45, 0.72);
+        glow.alpha = 0.44;
+        glow.blendMode = 'add';
+        this.hdHoverHaloLayer.addChild(glow);
+
+        const halo = new Graphics();
+        halo
+          .roundRect(btn.x + 2, 290, btn.w - 4, 57, 8)
+          .fill({ color: 0xf7d478, alpha: 0.08 })
+          .stroke({ color: 0xf7d478, width: 1.15, alpha: 0.78 });
+        this.hdHoverHaloLayer.addChild(halo);
+
+        let caption = btn.label;
+        if (btn.id === 2) caption = config.soundMusicEnabled ? 'AUDIO: ON' : 'AUDIO: OFF';
+        else if (btn.id === 3) caption = `TABLE ${romanTable}`;
+        else if (btn.id === 4 && this.ctx.sessionPlayer.loggedIn) caption = this.ctx.sessionPlayer.name;
+
+        const pillW = Math.max(66, Math.min(110, caption.length * 6.8 + 20));
+        const pillX = Math.max(6, Math.min(SCREEN_WIDTH - pillW - 6, btn.x + (btn.w - pillW) * 0.5));
+        const pillY = 273;
+
+        const tipBg = new Graphics();
+        tipBg
+          .roundRect(pillX, pillY, pillW, 14.5, 4)
+          .fill({ color: 0x101518, alpha: 0.92 })
+          .stroke({ color: 0xe6be63, width: 0.9, alpha: 0.9 });
+        this.hdHoverTooltipLayer.addChild(tipBg);
+
+        const tipTxt = createHdTextSprite(caption, pillW - 6, 14, {
+          font: 'bold 7.5px "Segoe UI", system-ui, sans-serif',
+          fill: '#fff3cb',
+          align: 'center',
         });
-      pill.roundRect(bx + 2.5, by + 2.5, bw - 5, bh - 5, 5).stroke({
-        color: hovered ? 0xffe28a : 0xc89d3c,
-        width: 0.6,
-        alpha: 0.4,
-      });
-      this.hdButtonsLayer.addChild(pill);
-
-      const badge = createHdTextSprite(btn.key, 34, 16, {
-        font: 'bold 8.5px Georgia, "Times New Roman", serif',
-        fill: hovered ? '#fff4c2' : '#e0b85c',
-        align: 'center',
-      });
-      badge.anchor.set(0.5);
-      badge.position.set(bx + bw * 0.5, by + 13);
-      this.hdButtonsLayer.addChild(badge);
-
-      let sub = btn.label;
-      if (btn.id === 2) sub = config.soundMusicEnabled ? 'AUDIO: ON' : 'AUDIO: OFF';
-      else if (btn.id === 3) sub = `TABLE ${romanTable}`;
-      else if (btn.id === 4 && this.ctx.sessionPlayer.loggedIn) sub = this.ctx.sessionPlayer.name;
-
-      const subSpr = createHdTextSprite(sub, bw - 8, 16, {
-        font: '600 8.5px "Segoe UI", system-ui, sans-serif',
-        fill: hovered ? '#ffffff' : '#dfd6c1',
-        align: 'center',
-      });
-      subSpr.anchor.set(0.5);
-      subSpr.position.set(bx + bw * 0.5, by + 29);
-      this.hdButtonsLayer.addChild(subSpr);
+        tipTxt.anchor.set(0.5);
+        tipTxt.position.set(pillX + pillW * 0.5, pillY + 7.4);
+        this.hdHoverTooltipLayer.addChild(tipTxt);
+      } else if (active) {
+        const activeRing = new Graphics();
+        activeRing
+          .roundRect(btn.x + 2, 290, btn.w - 4, 57, 8)
+          .stroke({ color: 0xe07050, width: 1.0, alpha: 0.65 });
+        this.hdHoverHaloLayer.addChild(activeRing);
+      }
     }
   }
 
@@ -418,6 +499,9 @@ export class ClubMenuScene implements Scene {
     }
 
     // HD Scorecard Leaderboard
+    if (this.hdF3Spr && this.hdF3Frames.length >= 3) {
+      this.hdF3Spr.texture = this.hdF3Frames[tableId - 1] ?? this.hdF3Frames[0];
+    }
     this.hdTableLayer.removeChildren();
     const roman = ['I', 'II', 'III'][tableId - 1] ?? 'I';
     const suitColors = [0xb81a28, 0x1b202b, 0x7b4c14];
@@ -450,12 +534,28 @@ export class ClubMenuScene implements Scene {
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       const y = 145 + i * 9.5;
+      const isNamed = row.name.trim().length > 0 && row.name !== 'Noname';
       const isSignedUser =
         this.ctx.sessionPlayer.loggedIn && row.name.toLowerCase() === this.ctx.sessionPlayer.name.toLowerCase();
+      const isHoveredRow = isNamed && this.hoveredRowIndex === i;
 
-      const nameSpr = createHdTextSprite(`${i + 1}. ${row.name.slice(0, 8)}`, 128, 11, {
+      if (isSignedUser || isHoveredRow) {
+        const hl = new Graphics();
+        hl.roundRect(168, y - 0.5, 140, 9.2, 2).fill({
+          color: isSignedUser ? 0xb81a28 : 0xc99c38,
+          alpha: isHoveredRow ? 0.16 : 0.08,
+        });
+        hl.roundRect(332, y - 0.5, 140, 9.2, 2).fill({
+          color: isSignedUser ? 0xb81a28 : 0xc99c38,
+          alpha: isHoveredRow ? 0.16 : 0.08,
+        });
+        this.hdTableLayer.addChild(hl);
+      }
+
+      const prefix = isSignedUser ? '▶ ' : '';
+      const nameSpr = createHdTextSprite(`${prefix}${i + 1}. ${row.name.slice(0, 8)}`, 132, 11, {
         font: `${isSignedUser ? 'bold' : '600'} 8px "Segoe UI", system-ui, sans-serif`,
-        fill: isSignedUser ? '#b81a28' : '#2a221a',
+        fill: isSignedUser ? '#b81a28' : isHoveredRow ? '#7a4b0c' : '#2a221a',
         align: 'left',
       });
       nameSpr.position.set(172, y);
@@ -464,7 +564,7 @@ export class ClubMenuScene implements Scene {
       if (row.name !== 'Noname' || row.score !== 0) {
         const scoreSpr = createHdTextSprite(`$${row.score}`, 120, 11, {
           font: `${isSignedUser ? 'bold' : '600'} 8px "Segoe UI", system-ui, sans-serif`,
-          fill: isSignedUser ? '#b81a28' : '#19202b',
+          fill: isSignedUser ? '#b81a28' : isHoveredRow ? '#7a4b0c' : '#19202b',
           align: 'right',
         });
         scoreSpr.position.set(342, y);
@@ -508,6 +608,9 @@ export class ClubMenuScene implements Scene {
     }
 
     // HD Prompt & Input Field
+    if (this.hdF4Spr && this.hdF4IdleTex && this.hdF4ActiveTex) {
+      this.hdF4Spr.texture = this.loginPhase !== 'idle' ? this.hdF4ActiveTex : this.hdF4IdleTex;
+    }
     this.hdInputLayer.removeChildren();
 
     const promptLabel = this.loginPhase === 'enteringPassword' ? 'PASSWORD:' : 'NEW PLAYER:';
@@ -556,7 +659,6 @@ export class ClubMenuScene implements Scene {
     this.pendingName = '';
     this.pendingPassword = '';
     this.existingPasswordToMatch = null;
-    this.existingScoreForMatch = 0;
     this.autoLaunchAfterLogin = autoLaunchAfter;
     this.cursorBlinkMs = 0;
     this.renderPromptInput();
@@ -583,10 +685,8 @@ export class ClubMenuScene implements Scene {
     const existing = lookupPlayer(this.ctx.highScores, this.ctx.config.clubTable, this.pendingName);
     if (existing) {
       this.existingPasswordToMatch = existing.password;
-      this.existingScoreForMatch = existing.score;
     } else {
       this.existingPasswordToMatch = null;
-      this.existingScoreForMatch = 0;
     }
     this.loginPhase = 'enteringPassword';
     this.pendingPassword = '';
@@ -603,14 +703,7 @@ export class ClubMenuScene implements Scene {
       return;
     }
 
-    const carryover = this.existingPasswordToMatch !== null ? this.existingScoreForMatch - 200 : 0;
-    this.ctx.sessionPlayer = {
-      loggedIn: true,
-      name: this.pendingName,
-      password: pwd,
-      clubCarryover: carryover,
-    };
-    this.ctx.onStateChange?.();
+    this.ctx.signInPlayer(this.pendingName, pwd);
     this.ctx.audio.sfx.coinChime();
 
     const shouldLaunch = this.autoLaunchAfterLogin;
@@ -636,6 +729,7 @@ export class ClubMenuScene implements Scene {
       this.f1FanSpr.visible = false;
     } else {
       this.hdDealLayer.visible = true;
+      this.hdDealer?.setShuffleFrame(0);
     }
     this.dealStage = { step: 'head', timer: 0, frameIdx: 0 };
   }
@@ -647,19 +741,23 @@ export class ClubMenuScene implements Scene {
     this.ctx.audio.setEnabled(nextEnabled);
     this.ctx.persistConfig();
 
-    if (this.ctx.getGraphicsMode() === 'hd') {
+    const isHd = this.ctx.getGraphicsMode() === 'hd';
+    const frames = isHd ? this.hdF2Frames : this.f2Frames;
+    const target = isHd ? this.hdF2Spr : this.f2Spr;
+    if (!target || frames.length < 3) {
       this.renderHdButtons();
       return;
     }
 
-    const seq = nextEnabled ? [this.f2Frames[2], this.f2Frames[1], this.f2Frames[0]] : [this.f2Frames[0], this.f2Frames[1], this.f2Frames[2]];
+    const seq = nextEnabled ? [frames[2], frames[1], frames[0]] : [frames[0], frames[1], frames[2]];
     this.activeAnim = {
       frames: seq,
       elapsed: 0,
       frameDurationMs: 90,
-      target: this.f2Spr,
+      target,
       onComplete: () => {
-        this.f2Spr.texture = this.f2Frames[nextEnabled ? 0 : 2];
+        target.texture = frames[nextEnabled ? 0 : 2];
+        this.renderHdButtons();
       },
     };
   }
@@ -668,13 +766,10 @@ export class ClubMenuScene implements Scene {
     if (!this.ctx || this.inputBlocked || this.activeAnim) return;
     const nextTable = ((this.ctx.config.clubTable % 3) + 1) as ClubTableId;
     this.ctx.config.clubTable = nextTable;
-    this.ctx.sessionPlayer = {
-      loggedIn: false,
-      name: '',
-      password: '',
-      clubCarryover: 0,
-    };
     this.cancelLoginFlow();
+    if (this.ctx.sessionPlayer.loggedIn) {
+      this.ctx.signInPlayer(this.ctx.sessionPlayer.name, this.ctx.sessionPlayer.password);
+    }
     this.ctx.persistConfig();
     this.ctx.audio.sfx.cardSlide();
     this.renderLeaderboard();
@@ -685,17 +780,20 @@ export class ClubMenuScene implements Scene {
     this.inputBlocked = true;
     this.ctx.audio.sfx.exitSequence();
 
-    if (this.ctx.getGraphicsMode() === 'hd') {
+    const isHd = this.ctx.getGraphicsMode() === 'hd';
+    const frames = isHd ? this.hdF5Frames : this.f5Frames;
+    const target = isHd ? this.hdF5Spr : this.f5Spr;
+    if (!target || frames.length < 3) {
       this.ctx.audio.music.stop();
-      this.ctx.goTo('intro', 420);
+      this.ctx.goTo('intro', 250);
       return;
     }
 
     this.activeAnim = {
-      frames: [this.f5Frames[0], this.f5Frames[1], this.f5Frames[2]],
+      frames: [frames[0], frames[1], frames[2]],
       elapsed: 0,
       frameDurationMs: 250,
-      target: this.f5Spr,
+      target,
       onComplete: () => {
         this.ctx?.audio.music.stop();
         this.ctx?.goTo('intro', 250);
@@ -730,7 +828,9 @@ export class ClubMenuScene implements Scene {
       }
       if (e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const code = e.key.charCodeAt(0);
-        if (code >= 0x20 && code <= 0x7a) {
+        const isAsciiPrintable = code >= 0x20 && code <= 0x7e;
+        const isCyrillic = (code >= 0x0400 && code <= 0x04ff) || code === 0x2116;
+        if (isAsciiPrintable || isCyrillic) {
           e.preventDefault();
           if (this.loginPhase === 'enteringName' && this.pendingName.length < 8) {
             this.pendingName += e.key;
@@ -761,10 +861,27 @@ export class ClubMenuScene implements Scene {
     }
   };
 
+  private hitTestLeaderboardRow(pt: { x: number; y: number }): number | null {
+    if (!this.ctx) return null;
+    const isHd = this.ctx.getGraphicsMode() === 'hd';
+    let idx = -1;
+    if (isHd) {
+      if (pt.x >= 166 && pt.x <= 474 && pt.y >= 144 && pt.y < 239.5) {
+        idx = Math.floor((pt.y - 144.5) / 9.5);
+      }
+    } else if (pt.x >= 192 && pt.x <= 440 && pt.y >= 115 && pt.y < 215) {
+      idx = Math.floor((pt.y - 115) / 10);
+    }
+    if (idx < 0 || idx >= 10) return null;
+    const row = this.ctx.highScores[this.ctx.config.clubTable]?.[idx];
+    if (!row || row.name.trim().length === 0 || row.name === 'Noname') return null;
+    return idx;
+  }
+
   private handlePointerMove = (pt: { x: number; y: number }): void => {
     if (!this.ctx || this.inputBlocked) return;
     let hitId: number | null = null;
-    if (pt.y >= 292 && pt.y <= 349) {
+    if (pt.y >= 288 && pt.y <= 349) {
       for (const btn of BUTTON_HITBOXES) {
         if (pt.x >= btn.x && pt.x <= btn.x + btn.w) {
           hitId = btn.id;
@@ -772,17 +889,36 @@ export class ClubMenuScene implements Scene {
         }
       }
     }
+    const rowIdx = this.hitTestLeaderboardRow(pt);
     const overPrompt = pt.x >= 170 && pt.x <= 470 && pt.y >= 220 && pt.y <= 268;
-    this.ctx.stage.getCanvas().style.cursor = hitId || overPrompt ? 'pointer' : 'default';
+    this.ctx.stage.getCanvas().style.cursor = hitId || overPrompt || rowIdx !== null ? 'pointer' : 'default';
 
     if (hitId !== this.hoveredButtonId) {
       this.hoveredButtonId = hitId;
       this.renderHdButtons();
     }
+    if (rowIdx !== this.hoveredRowIndex) {
+      this.hoveredRowIndex = rowIdx;
+      this.renderLeaderboard();
+    }
   };
 
   private handlePointerDown = (pt: { x: number; y: number }): void => {
-    if (this.inputBlocked) return;
+    if (!this.ctx || this.inputBlocked) return;
+
+    // One-click sign-in on an existing player row in the leaderboard
+    const rowIdx = this.hitTestLeaderboardRow(pt);
+    if (rowIdx !== null) {
+      const row = this.ctx.highScores[this.ctx.config.clubTable]?.[rowIdx];
+      if (row && row.name !== 'Noname') {
+        this.cancelLoginFlow();
+        this.ctx.signInPlayer(row.name, row.password);
+        this.ctx.audio.sfx.coinChime();
+        this.renderLeaderboard();
+        this.renderPromptInput();
+        return;
+      }
+    }
 
     // Clicking the prompt area starts/focuses F4 login
     if (pt.x >= 170 && pt.x <= 470 && pt.y >= 220 && pt.y <= 268) {
@@ -791,7 +927,7 @@ export class ClubMenuScene implements Scene {
     }
 
     // Bottom bar F1..F5 buttons
-    if (pt.y >= 292 && pt.y <= 349) {
+    if (pt.y >= 288 && pt.y <= 349) {
       for (const btn of BUTTON_HITBOXES) {
         if (pt.x >= btn.x && pt.x <= btn.x + btn.w) {
           if (btn.id === 1) this.triggerF1StartGame();
@@ -865,26 +1001,23 @@ export class ClubMenuScene implements Scene {
         }
       }
 
-      // Smooth 60fps cascading arc for HD dealer showcase
+      // Raster 16-frame card-spring shuffle flourish for HD dealer
       if (!isEga && this.hdDealer) {
-        this.hdDealer.setTableExpression('idle', this.hdElapsedMs);
-        const showCascade = this.dealStage.step === 'col1' || this.dealStage.step === 'col2';
-        const t = Math.min(1, this.dealStage.timer / (11 * 45));
-        const forward = this.dealStage.step === 'col1';
-        for (let i = 0; i < this.hdDealCards.length; i++) {
-          const spr = this.hdDealCards[i];
-          spr.visible = showCascade || this.dealStage.step === 'pause';
-          if (showCascade) {
-            const p = Math.max(0, Math.min(1, t * 1.4 - i * 0.04));
-            const sx = forward ? -32 : 32;
-            const ex = forward ? 32 : -32;
-            spr.position.set(SCREEN_WIDTH * 0.5 + sx + (ex - sx) * p, 184 - Math.sin(p * Math.PI) * 24);
-            spr.rotation = (p - 0.5) * (forward ? 0.8 : -0.8);
-          } else if (this.dealStage.step === 'pause') {
-            spr.position.set(SCREEN_WIDTH * 0.5 + (i - 5.5) * 3, 184);
-            spr.rotation = (i - 5.5) * 0.06;
-          }
+        let shuffleIdx = 0;
+        if (this.dealStage.step === 'head') {
+          const p = Math.min(1, this.dealStage.timer / 180);
+          shuffleIdx = Math.min(4, Math.floor(p * 5));
+        } else if (this.dealStage.step === 'col1') {
+          const p = Math.min(1, this.dealStage.timer / (11 * 45));
+          shuffleIdx = 5 + Math.min(7, Math.floor(p * 8));
+        } else if (this.dealStage.step === 'pause') {
+          const p = Math.min(1, this.dealStage.timer / 320);
+          shuffleIdx = 13 + Math.min(2, Math.floor(p * 3));
+        } else if (this.dealStage.step === 'col2') {
+          const p = Math.min(1, this.dealStage.timer / (11 * 45));
+          shuffleIdx = Math.max(0, 12 - Math.floor(p * 13));
         }
+        this.hdDealer.setShuffleFrame(shuffleIdx);
       }
     }
 

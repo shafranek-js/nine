@@ -1,7 +1,7 @@
 import { CanvasSource, Texture } from 'pixi.js';
 import { cardKey } from '../core/rules';
 import type { Rank, Suit } from '../core/types';
-import { HD_RENDER_SCALE } from './StageApp';
+import { HD_RENDER_SCALE, type AspectMode } from './StageApp';
 
 export interface HdCardLibrary {
   readonly cards: Map<string, Texture>;
@@ -10,13 +10,17 @@ export interface HdCardLibrary {
   readonly miniCardBack: Texture;
 }
 
-let cachedLibrary: HdCardLibrary | null = null;
+const cachedLibraries: Record<AspectMode, HdCardLibrary | null> = {
+  '4:3': null,
+  '1:1': null,
+};
 let hdCourtArtMap: Map<string, HTMLImageElement> = new Map();
 
 /** Registers preloaded illustrated HD court portraits and invalidates cached card textures. */
 export function setHdCourtArt(artMap: Map<string, HTMLImageElement>): void {
   hdCourtArtMap = artMap;
-  cachedLibrary = null;
+  cachedLibraries['4:3'] = null;
+  cachedLibraries['1:1'] = null;
 }
 
 export function createHdTexture(
@@ -196,15 +200,16 @@ function drawCardStockBase(ctx: CanvasRenderingContext2D, w: number, h: number, 
 }
 
 function drawPipLayout(ctx: CanvasRenderingContext2D, suit: Suit, rank: Rank, w: number, h: number): void {
-  const left = 29;
-  const right = w - 25;
+  const narrow = w < 75;
+  const left = narrow ? 22.5 : 29;
+  const right = w - (narrow ? 16 : 25);
   const cx = (left + right) * 0.5;
-  const top = 19;
-  const bot = h - 18;
+  const top = narrow ? 18.5 : 19;
+  const bot = h - (narrow ? 17.5 : 18);
   const cy = (top + bot) * 0.5;
   const midY1 = (top + cy) * 0.5;
   const midY2 = (cy + bot) * 0.5;
-  const pip = 11.8;
+  const pip = narrow ? 9.6 : 11.8;
 
   const drawMirrored = (px: number, py: number, flip = false) => {
     ctx.save();
@@ -249,8 +254,9 @@ function drawPipLayout(ctx: CanvasRenderingContext2D, suit: Suit, rank: Rank, w:
 }
 
 function drawRoyalCharacter(ctx: CanvasRenderingContext2D, suit: Suit, rank: Rank, w: number, h: number): void {
-  const cx = w * 0.5;
-  const cy = h * 0.51;
+  const narrow = w < 75;
+  const cx = narrow ? w * 0.52 : w * 0.5;
+  const cy = narrow ? h * 0.53 : h * 0.51;
   const red = isRedSuit(suit);
   const bodyPrimary = red ? '#d92334' : '#26449e';
   const bodyDark = red ? '#870d19' : '#132258';
@@ -258,21 +264,22 @@ function drawRoyalCharacter(ctx: CanvasRenderingContext2D, suit: Suit, rank: Ran
 
   // Subtle soft radial halo behind the character on open card stock (no inner box border)
   ctx.save();
-  const halo = ctx.createRadialGradient(cx, cy, 4, cx, cy, 34);
+  const haloR = narrow ? 26 : 34;
+  const halo = ctx.createRadialGradient(cx, cy, 4, cx, cy, haloR);
   halo.addColorStop(0, red ? 'rgba(220, 40, 60, 0.12)' : 'rgba(38, 68, 158, 0.12)');
   halo.addColorStop(0.65, 'rgba(184, 146, 62, 0.05)');
   halo.addColorStop(1, 'rgba(184, 146, 62, 0)');
   ctx.fillStyle = halo;
   ctx.beginPath();
-  ctx.arc(cx, cy, 34, 0, Math.PI * 2);
+  ctx.arc(cx, cy, haloR, 0, Math.PI * 2);
   ctx.fill();
 
   const illustrated = hdCourtArtMap.get(cardKey({ suit, rank }));
   if (illustrated && illustrated.complete && illustrated.naturalWidth > 0) {
     // Bottom-right corner has no index, so expand portrait down & right cleanly inside the border
-    const artSize = 76;
-    const dx = 8.5;
-    const dy = 9.5;
+    const artSize = narrow ? 53 : 76;
+    const dx = narrow ? 7.5 : 8.5;
+    const dy = narrow ? 23 : 9.5;
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(illustrated, dx, dy, artSize, artSize);
@@ -280,9 +287,10 @@ function drawRoyalCharacter(ctx: CanvasRenderingContext2D, suit: Suit, rank: Ran
     return;
   }
 
-  // Scale character cleanly to 0.86x inside the royal frame so arms/spear never touch card indices
+  // Scale character cleanly inside the royal frame so arms/spear never touch card indices
+  const charScale = narrow ? 0.72 : 0.86;
   ctx.translate(cx, cy);
-  ctx.scale(0.86, 0.86);
+  ctx.scale(charScale, charScale);
   ctx.translate(-cx, -cy);
 
   // Gentle shadow under character
@@ -455,26 +463,30 @@ function drawRoyalCharacter(ctx: CanvasRenderingContext2D, suit: Suit, rank: Ran
   ctx.restore();
 }
 
-function drawFullHdCard(suit: Suit, rank: Rank): Texture {
-  return createHdTexture(88, 89, (ctx, w, h) => {
-    drawCardStockBase(ctx, w, h, 6);
+function drawFullHdCard(suit: Suit, rank: Rank, cardW: number, cardH: number): Texture {
+  const narrow = cardW < 75;
+  return createHdTexture(cardW, cardH, (ctx, w, h) => {
+    drawCardStockBase(ctx, w, h, narrow ? 5.5 : 6);
 
     if (rank === 14) {
       // Ace Art-Deco sunburst medallion
-      const cx = w * 0.5 + 1.5;
-      const cy = h * 0.52;
+      const cx = w * 0.5 + (narrow ? 1.2 : 1.5);
+      const cy = h * 0.53;
+      const rInner = narrow ? 16 : 21;
+      const rOuter = narrow ? 19.5 : 25;
       ctx.save();
       ctx.strokeStyle = 'rgba(184, 146, 62, 0.52)';
       ctx.lineWidth = 0.9;
       ctx.beginPath();
-      ctx.arc(cx, cy, 21, 0, Math.PI * 2);
+      ctx.arc(cx, cy, rInner, 0, Math.PI * 2);
       ctx.stroke();
       ctx.beginPath();
-      ctx.arc(cx, cy, 25, 0, Math.PI * 2);
+      ctx.arc(cx, cy, rOuter, 0, Math.PI * 2);
       ctx.strokeStyle = 'rgba(184, 146, 62, 0.25)';
       ctx.stroke();
       ctx.restore();
-      drawSuitShape(ctx, suit, cx, cy, suit === 1 ? 33 : 30);
+      const aceSize = narrow ? (suit === 1 ? 26 : 24) : suit === 1 ? 33 : 30;
+      drawSuitShape(ctx, suit, cx, cy, aceSize);
     } else if (rank >= 11) {
       drawRoyalCharacter(ctx, suit, rank, w, h);
     } else {
@@ -488,54 +500,62 @@ function drawFullHdCard(suit: Suit, rank: Rank): Texture {
     // Top-left corner index only (matches original 1993 Nine card layout)
     ctx.save();
     ctx.fillStyle = inkColor;
-    ctx.font = `bold ${label.length > 1 ? 10.5 : 12}px Georgia, "Times New Roman", serif`;
+    const fontSize = narrow ? (label.length > 1 ? 9.5 : 11) : label.length > 1 ? 10.5 : 12;
+    ctx.font = `bold ${fontSize}px Georgia, "Times New Roman", serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.fillText(label, 11.5, 6);
-    drawSuitShape(ctx, suit, 11.5, 22, 9);
+    const idxX = narrow ? 9.5 : 11.5;
+    ctx.fillText(label, idxX, narrow ? 5.5 : 6);
+    drawSuitShape(ctx, suit, idxX, narrow ? 19.5 : 22, narrow ? 7.8 : 9);
     ctx.restore();
   });
 }
 
-function drawMiniHdCard(suit: Suit, rank: Rank): Texture {
-  return createHdTexture(38, 37, (ctx, w, h) => {
-    drawCardStockBase(ctx, w, h, 3.6);
+function drawMiniHdCard(suit: Suit, rank: Rank, miniW: number, miniH: number): Texture {
+  const narrow = miniW < 33;
+  return createHdTexture(miniW, miniH, (ctx, w, h) => {
+    drawCardStockBase(ctx, w, h, narrow ? 3.2 : 3.6);
     const red = isRedSuit(suit);
     const inkColor = red ? '#bd1829' : '#181e2b';
     const label = rankLabel(rank);
 
     // Crisp corner rank
     ctx.fillStyle = inkColor;
-    ctx.font = `bold ${label.length > 1 ? 8.5 : 9.5}px Georgia, "Times New Roman", serif`;
+    const fontSize = narrow ? (label.length > 1 ? 7.6 : 8.6) : label.length > 1 ? 8.5 : 9.5;
+    ctx.font = `bold ${fontSize}px Georgia, "Times New Roman", serif`;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillText(label, 5, 4);
+    ctx.fillText(label, narrow ? 3.8 : 5, narrow ? 3.2 : 4);
 
     // Gold inner tint for court cards & aces so key cards pop cleanly on board
     if (rank >= 11 || rank === 14) {
       ctx.fillStyle = red ? 'rgba(200, 30, 50, 0.08)' : 'rgba(20, 40, 110, 0.08)';
-      roundRectPath(ctx, 5, 5, w - 10, h - 10, 2);
+      roundRectPath(ctx, narrow ? 3.8 : 5, narrow ? 4.2 : 5, w - (narrow ? 7.6 : 10), h - (narrow ? 8.4 : 10), 2);
       ctx.fill();
     }
 
     const illustrated = rank >= 11 ? hdCourtArtMap.get(cardKey({ suit, rank })) : undefined;
     if (illustrated && illustrated.complete && illustrated.naturalWidth > 0) {
-      drawSuitShape(ctx, suit, 7.6, 16.5, 6.2);
+      drawSuitShape(ctx, suit, narrow ? 6.4 : 7.6, narrow ? 14.5 : 16.5, narrow ? 5.2 : 6.2);
       ctx.save();
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
-      ctx.drawImage(illustrated, 10.5, 6.5, 25, 25);
+      if (narrow) {
+        ctx.drawImage(illustrated, 6.2, 13.5, 19.5, 19.5);
+      } else {
+        ctx.drawImage(illustrated, 10.5, 6.5, 25, 25);
+      }
       ctx.restore();
       return;
     }
 
-    drawSuitShape(ctx, suit, w * 0.59, h * 0.58, rank >= 11 ? 14.5 : 15.5);
+    drawSuitShape(ctx, suit, w * (narrow ? 0.56 : 0.59), h * (narrow ? 0.61 : 0.58), narrow ? 12.2 : rank >= 11 ? 14.5 : 15.5);
 
     // Tiny royal crown dot accent in upper-right for K/Q/J
     if (rank >= 11) {
       ctx.fillStyle = '#d49d2a';
       ctx.beginPath();
-      ctx.arc(w - 7.5, 7.5, 2.1, 0, Math.PI * 2);
+      ctx.arc(w - (narrow ? 6 : 7.5), narrow ? 6.5 : 7.5, narrow ? 1.8 : 2.1, 0, Math.PI * 2);
       ctx.fill();
     }
   });
@@ -598,8 +618,16 @@ function drawCardBack(w: number, h: number, radius: number): Texture {
   });
 }
 
-export function getHdCardLibrary(): HdCardLibrary {
-  if (cachedLibrary) return cachedLibrary;
+export function getHdCardLibrary(aspectMode: AspectMode = '4:3'): HdCardLibrary {
+  const existing = cachedLibraries[aspectMode];
+  if (existing) return existing;
+
+  const isSquare = aspectMode === '1:1';
+  const cardW = isSquare ? 64 : 88;
+  const cardH = 89;
+  const miniW = isSquare ? 28 : 38;
+  const miniH = isSquare ? 38 : 37;
+
   const cards = new Map<string, Texture>();
   const miniCards = new Map<string, Texture>();
   const suits: readonly Suit[] = [1, 2, 3, 4];
@@ -608,26 +636,34 @@ export function getHdCardLibrary(): HdCardLibrary {
   for (const suit of suits) {
     for (const rank of ranks) {
       const key = cardKey({ suit, rank });
-      cards.set(key, drawFullHdCard(suit, rank));
-      miniCards.set(key, drawMiniHdCard(suit, rank));
+      cards.set(key, drawFullHdCard(suit, rank, cardW, cardH));
+      miniCards.set(key, drawMiniHdCard(suit, rank, miniW, miniH));
     }
   }
 
-  cachedLibrary = {
+  const lib: HdCardLibrary = {
     cards,
     miniCards,
-    cardBack: drawCardBack(88, 89, 6),
-    miniCardBack: drawCardBack(38, 37, 3.6),
+    cardBack: drawCardBack(cardW, cardH, isSquare ? 5.5 : 6),
+    miniCardBack: drawCardBack(miniW, miniH, isSquare ? 3.2 : 3.6),
   };
-  return cachedLibrary;
+  cachedLibraries[aspectMode] = lib;
+  return lib;
 }
 
-let cachedRivalCardBack: Texture | null = null;
+const cachedRivalCardBacks: Record<AspectMode, Texture | null> = {
+  '4:3': null,
+  '1:1': null,
+};
 
-/** Crisp 14x16 Art-Deco miniature card back displayed in each rival's 2x6 table reserve. */
-export function getHdRivalCardBackTexture(): Texture {
-  if (cachedRivalCardBack) return cachedRivalCardBack;
-  cachedRivalCardBack = createHdTexture(14, 16, (ctx, w, h) => {
+/** Crisp Art-Deco miniature card back displayed in each rival's 2x6 table reserve. */
+export function getHdRivalCardBackTexture(aspectMode: AspectMode = '4:3'): Texture {
+  const existing = cachedRivalCardBacks[aspectMode];
+  if (existing) return existing;
+
+  const rw = aspectMode === '1:1' ? 12 : 14;
+  const rh = aspectMode === '1:1' ? 17 : 16;
+  const tex = createHdTexture(rw, rh, (ctx, w, h) => {
     roundRectPath(ctx, 0.4, 0.4, w - 0.8, h - 0.8, 2.2);
     ctx.fillStyle = '#faf2e1';
     ctx.fill();
@@ -675,5 +711,6 @@ export function getHdRivalCardBackTexture(): Texture {
     ctx.fill();
     ctx.restore();
   });
-  return cachedRivalCardBack;
+  cachedRivalCardBacks[aspectMode] = tex;
+  return tex;
 }

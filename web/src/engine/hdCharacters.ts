@@ -1,5 +1,42 @@
 import { Container, Graphics, Rectangle, Sprite, Texture } from 'pixi.js';
 import { createHdTexture } from './hdCards';
+import { HD_RENDER_SCALE } from './StageApp';
+
+// 640x350 logical space displayed inside a 4:3 frame stretches Y relative to X by 48/35;
+// counter-scale square-pixel character rigs symmetrically so visual area stays 1.0x and circles stay round.
+const EGA_ASPECT_COMP_X = Math.sqrt(48 / 35);
+const EGA_ASPECT_COMP_Y = Math.sqrt(35 / 48);
+
+let characterAspectMode: '1:1' | '4:3' = '4:3';
+const activeAspectRigs = new Set<Container>();
+
+function getAspectCompScale(): { sx: number; sy: number } {
+  return characterAspectMode === '4:3'
+    ? { sx: EGA_ASPECT_COMP_X, sy: EGA_ASPECT_COMP_Y }
+    : { sx: 1, sy: 1 };
+}
+
+function createAspectRig(x = 0, y = 0): Container {
+  const rig = new Container();
+  rig.position.set(x, y);
+  const { sx, sy } = getAspectCompScale();
+  rig.scale.set(sx, sy);
+  activeAspectRigs.add(rig);
+  return rig;
+}
+
+/** Updates aspect-ratio compensation on all active animated HD character rigs. */
+export function setHdCharacterAspectMode(mode: '1:1' | '4:3'): void {
+  characterAspectMode = mode;
+  const { sx, sy } = getAspectCompScale();
+  for (const rig of activeAspectRigs) {
+    if (rig.destroyed) {
+      activeAspectRigs.delete(rig);
+    } else {
+      rig.scale.set(sx, sy);
+    }
+  }
+}
 
 export interface HdTextOptions {
   readonly font?: string;
@@ -194,11 +231,101 @@ export function getHdCandelabraTexture(): Texture {
   return cachedCandelabraTex;
 }
 
+let hdCandelabraArtImg: HTMLImageElement | null = null;
+let cachedCandelabraFrames: { frames: Texture[]; cw: number; ch: number } | null = null;
+
+/** Registers the preloaded 6-frame raster candelabra sprite sheet. */
+export function setHdCandelabraArt(img: HTMLImageElement): void {
+  hdCandelabraArtImg = img;
+  cachedCandelabraFrames = null;
+}
+
+export interface HdCandelabraController {
+  readonly container: Container;
+  update(elapsedMs: number): void;
+}
+
+/** Creates an animated HD 3-candle candelabra with aspect compensation and subtle ambient candlelight glow. */
+export function createHdCandelabra(phaseOffsetMs = 0, mountOffsetY = 0): HdCandelabraController {
+  const container = new Container();
+  const rig = createAspectRig(0, 0);
+  container.addChild(rig);
+
+  let frames: Texture[] = [];
+  let cw = 186;
+  let ch = 240;
+
+  if (hdCandelabraArtImg && hdCandelabraArtImg.complete && hdCandelabraArtImg.naturalWidth > 0) {
+    if (!cachedCandelabraFrames) {
+      const baseTex = Texture.from(hdCandelabraArtImg);
+      baseTex.source.scaleMode = 'linear';
+      const cellW = Math.floor(hdCandelabraArtImg.naturalWidth / 6);
+      const cellH = hdCandelabraArtImg.naturalHeight;
+      const sliced: Texture[] = [];
+      for (let i = 0; i < 6; i++) {
+        sliced.push(new Texture({ source: baseTex.source, frame: new Rectangle(i * cellW, 0, cellW, cellH) }));
+      }
+      cachedCandelabraFrames = { frames: sliced, cw: cellW, ch: cellH };
+    }
+    frames = cachedCandelabraFrames.frames;
+    cw = cachedCandelabraFrames.cw;
+    ch = cachedCandelabraFrames.ch;
+  }
+
+  const targetH = 43.2;
+  const targetW = targetH * (cw / ch);
+
+  const glowOffsets = [
+    { x: -0.33 * targetW, y: mountOffsetY - 0.73 * targetH },
+    { x: 0.0, y: mountOffsetY - 0.86 * targetH },
+    { x: 0.33 * targetW, y: mountOffsetY - 0.70 * targetH },
+  ];
+  const glows: Sprite[] = glowOffsets.map((pos) => {
+    const glow = new Sprite(getWarmGlowTexture());
+    glow.anchor.set(0.5);
+    glow.position.set(pos.x, pos.y);
+    glow.scale.set(0.65);
+    glow.blendMode = 'add';
+    glow.alpha = 0.36;
+    rig.addChild(glow);
+    return glow;
+  });
+
+  const sprite = new Sprite(frames.length > 0 ? frames[0] : getHdCandelabraTexture());
+  sprite.anchor.set(0.5, 1);
+  sprite.position.set(0, mountOffsetY);
+  sprite.width = targetW;
+  sprite.height = targetH;
+  rig.addChild(sprite);
+
+  return {
+    container,
+    update(elapsedMs: number): void {
+      const t = elapsedMs + phaseOffsetMs;
+      if (frames.length > 0) {
+        const idx = Math.floor(t / 145) % frames.length;
+        sprite.texture = frames[idx];
+      }
+      for (let i = 0; i < glows.length; i++) {
+        const phase = t * 0.012 + i * 1.9;
+        glows[i].alpha = 0.34 + Math.sin(phase) * 0.08;
+      }
+    },
+  };
+}
+
 export interface TrumpeterTheme {
   readonly light: string;
   readonly main: string;
   readonly dark: string;
   readonly facingRight: boolean;
+}
+
+interface TrumpeterHuePreset {
+  readonly hueDeg: number;
+  readonly satMul: number;
+  readonly lumMul: number;
+  readonly desatTo?: number;
 }
 
 const TRUMPETER_THEMES: readonly TrumpeterTheme[] = [
@@ -207,6 +334,120 @@ const TRUMPETER_THEMES: readonly TrumpeterTheme[] = [
   { light: '#6cff8c', main: '#16c941', dark: '#076b20', facingRight: false },
   { light: '#ff6e66', main: '#de1d1d', dark: '#730707', facingRight: false },
 ];
+
+const TRUMPETER_HUE_PRESETS: readonly (TrumpeterHuePreset | null)[] = [
+  { hueDeg: 304, satMul: 0.90, lumMul: 1.06 }, // 0: Magenta
+  { hueDeg: 214, satMul: 0.16, lumMul: 1.48, desatTo: 0.16 }, // 1: Silver-Grey
+  { hueDeg: 132, satMul: 0.88, lumMul: 1.02 }, // 2: Emerald Green
+  null, // 3: Master Cherry Red
+];
+
+let hdTrumpeterSheetImg: HTMLImageElement | undefined;
+const hdTrumpeterFramesCache = new Map<number, { frames: Texture[]; cw: number; ch: number }>();
+
+/** Registers preloaded illustrated HD trumpeter sprite sheet (12 frames, 4x3 grid). */
+export function setHdTrumpeterArt(img?: HTMLImageElement | null): void {
+  hdTrumpeterSheetImg = img ?? undefined;
+  hdTrumpeterFramesCache.clear();
+}
+
+function hslToRgb01(hDeg: number, s: number, l: number): [number, number, number] {
+  const c = (1 - Math.abs(2 * l - 1)) * s;
+  const hp = ((hDeg % 360) + 360) % 360 / 60;
+  const x = c * (1 - Math.abs((hp % 2) - 1));
+  let r1 = 0;
+  let g1 = 0;
+  let b1 = 0;
+  if (hp < 1) [r1, g1, b1] = [c, x, 0];
+  else if (hp < 2) [r1, g1, b1] = [x, c, 0];
+  else if (hp < 3) [r1, g1, b1] = [0, c, x];
+  else if (hp < 4) [r1, g1, b1] = [0, x, c];
+  else if (hp < 5) [r1, g1, b1] = [x, 0, c];
+  else [r1, g1, b1] = [c, 0, x];
+  const m = l - c * 0.5;
+  return [r1 + m, g1 + m, b1 + m];
+}
+
+function getHdTrumpeterFrames(slotIdx: number): { frames: Texture[]; cw: number; ch: number } | null {
+  const img = hdTrumpeterSheetImg;
+  if (!isLoadedImage(img)) return null;
+
+  const themeIdx = slotIdx % TRUMPETER_THEMES.length;
+  const cached = hdTrumpeterFramesCache.get(themeIdx);
+  if (cached) return cached;
+
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
+  const cw = Math.floor(w / 4);
+  const ch = Math.floor(h / 3);
+  const preset = TRUMPETER_HUE_PRESETS[themeIdx];
+
+  let baseTex: Texture;
+  if (!preset) {
+    baseTex = Texture.from(img);
+    baseTex.source.scaleMode = 'linear';
+  } else {
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(img, 0, 0);
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const data = imgData.data;
+
+    for (let i = 0; i < data.length; i += 4) {
+      const a = data[i + 3];
+      if (a < 8) continue;
+      const r = data[i] / 255;
+      const g = data[i + 1] / 255;
+      const b = data[i + 2] / 255;
+      const mx = Math.max(r, g, b);
+      const mn = Math.min(r, g, b);
+      const df = mx - mn;
+      if (df <= 1e-4 || mx <= 1e-4) continue;
+
+      let hDeg = 0;
+      if (mx === r) hDeg = ((60 * ((g - b) / df)) % 360 + 360) % 360;
+      else if (mx === g) hDeg = 60 * ((b - r) / df + 2);
+      else hDeg = 60 * ((r - g) / df + 4);
+
+      const signedH = hDeg > 180 ? hDeg - 360 : hDeg;
+      const sat = df / mx;
+      const wRed =
+        Math.max(0, Math.min(1, (16 - signedH) / 5)) *
+        Math.max(0, Math.min(1, (signedH + 45) / 10)) *
+        Math.max(0, Math.min(1, (sat - 0.14) / 0.12));
+      if (wRed <= 0.01) continue;
+
+      const l = (mx + mn) * 0.5;
+      const lv = Math.min(0.96, l * preset.lumMul);
+      const svBase =
+        preset.desatTo !== undefined
+          ? preset.desatTo
+          : preset.satMul * (1 - Math.max(0, (lv - 0.55) / 0.45) * 0.55);
+      const sv = Math.min(1, svBase * (sat / 0.85));
+      const [rr, gg, bb] = hslToRgb01(preset.hueDeg, sv, lv);
+
+      data[i] = Math.round(Math.max(0, Math.min(255, (r * (1 - wRed) + rr * wRed) * 255)));
+      data[i + 1] = Math.round(Math.max(0, Math.min(255, (g * (1 - wRed) + gg * wRed) * 255)));
+      data[i + 2] = Math.round(Math.max(0, Math.min(255, (b * (1 - wRed) + bb * wRed) * 255)));
+    }
+    ctx.putImageData(imgData, 0, 0);
+    baseTex = Texture.from(canvas);
+    baseTex.source.scaleMode = 'linear';
+  }
+
+  const frames: Texture[] = [];
+  for (let idx = 0; idx < 12; idx++) {
+    const col = idx % 4;
+    const row = Math.floor(idx / 4);
+    frames.push(new Texture({ source: baseTex.source, frame: new Rectangle(col * cw, row * ch, cw, ch) }));
+  }
+  const entry = { frames, cw, ch };
+  hdTrumpeterFramesCache.set(themeIdx, entry);
+  return entry;
+}
 
 export interface HdTrumpeterController {
   readonly container: Container;
@@ -220,11 +461,60 @@ export function createHdTrumpeter(slotIdx: number, baseX: number, baseY: number)
 
   const container = new Container();
   container.position.set(baseX + 48, baseY + 33);
+  const aspectRig = createAspectRig();
+  container.addChild(aspectRig);
 
-  // Soft stage contact shadow
+  const sheet = getHdTrumpeterFrames(slotIdx);
+  if (sheet && sheet.frames.length === 12) {
+    const shadow = new Graphics();
+    shadow.ellipse(dir * -6, 30, 27, 4.8).fill({ color: 0x000000, alpha: 0.42 });
+    aspectRig.addChild(shadow);
+
+    const flipWrap = new Container();
+    flipWrap.scale.x = theme.facingRight ? -1 : 1;
+    aspectRig.addChild(flipWrap);
+
+    const bodyRig = new Container();
+    flipWrap.addChild(bodyRig);
+
+    const spr = new Sprite(sheet.frames[0]);
+    const targetW = 108;
+    const targetH = targetW * (sheet.ch / sheet.cw);
+    spr.width = targetW;
+    spr.height = targetH;
+    spr.anchor.set(0.5, 0.56);
+    bodyRig.addChild(spr);
+
+    let currentRaise = 0;
+
+    return {
+      container,
+      setProgress(raise01: number, elapsedMs: number) {
+        const clamped = Math.max(0, Math.min(1, raise01));
+        currentRaise = clamped;
+        const idx = Math.min(sheet.frames.length - 1, Math.floor(clamped * sheet.frames.length));
+        if (spr.texture !== sheet.frames[idx]) {
+          spr.texture = sheet.frames[idx];
+        }
+        const bounce = Math.sin(elapsedMs * 0.005 + slotIdx * 1.1) * 1.0;
+        bodyRig.position.y = bounce - clamped * 1.4;
+      },
+      getBellPosition() {
+        const { sx, sy } = getAspectCompScale();
+        const localX = (-40 - currentRaise * 2) * (theme.facingRight ? -1 : 1) * sx;
+        const localY = (16 - currentRaise * 42) * sy;
+        return {
+          x: container.x + localX,
+          y: container.y + localY,
+        };
+      },
+    };
+  }
+
+  // Fallback procedural vector trumpeter when illustrated sheet is unavailable
   const shadow = new Graphics();
   shadow.ellipse(0, 27, 26, 5).fill({ color: 0x000000, alpha: 0.45 });
-  container.addChild(shadow);
+  aspectRig.addChild(shadow);
 
   // Body sprite rendered smoothly at 3x
   const bodyTex = createHdTexture(76, 68, (ctx) => {
@@ -369,7 +659,7 @@ export function createHdTrumpeter(slotIdx: number, baseX: number, baseY: number)
   trumpetPivot.addChild(trumpetSpr);
   bodyRig.addChild(trumpetPivot);
 
-  container.addChild(bodyRig);
+  aspectRig.addChild(bodyRig);
 
   let currentRaise = 0;
 
@@ -385,11 +675,12 @@ export function createHdTrumpeter(slotIdx: number, baseX: number, baseY: number)
       trumpetPivot.rotation = angle;
     },
     getBellPosition() {
+      const { sx, sy } = getAspectCompScale();
       const angle = (0.48 - currentRaise * 1.0) * dir;
       const dist = 34;
       return {
-        x: container.x + dir * 5 + Math.cos(angle) * dist * dir,
-        y: container.y + 2 + Math.sin(angle) * dist * dir,
+        x: container.x + (dir * 5 + Math.cos(angle) * dist * dir) * sx,
+        y: container.y + (2 + Math.sin(angle) * dist * dir) * sy,
       };
     },
   };
@@ -439,6 +730,7 @@ export interface HdDealerController {
   readonly container: Container;
   setTableExpression(mode: 'idle' | 'blink' | 'bell' | 'wag', elapsedMs: number): void;
   setHatTipProgress(progress01: number): void;
+  setShuffleFrame(frameIdx: number): void;
 }
 
 let hdDealerArtMap: Map<string, HTMLImageElement> = new Map();
@@ -495,16 +787,20 @@ function createGlossyPupilTexture(radius: number): Texture {
 export function createHdDealer(scale = 1): HdDealerController {
   const container = new Container();
   container.scale.set(scale);
+  const aspectRig = createAspectRig(30, 44);
+  container.addChild(aspectRig);
 
   const bodyImg = hdDealerArtMap.get('body');
   const hatImg = hdDealerArtMap.get('hat');
   const wagSheetImg = hdDealerArtMap.get('wag_sheet');
   const bellSheetImg = hdDealerArtMap.get('bell_sheet');
+  const hatTipSheetImg = hdDealerArtMap.get('hat_tip_sheet');
+  const shuffleSheetImg = hdDealerArtMap.get('shuffle_sheet');
 
   if (isLoadedImage(bodyImg)) {
     const bodyPivot = new Container();
-    bodyPivot.position.set(30, 44);
-    container.addChild(bodyPivot);
+    bodyPivot.position.set(0, 0);
+    aspectRig.addChild(bodyPivot);
 
     const bodyW = 62.7;
     const bodyH = bodyW * (bodyImg.naturalHeight / bodyImg.naturalWidth);
@@ -577,9 +873,9 @@ export function createHdDealer(scale = 1): HdDealerController {
       wagSpr.width = sliced.cw * sc;
       wagSpr.height = sliced.ch * sc;
       wagSpr.anchor.set(0.5367, 1.0);
-      wagSpr.position.set(30, 44);
+      wagSpr.position.set(0, 0);
       wagSpr.visible = false;
-      container.addChild(wagSpr);
+      aspectRig.addChild(wagSpr);
     }
 
     let bellFrames: Texture[] = [];
@@ -592,9 +888,39 @@ export function createHdDealer(scale = 1): HdDealerController {
       bellSpr.width = sliced.cw * sc;
       bellSpr.height = sliced.ch * sc;
       bellSpr.anchor.set(0.5414, 0.9547);
-      bellSpr.position.set(30, 44);
+      bellSpr.position.set(0, 0);
       bellSpr.visible = false;
-      container.addChild(bellSpr);
+      aspectRig.addChild(bellSpr);
+    }
+
+    let hatTipFrames: Texture[] = [];
+    let hatTipSpr: Sprite | null = null;
+    if (isLoadedImage(hatTipSheetImg)) {
+      const sliced = sliceSheet4x4(hatTipSheetImg);
+      hatTipFrames = sliced.frames;
+      hatTipSpr = new Sprite(hatTipFrames[0]);
+      const sc = bodyW / 206;
+      hatTipSpr.width = sliced.cw * sc;
+      hatTipSpr.height = sliced.ch * sc;
+      hatTipSpr.anchor.set(0.6516, 1.0);
+      hatTipSpr.position.set(0, 0);
+      hatTipSpr.visible = false;
+      aspectRig.addChild(hatTipSpr);
+    }
+
+    let shuffleFrames: Texture[] = [];
+    let shuffleSpr: Sprite | null = null;
+    if (isLoadedImage(shuffleSheetImg)) {
+      const sliced = sliceSheet4x4(shuffleSheetImg);
+      shuffleFrames = sliced.frames;
+      shuffleSpr = new Sprite(shuffleFrames[0]);
+      const sc = bodyW / 206;
+      shuffleSpr.width = sliced.cw * sc;
+      shuffleSpr.height = sliced.ch * sc;
+      shuffleSpr.anchor.set(0.5016, 0.9726);
+      shuffleSpr.position.set(0, 0);
+      shuffleSpr.visible = false;
+      aspectRig.addChild(shuffleSpr);
     }
 
     return {
@@ -602,6 +928,8 @@ export function createHdDealer(scale = 1): HdDealerController {
       setTableExpression(mode, elapsedMs) {
         const showWag = Boolean(wagSpr && wagFrames.length === 16 && mode === 'wag');
         const showBell = Boolean(bellSpr && bellFrames.length === 16 && mode === 'bell');
+        if (hatTipSpr) hatTipSpr.visible = false;
+        if (shuffleSpr) shuffleSpr.visible = false;
         bodyPivot.visible = !showWag && !showBell;
 
         if (wagSpr) {
@@ -625,15 +953,27 @@ export function createHdDealer(scale = 1): HdDealerController {
             lid.spr.visible = isBlink;
             lid.spr.position.y = isBlink ? lid.closedY : lid.openY;
           }
-          hatPivot.position.set(0, hatBaseY + Math.sin(elapsedMs * 0.004) * 0.35);
+          hatPivot.position.set(0, hatBaseY);
           hatPivot.rotation = 0;
         }
       },
       setHatTipProgress(progress01: number) {
         if (wagSpr) wagSpr.visible = false;
         if (bellSpr) bellSpr.visible = false;
-        bodyPivot.visible = true;
+        if (shuffleSpr) shuffleSpr.visible = false;
         const p = Math.min(1, Math.max(0, progress01));
+
+        if (hatTipSpr && hatTipFrames.length === 16) {
+          bodyPivot.visible = false;
+          hatTipSpr.visible = true;
+          const idx = Math.min(15, Math.floor(p * 16));
+          if (hatTipSpr.texture !== hatTipFrames[idx]) {
+            hatTipSpr.texture = hatTipFrames[idx];
+          }
+          return;
+        }
+
+        bodyPivot.visible = true;
         const lift = Math.sin(p * Math.PI);
         const isBlink = p > 0.42 && p < 0.6;
         for (const lid of eyelids) {
@@ -642,6 +982,23 @@ export function createHdDealer(scale = 1): HdDealerController {
         }
         hatPivot.position.set(-lift * 12, hatBaseY - lift * 15);
         hatPivot.rotation = -lift * 0.36;
+      },
+      setShuffleFrame(frameIdx: number) {
+        if (wagSpr) wagSpr.visible = false;
+        if (bellSpr) bellSpr.visible = false;
+        if (hatTipSpr) hatTipSpr.visible = false;
+
+        if (shuffleSpr && shuffleFrames.length === 16) {
+          bodyPivot.visible = false;
+          shuffleSpr.visible = true;
+          const idx = Math.min(15, Math.max(0, Math.round(frameIdx)));
+          if (shuffleSpr.texture !== shuffleFrames[idx]) {
+            shuffleSpr.texture = shuffleFrames[idx];
+          }
+          return;
+        }
+
+        bodyPivot.visible = true;
       },
     };
   }
@@ -762,18 +1119,18 @@ export function createHdDealer(scale = 1): HdDealerController {
   const blinkTex = makeBodyTex(true);
   const bodySpr = new Sprite(openTex);
   bodySpr.anchor.set(0.5, 0.88);
-  bodySpr.position.set(30, 38);
-  container.addChild(bodySpr);
+  bodySpr.position.set(0, -6);
+  aspectRig.addChild(bodySpr);
 
   const hatTex = createHdTexture(52, 32, (ctx) => {
     drawTopHat(ctx, 26, 28, 0.92);
   });
   const hatPivot = new Container();
-  hatPivot.position.set(30, 12);
+  hatPivot.position.set(0, -32);
   const hatSpr = new Sprite(hatTex);
   hatSpr.anchor.set(0.5, 0.9);
   hatPivot.addChild(hatSpr);
-  container.addChild(hatPivot);
+  aspectRig.addChild(hatPivot);
 
   // Optional bell & wag arm overlays
   const bellTex = createHdTexture(24, 26, (ctx) => {
@@ -798,9 +1155,9 @@ export function createHdDealer(scale = 1): HdDealerController {
   });
   const bellSpr = new Sprite(bellTex);
   bellSpr.anchor.set(0.5, 0.2);
-  bellSpr.position.set(7, 10);
+  bellSpr.position.set(-23, -34);
   bellSpr.visible = false;
-  container.addChild(bellSpr);
+  aspectRig.addChild(bellSpr);
 
   const fingerTex = createHdTexture(18, 26, (ctx) => {
     ctx.fillStyle = '#e6333d';
@@ -817,9 +1174,9 @@ export function createHdDealer(scale = 1): HdDealerController {
   });
   const fingerSpr = new Sprite(fingerTex);
   fingerSpr.anchor.set(0.5, 0.9);
-  fingerSpr.position.set(8, 28);
+  fingerSpr.position.set(-22, -16);
   fingerSpr.visible = false;
-  container.addChild(fingerSpr);
+  aspectRig.addChild(fingerSpr);
 
   return {
     container,
@@ -827,7 +1184,7 @@ export function createHdDealer(scale = 1): HdDealerController {
       bellSpr.visible = mode === 'bell';
       fingerSpr.visible = mode === 'wag';
       bodySpr.texture = mode === 'blink' ? blinkTex : openTex;
-      hatPivot.position.set(30, 12 + Math.sin(elapsedMs * 0.004) * 0.4);
+      hatPivot.position.set(0, -32);
       hatPivot.rotation = 0;
 
       if (mode === 'bell') {
@@ -842,8 +1199,15 @@ export function createHdDealer(scale = 1): HdDealerController {
       // Smooth bell curve lift: 0 -> 1 -> 0
       const lift = Math.sin(Math.min(1, Math.max(0, progress01)) * Math.PI);
       bodySpr.texture = progress01 > 0.42 && progress01 < 0.6 ? blinkTex : openTex;
-      hatPivot.position.set(30 - lift * 12, 12 - lift * 15);
+      hatPivot.position.set(-lift * 12, -32 - lift * 15);
       hatPivot.rotation = -lift * 0.36;
+    },
+    setShuffleFrame() {
+      bellSpr.visible = false;
+      fingerSpr.visible = false;
+      bodySpr.texture = openTex;
+      hatPivot.position.set(0, -32);
+      hatPivot.rotation = 0;
     },
   };
 }
@@ -869,6 +1233,8 @@ export function setHdRivalArt(artMap: Map<string, HTMLImageElement>): void {
 
 export function createHdRival(side: 'left' | 'right'): HdRivalController {
   const container = new Container();
+  const aspectRig = createAspectRig(38, 41);
+  container.addChild(aspectRig);
   const dir = side === 'left' ? 1 : -1;
   const isLeft = side === 'left';
   const anchorScreenX = isLeft ? 57 : 569;
@@ -925,13 +1291,13 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
     });
     const ledgeSpr = new Sprite(ledgeTex);
     ledgeSpr.anchor.set(0.5, 0);
-    ledgeSpr.position.set(38, 39);
-    container.addChild(ledgeSpr);
+    ledgeSpr.position.set(0, -2);
+    aspectRig.addChild(ledgeSpr);
   }
 
-  // Body pivot anchored cleanly on the rail center (38, 41) for natural tilt, lean & squash/stretch
+  // Body pivot anchored cleanly on the rail center (0, 0) inside aspectRig for natural tilt, lean & squash/stretch
   const bodyPivot = new Container();
-  bodyPivot.position.set(38, 41);
+  bodyPivot.position.set(0, 0);
 
   const bodyW = hasCustomBody && bodyImg ? 64 : 80;
   const bodyH = hasCustomBody && bodyImg ? bodyW * (bodyImg.naturalHeight / bodyImg.naturalWidth) : 52;
@@ -1206,8 +1572,8 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   let outerArmRig: Container | null = null;
   let innerArmRig: Container | null = null;
   const fingers: Sprite[] = [];
-  const restArmX = 38 + dir * 26.5;
-  const restArmY = 39.2;
+  const restArmX = dir * 26.5;
+  const restArmY = -1.8;
 
   if (!hasCustomBody) {
     const outerHandTex = createHdTexture(16, 14, (ctx) => {
@@ -1262,7 +1628,7 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   }
 
   // Layer order: body & sprite sheets cleanly positioned above rival card racks
-  container.addChild(bodyPivot);
+  aspectRig.addChild(bodyPivot);
 
   const playFrames: Texture[] = [];
   let playSpr: Sprite | null = null;
@@ -1274,13 +1640,13 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
     playSpr.width = sliced.cw * scaleToIdle;
     playSpr.height = sliced.ch * scaleToIdle;
     playSpr.anchor.set(isLeft ? 0.4968 : 0.5582, isLeft ? 0.9866 : 0.9883);
-    playSpr.position.set(38, 42.5);
+    playSpr.position.set(0, 1.5);
     playSpr.visible = false;
-    container.addChild(playSpr);
+    aspectRig.addChild(playSpr);
   }
 
   if (innerArmRig) {
-    container.addChild(innerArmRig);
+    aspectRig.addChild(innerArmRig);
   }
 
   // Optional 16-frame AI sprite sheet for the signature impatient finger-drumming animation
@@ -1294,9 +1660,9 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
     impatientSpr.width = sliced.cw * scaleToIdle;
     impatientSpr.height = sliced.ch * scaleToIdle;
     impatientSpr.anchor.set(isLeft ? 0.5034 : 0.5375, isLeft ? 0.9824 : 0.996);
-    impatientSpr.position.set(38, 42.5);
+    impatientSpr.position.set(0, 1.5);
     impatientSpr.visible = false;
-    container.addChild(impatientSpr);
+    aspectRig.addChild(impatientSpr);
   }
 
   // Smooth spring state for 60fps interpolation
@@ -1447,7 +1813,7 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
       curHatRot += (targetHatRot - curHatRot) * lerpFactor;
       curPlayReach += (targetPlayReach - curPlayReach) * Math.min(1, dtMs / 55);
 
-      bodyPivot.position.set(38, 41 + curBodyY);
+      bodyPivot.position.set(0, curBodyY);
       bodyPivot.rotation = curBodyRot;
       bodyPivot.scale.set(2 - curScaleY, curScaleY);
 
@@ -1530,4 +1896,529 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
       }
     },
   };
+}
+
+export interface HdGoldLabelController {
+  readonly container: Container;
+  setText(text: string): void;
+}
+
+export interface HdGoldLabelOptions {
+  readonly anchorY?: number;
+  readonly textHeight?: number;
+  readonly withPedestal?: boolean;
+  readonly pedestalWidth?: number;
+}
+
+const goldPlaqueCache = new Map<string, { texture: Texture; width: number; height: number }>();
+
+function drawChunkyGoldGlyph(ctx: CanvasRenderingContext2D, ch: string, ox: number, oy: number, scale: number): void {
+  const pt = (x: number, y: number): [number, number] => [ox + x * scale, oy + y * scale];
+  const poly = (coords: readonly [number, number][], close = false) => {
+    if (coords.length === 0) return;
+    ctx.beginPath();
+    ctx.moveTo(...pt(coords[0][0], coords[0][1]));
+    for (let i = 1; i < coords.length; i++) {
+      ctx.lineTo(...pt(coords[i][0], coords[i][1]));
+    }
+    if (close) ctx.closePath();
+    ctx.stroke();
+  };
+
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineWidth = 2.15 * scale;
+  ctx.lineCap = 'butt';
+  ctx.lineJoin = 'round';
+
+  switch (ch) {
+    case '0': {
+      ctx.beginPath();
+      ctx.roundRect(ox + 2.1 * scale, oy + 1.7 * scale, 5.8 * scale, 7.6 * scale, 2.1 * scale);
+      ctx.stroke();
+      break;
+    }
+    case '1': {
+      poly([
+        [2.6, 3.6],
+        [5.4, 1.7],
+        [5.4, 9.6],
+      ]);
+      poly([
+        [2.2, 9.5],
+        [8.4, 9.5],
+      ]);
+      break;
+    }
+    case '2': {
+      poly([
+        [2.1, 3.3],
+        [2.1, 2.3],
+        [3.3, 1.7],
+        [6.7, 1.7],
+        [7.9, 2.6],
+        [7.9, 4.1],
+        [6.9, 5.2],
+        [2.3, 8.5],
+        [2.3, 9.5],
+        [8.4, 9.5],
+      ]);
+      break;
+    }
+    case '3': {
+      poly([
+        [2.0, 1.7],
+        [7.0, 1.7],
+        [8.0, 2.8],
+        [8.0, 4.1],
+        [6.8, 5.2],
+        [4.2, 5.2],
+      ]);
+      poly([
+        [4.8, 5.2],
+        [7.0, 5.2],
+        [8.1, 6.4],
+        [8.1, 8.3],
+        [6.9, 9.5],
+        [2.0, 9.5],
+      ]);
+      break;
+    }
+    case '4': {
+      poly([
+        [6.7, 9.8],
+        [6.7, 1.6],
+      ]);
+      poly([
+        [6.4, 1.8],
+        [2.0, 6.7],
+        [8.7, 6.7],
+      ]);
+      break;
+    }
+    case '5': {
+      poly([
+        [8.1, 1.7],
+        [2.3, 1.7],
+        [2.3, 4.8],
+        [6.8, 4.8],
+        [8.1, 6.0],
+        [8.1, 8.3],
+        [6.8, 9.5],
+        [2.0, 9.5],
+      ]);
+      break;
+    }
+    case '6': {
+      poly([
+        [7.6, 1.7],
+        [3.6, 1.7],
+        [2.1, 3.2],
+        [2.1, 8.3],
+        [3.3, 9.5],
+        [6.9, 9.5],
+        [8.1, 8.3],
+        [8.1, 6.0],
+        [6.9, 5.0],
+        [2.3, 5.0],
+      ]);
+      break;
+    }
+    case '7': {
+      poly([
+        [1.8, 1.7],
+        [8.1, 1.7],
+        [4.3, 9.7],
+      ]);
+      break;
+    }
+    case '8': {
+      ctx.beginPath();
+      ctx.roundRect(ox + 2.3 * scale, oy + 1.6 * scale, 5.4 * scale, 3.6 * scale, 1.5 * scale);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.roundRect(ox + 1.9 * scale, oy + 5.2 * scale, 6.2 * scale, 4.3 * scale, 1.8 * scale);
+      ctx.stroke();
+      break;
+    }
+    case '9': {
+      poly([
+        [7.9, 5.7],
+        [3.1, 5.7],
+        [1.9, 4.6],
+        [1.9, 2.8],
+        [3.1, 1.7],
+        [6.9, 1.7],
+        [8.1, 2.8],
+        [8.1, 8.1],
+        [6.6, 9.5],
+        [2.4, 9.5],
+      ]);
+      break;
+    }
+    case '$': {
+      ctx.save();
+      ctx.lineWidth = 1.65 * scale;
+      poly([
+        [5.0, 0.2],
+        [5.0, 10.8],
+      ]);
+      ctx.restore();
+      ctx.lineWidth = 2.0 * scale;
+      poly([
+        [7.9, 2.6],
+        [6.7, 1.7],
+        [3.2, 1.7],
+        [2.1, 2.8],
+        [2.1, 4.1],
+        [3.4, 5.1],
+        [6.8, 5.6],
+        [8.1, 6.8],
+        [8.1, 8.3],
+        [6.8, 9.5],
+        [3.1, 9.5],
+        [1.9, 8.5],
+      ]);
+      break;
+    }
+    case '-': {
+      poly([
+        [2.2, 5.5],
+        [7.8, 5.5],
+      ]);
+      break;
+    }
+    case 'B': {
+      poly([
+        [2.1, 1.4],
+        [2.1, 9.7],
+      ]);
+      poly([
+        [2.1, 1.7],
+        [6.4, 1.7],
+        [7.8, 2.8],
+        [7.8, 4.2],
+        [6.5, 5.3],
+        [2.1, 5.3],
+      ]);
+      poly([
+        [2.1, 5.3],
+        [6.7, 5.3],
+        [8.2, 6.5],
+        [8.2, 8.3],
+        [6.8, 9.5],
+        [2.1, 9.5],
+      ]);
+      break;
+    }
+    case 'A': {
+      poly([
+        [1.7, 9.7],
+        [5.0, 1.7],
+        [8.3, 9.7],
+      ]);
+      poly([
+        [2.8, 6.9],
+        [7.2, 6.9],
+      ]);
+      break;
+    }
+    case 'N': {
+      poly([
+        [2.0, 9.7],
+        [2.0, 1.5],
+      ]);
+      poly([
+        [2.2, 1.8],
+        [7.8, 9.4],
+      ]);
+      poly([
+        [8.0, 9.7],
+        [8.0, 1.5],
+      ]);
+      break;
+    }
+    case 'K': {
+      poly([
+        [2.1, 1.5],
+        [2.1, 9.7],
+      ]);
+      poly([
+        [7.9, 1.6],
+        [2.6, 5.6],
+      ]);
+      poly([
+        [3.4, 5.0],
+        [8.1, 9.7],
+      ]);
+      break;
+    }
+    default: {
+      ctx.fillStyle = '#ffffff';
+      ctx.font = `900 ${9.5 * scale}px "Arial Black", "Impact", "Segoe UI", sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(ch, ox + 5 * scale, oy + 5.7 * scale);
+      break;
+    }
+  }
+}
+
+function makeTintedCopy(src: HTMLCanvasElement, color: string): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  c.width = src.width;
+  c.height = src.height;
+  const g = c.getContext('2d');
+  if (g) {
+    g.drawImage(src, 0, 0);
+    g.globalCompositeOperation = 'source-in';
+    g.fillStyle = color;
+    g.fillRect(0, 0, c.width, c.height);
+  }
+  return c;
+}
+
+function getHdGoldPlaqueEntry(
+  text: string,
+  textHeight: number,
+  withPedestal: boolean,
+  minPedestalWidth: number,
+): { texture: Texture; width: number; height: number } {
+  const norm = text.toUpperCase();
+  const key = `${norm}|${textHeight}|${withPedestal ? 1 : 0}|${minPedestalWidth}`;
+  const cached = goldPlaqueCache.get(key);
+  if (cached) return cached;
+
+  const glyphScale = textHeight / 11;
+  const glyphAdvance = 9.4 * glyphScale;
+  const glyphsW = Math.max(10 * glyphScale, norm.length * glyphAdvance);
+  const padX = 5;
+  const padTop = withPedestal ? 1.2 : 2.5;
+  const plinthGap = withPedestal ? 0.7 : 0;
+  const plinthH = withPedestal ? 3.0 : 0;
+  const padBottom = withPedestal ? 2.6 : 3.2;
+
+  const boxW = Math.ceil(Math.max(withPedestal ? minPedestalWidth : 0, glyphsW) + padX * 2);
+  const boxH = Math.ceil(padTop + textHeight + plinthGap + plinthH + padBottom);
+
+  const pxW = Math.round(boxW * HD_RENDER_SCALE);
+  const pxH = Math.round(boxH * HD_RENDER_SCALE);
+
+  // Build crisp unified white silhouette (text + optional solid gold pedestal bar)
+  const sil = document.createElement('canvas');
+  sil.width = pxW;
+  sil.height = pxH;
+  const sctx = sil.getContext('2d');
+  if (sctx) {
+    sctx.scale(HD_RENDER_SCALE, HD_RENDER_SCALE);
+    const startX = (boxW - glyphsW) * 0.5;
+    for (let i = 0; i < norm.length; i++) {
+      drawChunkyGoldGlyph(sctx, norm[i], startX + i * glyphAdvance, padTop, glyphScale);
+    }
+
+    if (withPedestal) {
+      const pW = Math.max(minPedestalWidth, glyphsW + 7);
+      const px0 = (boxW - pW) * 0.5;
+      const py0 = padTop + textHeight + plinthGap;
+      // Wide stepped golden pedestal baseplate matching the 1993 candelabra plinth
+      sctx.fillStyle = '#ffffff';
+      sctx.beginPath();
+      sctx.moveTo(px0 + 1.8, py0);
+      sctx.lineTo(px0 + pW - 1.8, py0);
+      sctx.lineTo(px0 + pW, py0 + plinthH);
+      sctx.lineTo(px0, py0 + plinthH);
+      sctx.closePath();
+      sctx.fill();
+    }
+  }
+
+  const inkCopy = makeTintedCopy(sil, '#0b0501');
+  const deepBronzeCopy = makeTintedCopy(sil, '#632e02');
+  const midBronzeCopy = makeTintedCopy(sil, '#9d4f06');
+  const rimDarkCopy = makeTintedCopy(sil, '#1a0c02');
+
+  const faceCopy = document.createElement('canvas');
+  faceCopy.width = pxW;
+  faceCopy.height = pxH;
+  const fctx = faceCopy.getContext('2d');
+  if (fctx) {
+    fctx.drawImage(sil, 0, 0);
+    fctx.globalCompositeOperation = 'source-in';
+    const grad = fctx.createLinearGradient(0, padTop * HD_RENDER_SCALE, 0, (boxH - padBottom) * HD_RENDER_SCALE);
+    grad.addColorStop(0.0, '#fffce0');
+    grad.addColorStop(0.22, '#ffe959');
+    grad.addColorStop(0.55, '#f6b119');
+    grad.addColorStop(0.84, '#cf7206');
+    grad.addColorStop(1.0, '#964702');
+    fctx.fillStyle = grad;
+    fctx.fillRect(0, 0, pxW, pxH);
+  }
+
+  // Top-edge specular highlight bevel cut cleanly inside the gold face
+  const specCopy = document.createElement('canvas');
+  specCopy.width = pxW;
+  specCopy.height = pxH;
+  const spctx = specCopy.getContext('2d');
+  if (spctx) {
+    spctx.drawImage(sil, 0, 0);
+    spctx.globalCompositeOperation = 'destination-out';
+    spctx.drawImage(sil, 0.35 * HD_RENDER_SCALE, 0.85 * HD_RENDER_SCALE);
+    spctx.globalCompositeOperation = 'source-in';
+    spctx.fillStyle = 'rgba(255, 254, 236, 0.78)';
+    spctx.fillRect(0, 0, pxW, pxH);
+  }
+
+  const tex = createHdTexture(boxW, boxH, (ctx) => {
+    ctx.save();
+    ctx.scale(1 / HD_RENDER_SCALE, 1 / HD_RENDER_SCALE);
+
+    // 1. Soft dark ambient drop shadow behind metal object
+    ctx.save();
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.82)';
+    ctx.shadowBlur = 3.2 * HD_RENDER_SCALE;
+    ctx.shadowOffsetX = 0.6 * HD_RENDER_SCALE;
+    ctx.shadowOffsetY = 1.8 * HD_RENDER_SCALE;
+    ctx.drawImage(inkCopy, 0, 0);
+    ctx.restore();
+
+    // 2. Heavy black ink outline around 3D extrusion volume (matches candelabra ink work)
+    const outlineR = 0.88 * HD_RENDER_SCALE;
+    const extX = 0.55 * HD_RENDER_SCALE;
+    const extY = 1.45 * HD_RENDER_SCALE;
+    for (let s = 5; s >= 0; s--) {
+      const t = s / 5;
+      const bx = extX * t;
+      const by = extY * t;
+      for (let a = 0; a < 8; a++) {
+        const ang = (a * Math.PI) / 4;
+        ctx.drawImage(inkCopy, bx + Math.cos(ang) * outlineR, by + Math.sin(ang) * outlineR);
+      }
+    }
+
+    // 3. Stepped burnished bronze 3D extrusion thickness
+    for (let s = 5; s >= 1; s--) {
+      const t = s / 5;
+      ctx.drawImage(s >= 3 ? deepBronzeCopy : midBronzeCopy, extX * t, extY * t);
+    }
+
+    // 4. Crisp dark rim separating front gold plane from bronze extrusion
+    ctx.drawImage(rimDarkCopy, 0.14 * HD_RENDER_SCALE, 0.36 * HD_RENDER_SCALE);
+
+    // 5. Polished metallic gold front face + top specular highlight edge
+    ctx.drawImage(faceCopy, 0, 0);
+    ctx.drawImage(specCopy, 0, 0);
+
+    ctx.restore();
+  });
+
+  const entry = { texture: tex, width: boxW, height: boxH };
+  if (goldPlaqueCache.size < 200) {
+    goldPlaqueCache.set(key, entry);
+  }
+  return entry;
+}
+
+/** Creates an aspect-compensated solid-gold 3D sculpted HUD label or candelabra pedestal. */
+export function createHdGoldLabel(
+  initialText: string,
+  options: HdGoldLabelOptions = {},
+): HdGoldLabelController {
+  const textHeight = options.textHeight ?? 11;
+  const withPedestal = options.withPedestal ?? false;
+  const pedestalWidth = options.pedestalWidth ?? 44;
+  const anchorY = options.anchorY ?? 0.5;
+
+  const container = new Container();
+  const rig = createAspectRig(0, 0);
+  container.addChild(rig);
+
+  const initial = getHdGoldPlaqueEntry(initialText, textHeight, withPedestal, pedestalWidth);
+  const sprite = new Sprite(initial.texture);
+  sprite.anchor.set(0.5, anchorY);
+  rig.addChild(sprite);
+
+  let currentText = initialText;
+  return {
+    container,
+    setText(nextText: string): void {
+      if (nextText === currentText) return;
+      currentText = nextText;
+      const entry = getHdGoldPlaqueEntry(nextText, textHeight, withPedestal, pedestalWidth);
+      sprite.texture = entry.texture;
+    },
+  };
+}
+
+/**
+ * Places the pre-rendered HD "NINE" or "CLUB" card arch sprite cleanly beside
+ * the central hat alcove with square-pixel aspect compensation (`4:3` & `1:1`).
+ */
+export function createHdClubBannerSprite(texture: Texture, side: 'left' | 'right'): Container {
+  const x = side === 'left' ? 148 : 640 - 148;
+  const y = 70;
+  const rig = createAspectRig(x, y);
+  const spr = new Sprite(texture);
+  spr.anchor.set(0.5);
+  const targetH = 122;
+  const aspect = texture.height > 0 ? texture.width / texture.height : 1.26;
+  spr.height = targetH;
+  spr.width = targetH * aspect;
+  rig.addChild(spr);
+  return rig;
+}
+
+/**
+ * Places the glossy Gothic "MONTE CARLO" logo centered on the intro banner
+ * with square-pixel aspect compensation so lettering keeps its exact authored shape.
+ */
+export function createHdIntroLogoSprite(
+  texture: Texture,
+  x: number,
+  y: number,
+  targetW = 260,
+  targetH?: number,
+): Container {
+  const rig = createAspectRig(x, y);
+  const spr = new Sprite(texture);
+  spr.anchor.set(0.5);
+  const aspect = texture.height > 0 ? texture.width / texture.height : 3;
+  spr.width = targetW;
+  spr.height = targetH ?? targetW / aspect;
+  rig.addChild(spr);
+  return rig;
+}
+
+/**
+ * Slices a uniform horizontal HD sprite sheet into `count` textures while
+ * keeping its existing `linear` GPU filtering mode intact.
+ */
+export function sliceLinearSheet(sheet: Texture, count: number): Texture[] {
+  const cellW = Math.floor(sheet.width / count);
+  const cellH = sheet.height;
+  return Array.from({ length: count }, (_, i) =>
+    new Texture({
+      source: sheet.source,
+      frame: new Rectangle(i * cellW, 0, cellW, cellH),
+    }),
+  );
+}
+
+/**
+ * Places a linear-filtered HD sprite inside an aspect-compensated rig anchored
+ * cleanly at `(x, y)` so circle/square ratios stay exact in both `4:3` and `1:1`.
+ */
+export function createHdMenuRigSprite(
+  texture: Texture,
+  x: number,
+  y: number,
+  targetHeight: number,
+  anchorY = 1,
+): { rig: Container; sprite: Sprite } {
+  const rig = createAspectRig(x, y);
+  const sprite = new Sprite(texture);
+  sprite.anchor.set(0.5, anchorY);
+  const aspect = texture.height > 0 ? texture.width / texture.height : 1;
+  sprite.height = targetHeight;
+  sprite.width = targetHeight * aspect;
+  rig.addChild(sprite);
+  return { rig, sprite };
 }

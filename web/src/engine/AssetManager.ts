@@ -36,7 +36,21 @@ export const HD_DEALER_ART_ENTRIES: readonly { key: string; file: string }[] = [
   { key: 'hat', file: 'dealer_hat.png' },
   { key: 'wag_sheet', file: 'dealer_wag_sheet.png' },
   { key: 'bell_sheet', file: 'dealer_bell_sheet.png' },
+  { key: 'hat_tip_sheet', file: 'dealer_hat_tip_sheet.png' },
+  { key: 'shuffle_sheet', file: 'dealer_shuffle_sheet.png' },
 ];
+
+export const HD_TRUMPETER_ART_FILE = 'trumpeter_sheet.png';
+export const HD_CANDELABRA_ART_FILE = 'candelabra_sheet.png';
+
+export const HD_MENU_ART_FILES: Readonly<Record<'f1' | 'f2' | 'f3' | 'f4' | 'f5' | 'keys', string>> = {
+  f1: 'menu_f1_chair.png',
+  f2: 'menu_f2_sheet.png',
+  f3: 'menu_f3_sheet.png',
+  f4: 'menu_f4_sheet.png',
+  f5: 'menu_f5_sheet.png',
+  keys: 'menu_keys_sheet.png',
+};
 
 export interface AssetManifest {
   screen: { width: number; height: number };
@@ -51,9 +65,13 @@ export interface LoadedAssets {
   manifest: AssetManifest;
   backgrounds: Record<'ZF_NINE' | 'TF_NINE' | 'GF_NINE', Texture>;
   hdBackgrounds: Record<'intro' | 'menu' | 'table', Texture>;
+  hdBanners: Record<'nine' | 'club' | 'monteCarlo', Texture>;
+  hdMenu: Record<'f1' | 'f2' | 'f3' | 'f4' | 'f5' | 'keys', Texture>;
   hdCourtArt: Map<string, HTMLImageElement>;
   hdRivalArt: Map<string, HTMLImageElement>;
   hdDealerArt: Map<string, HTMLImageElement>;
+  hdTrumpeterArt: HTMLImageElement;
+  hdCandelabraArt: HTMLImageElement;
   sheets: Record<'ZR_NINE' | 'TR_NINE' | 'GR_NINE' | 'VR_NINE', Texture>;
   cards: Map<string, Texture>;
   miniCards: Map<string, Texture>;
@@ -100,13 +118,45 @@ export async function loadGameAssets(basePath = `${import.meta.env.BASE_URL}asse
   }
   const manifest = (await manifestRes.json()) as AssetManifest;
 
-  const [zf, tf, gf, hdIntro, hdMenu, hdTable, zr, tr, gr, vr, mscBytes, resBytes, cfgBytes] = await Promise.all([
+  const [
+    zf,
+    tf,
+    gf,
+    hdIntro,
+    hdMenu,
+    hdTable,
+    hdBannerNine,
+    hdBannerClub,
+    hdBannerMonteCarlo,
+    hdMenuF1,
+    hdMenuF2,
+    hdMenuF3,
+    hdMenuF4,
+    hdMenuF5,
+    hdMenuKeys,
+    zr,
+    tr,
+    gr,
+    vr,
+    mscBytes,
+    resBytes,
+    cfgBytes,
+  ] = await Promise.all([
     loadNearestTexture(`${normalizedBase}/${manifest.backgrounds.ZF_NINE}`),
     loadNearestTexture(`${normalizedBase}/${manifest.backgrounds.TF_NINE}`),
     loadNearestTexture(`${normalizedBase}/${manifest.backgrounds.GF_NINE}`),
     loadLinearTexture(`${normalizedBase}/hd/intro_bg_hd.jpg`),
     loadLinearTexture(`${normalizedBase}/hd/menu_bg_hd.jpg`),
     loadLinearTexture(`${normalizedBase}/hd/table_bg_hd.jpg`),
+    loadLinearTexture(`${normalizedBase}/hd/banner_nine_hd.png`),
+    loadLinearTexture(`${normalizedBase}/hd/banner_club_hd.png`),
+    loadLinearTexture(encodeURI(`${normalizedBase}/hd/Glossy Gothic Monte Carlo Logo.png`)),
+    loadLinearTexture(`${normalizedBase}/hd/menu/${HD_MENU_ART_FILES.f1}`),
+    loadLinearTexture(`${normalizedBase}/hd/menu/${HD_MENU_ART_FILES.f2}`),
+    loadLinearTexture(`${normalizedBase}/hd/menu/${HD_MENU_ART_FILES.f3}`),
+    loadLinearTexture(`${normalizedBase}/hd/menu/${HD_MENU_ART_FILES.f4}`),
+    loadLinearTexture(`${normalizedBase}/hd/menu/${HD_MENU_ART_FILES.f5}`),
+    loadLinearTexture(`${normalizedBase}/hd/menu/${HD_MENU_ART_FILES.keys}`),
     loadNearestTexture(`${normalizedBase}/${manifest.sheets.ZR_NINE}`),
     loadNearestTexture(`${normalizedBase}/${manifest.sheets.TR_NINE}`),
     loadNearestTexture(`${normalizedBase}/${manifest.sheets.GR_NINE}`),
@@ -145,20 +195,35 @@ export async function loadGameAssets(basePath = `${import.meta.env.BASE_URL}asse
     }),
   );
 
-  const hdDealerEntries = await Promise.all(
-    HD_DEALER_ART_ENTRIES.map(async ({ key, file }) => {
-      const img = await loadHtmlImage(`${normalizedBase}/hd/characters/${file}`);
-      return [key, img] as const;
-    }),
-  );
+  const [hdDealerEntries, hdTrumpeterArt, hdCandelabraArt] = await Promise.all([
+    Promise.all(
+      HD_DEALER_ART_ENTRIES.map(async ({ key, file }) => {
+        const img = await loadHtmlImage(`${normalizedBase}/hd/characters/${file}`);
+        return [key, img] as const;
+      }),
+    ),
+    loadHtmlImage(`${normalizedBase}/hd/characters/${HD_TRUMPETER_ART_FILE}`),
+    loadHtmlImage(`${normalizedBase}/hd/characters/${HD_CANDELABRA_ART_FILE}`),
+  ]);
 
   return {
     manifest,
     backgrounds: { ZF_NINE: zf, TF_NINE: tf, GF_NINE: gf },
     hdBackgrounds: { intro: hdIntro, menu: hdMenu, table: hdTable },
+    hdBanners: { nine: hdBannerNine, club: hdBannerClub, monteCarlo: hdBannerMonteCarlo },
+    hdMenu: {
+      f1: hdMenuF1,
+      f2: hdMenuF2,
+      f3: hdMenuF3,
+      f4: hdMenuF4,
+      f5: hdMenuF5,
+      keys: hdMenuKeys,
+    },
     hdCourtArt: new Map(hdCourtEntries),
     hdRivalArt: new Map(hdRivalEntries),
     hdDealerArt: new Map(hdDealerEntries),
+    hdTrumpeterArt,
+    hdCandelabraArt,
     sheets: { ZR_NINE: zr, TR_NINE: tr, GR_NINE: gr, VR_NINE: vr },
     cards: new Map(cardEntries),
     miniCards: new Map(miniEntries),

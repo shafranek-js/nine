@@ -1,15 +1,23 @@
 /**
  * Sound effect synthesizer supporting both the classic 1993 MS-DOS PC Speaker
- * `Sound(Hz)`/`Delay(ms)` tones (in `ega` mode) and soft, tactile Web Audio
+ * `Sound(Hz)`/`Delay(ms)` tones (in `ega` mode) and sculpted acoustic Web Audio
  * casino sound effects (in `hd` mode).
  */
 export type SoundProfile = 'hd' | 'ega';
+
+interface ModalPartial {
+  readonly freqHz: number;
+  readonly gain: number;
+  readonly decayMs: number;
+}
 
 export class PcSpeaker {
   private ctx: AudioContext | null = null;
   private enabled = true;
   private volume = 0.12;
   private soundProfile: SoundProfile = 'hd';
+  private cachedNoiseCtx: AudioContext | null = null;
+  private cachedNoiseBuffer: AudioBuffer | null = null;
 
   attachContext(ctx: AudioContext): void {
     this.ctx = ctx;
@@ -43,7 +51,6 @@ export class PcSpeaker {
     const gain = this.ctx.createGain();
 
     osc.type = 'square';
-    // Guard browsers against extreme ultra-low/inaudible 20 Hz aliasing while keeping punch
     osc.frequency.setValueAtTime(freqHz, start);
 
     gain.gain.setValueAtTime(0.0001, start);
@@ -65,10 +72,71 @@ export class PcSpeaker {
     return this.ctx;
   }
 
-  private playSoftTap(
+  private getNoiseBuffer(ctx: AudioContext): AudioBuffer | null {
+    if (typeof ctx.createBuffer !== 'function' || typeof ctx.createBufferSource !== 'function') {
+      return null;
+    }
+    if (this.cachedNoiseCtx === ctx && this.cachedNoiseBuffer) {
+      return this.cachedNoiseBuffer;
+    }
+    const sampleRate = ctx.sampleRate || 44100;
+    const length = Math.max(1, Math.floor(sampleRate * 0.25));
+    const buffer = ctx.createBuffer(1, length, sampleRate);
+    const ch = buffer.getChannelData(0);
+    // Deterministic PRNG white noise so repeated card/wood transients need zero allocations
+    let seed = 0x13579bdf;
+    for (let i = 0; i < length; i++) {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      ch[i] = (seed / 0xffffffff) * 2 - 1;
+    }
+    this.cachedNoiseCtx = ctx;
+    this.cachedNoiseBuffer = buffer;
+    return buffer;
+  }
+
+  private playNoiseBurst(
+    centerHz: number,
+    q: number,
+    filterType: BiquadFilterType,
+    durationMs: number,
+    peakGain: number,
+    delayOffsetSec = 0,
+    attackMs = 2,
+  ): void {
+    const ctx = this.ensureResumed();
+    if (!ctx) return;
+    const buffer = this.getNoiseBuffer(ctx);
+    if (!buffer) return;
+
+    const start = ctx.currentTime + delayOffsetSec;
+    const dur = Math.max(0.008, durationMs / 1000);
+    const attack = Math.min(dur * 0.45, Math.max(0.001, attackMs / 1000));
+
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = filterType;
+    filter.frequency.setValueAtTime(centerHz, start);
+    filter.Q.setValueAtTime(q, start);
+
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.linearRampToValueAtTime(peakGain, start + attack);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+
+    src.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+    src.start(start);
+    src.stop(start + dur + 0.01);
+  }
+
+  private playBodyThump(
     startHz: number,
     endHz: number,
     durationMs: number,
+    cutoffHz: number,
     peakGain: number,
     delayOffsetSec = 0,
   ): void {
@@ -86,10 +154,10 @@ export class PcSpeaker {
     osc.frequency.exponentialRampToValueAtTime(Math.max(30, endHz), start + dur);
 
     filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(480, start);
+    filter.frequency.setValueAtTime(cutoffHz, start);
 
     gain.gain.setValueAtTime(0.0001, start);
-    gain.gain.linearRampToValueAtTime(peakGain, start + 0.004);
+    gain.gain.linearRampToValueAtTime(peakGain, start + 0.003);
     gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
 
     osc.connect(filter);
@@ -99,10 +167,35 @@ export class PcSpeaker {
     osc.stop(start + dur + 0.01);
   }
 
-  private playWarmTone(
+  private playModalBell(partials: readonly ModalPartial[], delayOffsetSec = 0): void {
+    const ctx = this.ensureResumed();
+    if (!ctx) return;
+
+    const start = ctx.currentTime + delayOffsetSec;
+    for (const part of partials) {
+      const dur = Math.max(0.02, part.decayMs / 1000);
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(part.freqHz, start);
+
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.linearRampToValueAtTime(part.gain, start + 0.002);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(start);
+      osc.stop(start + dur + 0.01);
+    }
+  }
+
+  private playWarmVoice(
     freqHz: number,
     durationMs: number,
     peakGain: number,
+    type: 'sine' | 'triangle',
     cutoffHz: number,
     delayOffsetSec = 0,
   ): void {
@@ -110,81 +203,154 @@ export class PcSpeaker {
     if (!ctx) return;
 
     const start = ctx.currentTime + delayOffsetSec;
-    const dur = Math.max(0.02, durationMs / 1000);
+    const dur = Math.max(0.025, durationMs / 1000);
     const osc = ctx.createOscillator();
     const filter = ctx.createBiquadFilter();
     const gain = ctx.createGain();
 
-    osc.type = 'sine';
+    osc.type = type;
     osc.frequency.setValueAtTime(freqHz, start);
 
     filter.type = 'lowpass';
     filter.frequency.setValueAtTime(cutoffHz, start);
 
     gain.gain.setValueAtTime(0.0001, start);
-    gain.gain.linearRampToValueAtTime(peakGain, start + 0.004);
+    gain.gain.linearRampToValueAtTime(peakGain, start + 0.006);
     gain.gain.exponentialRampToValueAtTime(0.0001, start + dur);
 
     osc.connect(filter);
     filter.connect(gain);
     gain.connect(ctx.destination);
     osc.start(start);
-    osc.stop(start + dur + 0.01);
+    osc.stop(start + dur + 0.012);
   }
 
-  /** `$20` chip / coin clink */
+  /** `$20` gold coin / casino chip clink */
   coinChime(): void {
     if (this.soundProfile === 'ega') {
       this.playTone(6000, 8);
       return;
     }
-    this.playWarmTone(2150, 75, 0.045, 3600, 0);
-    this.playWarmTone(3220, 90, 0.032, 4600, 0.024);
+    // Crisp transient click + inharmonic brass coin partials + subtle second bounce
+    this.playNoiseBurst(5200, 1.8, 'bandpass', 10, 0.04, 0, 1);
+    this.playModalBell(
+      [
+        { freqHz: 2240, gain: 0.042, decayMs: 95 },
+        { freqHz: 3560, gain: 0.028, decayMs: 75 },
+        { freqHz: 5410, gain: 0.018, decayMs: 55 },
+      ],
+      0,
+    );
+    this.playModalBell(
+      [
+        { freqHz: 2680, gain: 0.028, decayMs: 85 },
+        { freqHz: 4120, gain: 0.018, decayMs: 65 },
+      ],
+      0.028,
+    );
   }
 
-  /** Subtle card placement / deal felt snap */
+  /** Tactile card slide / snap onto green felt */
   cardSlide(): void {
     if (this.soundProfile === 'ega') {
       this.playTone(65, 14);
       return;
     }
-    this.playSoftTap(135, 62, 30, 0.085, 0);
+    // Crisp paper swish over felt + warm low felt tap
+    this.playNoiseBurst(2100, 1.1, 'bandpass', 36, 0.075, 0, 3);
+    this.playBodyThump(128, 56, 26, 360, 0.075, 0.002);
   }
 
-  /** Forced pass / error notice — soft wooden table knock in HD, `220 Hz` DOS buzz in EGA */
+  /** Forced pass double-knock on mahogany table (`220 Hz` buzz in EGA) */
   passAlert(): void {
     if (this.soundProfile === 'ega') {
       this.playTone(220, 200);
       return;
     }
-    this.playSoftTap(155, 84, 52, 0.13, 0);
-    this.playSoftTap(132, 72, 60, 0.095, 0.085);
+    // Authentic card-table double knuckle knock ("knock-knock" = pass)
+    this.playNoiseBurst(520, 1.8, 'bandpass', 22, 0.065, 0, 1);
+    this.playBodyThump(182, 86, 48, 420, 0.125, 0);
+    this.playNoiseBurst(480, 1.8, 'bandpass', 22, 0.055, 0.105, 1);
+    this.playBodyThump(164, 78, 52, 390, 0.105, 0.105);
   }
 
-  /** Clicking an unplayable card in hand — light single wooden tap in HD */
+  /** Clicking an unplayable card — muted single felt rejection thud */
   illegalMove(): void {
     if (this.soundProfile === 'ega') {
       this.playTone(220, 120);
       return;
     }
-    this.playSoftTap(190, 95, 42, 0.075, 0);
+    this.playNoiseBurst(340, 1.5, 'lowpass', 24, 0.04, 0, 1);
+    this.playBodyThump(145, 76, 42, 300, 0.085, 0);
   }
 
-  /** Victory / round pot won chime */
+  /** Dealer brass service bell + celebratory chord on round end */
   victoryBeep(): void {
     if (this.soundProfile === 'ega') {
       this.playTone(5000, 18);
       return;
     }
-    this.playWarmTone(523.25, 120, 0.06, 2600, 0);
-    this.playWarmTone(659.25, 135, 0.06, 2600, 0.07);
-    this.playWarmTone(783.99, 210, 0.065, 2800, 0.14);
+    // Warm brass desk bell ding followed by uplifting parlor triad
+    this.playNoiseBurst(4200, 2.2, 'bandpass', 12, 0.03, 0, 1);
+    this.playModalBell(
+      [
+        { freqHz: 1174.66, gain: 0.052, decayMs: 260 },
+        { freqHz: 2349.32, gain: 0.026, decayMs: 180 },
+        { freqHz: 3180, gain: 0.015, decayMs: 120 },
+      ],
+      0,
+    );
+    this.playWarmVoice(587.33, 150, 0.045, 'triangle', 2200, 0.09);
+    this.playWarmVoice(739.99, 170, 0.045, 'triangle', 2200, 0.16);
+    this.playWarmVoice(880.0, 240, 0.05, 'sine', 2600, 0.23);
   }
 
-  /** `Sound(80 -> 120 -> 160)` × 250ms — F5 Exit sound */
+  /** Full match victory golden arpeggio chord */
+  matchVictory(): void {
+    if (this.soundProfile === 'ega') {
+      this.playTone(5000, 18);
+      return;
+    }
+    const notes = [523.25, 659.25, 783.99, 1046.5];
+    notes.forEach((freq, idx) => {
+      const delay = idx * 0.085;
+      const dur = idx === notes.length - 1 ? 420 : 180;
+      this.playWarmVoice(freq, dur, 0.052, 'triangle', 2500, delay);
+      this.playWarmVoice(freq * 2, dur * 0.7, 0.018, 'sine', 3400, delay);
+    });
+    this.playModalBell(
+      [
+        { freqHz: 2093.0, gain: 0.032, decayMs: 340 },
+        { freqHz: 3135.96, gain: 0.016, decayMs: 220 },
+      ],
+      0.26,
+    );
+  }
+
+  /** Bankrupt / match defeat muted descending parlor chord */
+  matchDefeat(): void {
+    if (this.soundProfile === 'ega') {
+      this.playTone(220, 200);
+      return;
+    }
+    this.playWarmVoice(293.66, 210, 0.06, 'triangle', 950, 0);
+    this.playWarmVoice(246.94, 230, 0.06, 'triangle', 850, 0.14);
+    this.playWarmVoice(196.0, 380, 0.07, 'triangle', 720, 0.28);
+    this.playBodyThump(130, 62, 160, 260, 0.075, 0.28);
+  }
+
+  /** Returning from Club Menu (`F5` exit) — velvet casino closing chord in HD, `80->120->160` in EGA */
   exitSequence(): void {
-    this.playTone(80, 250, 0);
-    this.playTone(120, 250, 0.25);
-    this.playTone(160, 250, 0.5);
+    if (this.soundProfile === 'ega') {
+      this.playTone(80, 250, 0);
+      this.playTone(120, 250, 0.25);
+      this.playTone(160, 250, 0.5);
+      return;
+    }
+    // Smooth warm velvet chord sweep replacing the harsh 80/120/160 Hz square buzz
+    this.playNoiseBurst(950, 1.0, 'bandpass', 55, 0.035, 0, 10);
+    this.playWarmVoice(261.63, 220, 0.05, 'triangle', 1200, 0);
+    this.playWarmVoice(329.63, 240, 0.048, 'triangle', 1400, 0.09);
+    this.playWarmVoice(392.0, 320, 0.052, 'sine', 1800, 0.18);
   }
 }

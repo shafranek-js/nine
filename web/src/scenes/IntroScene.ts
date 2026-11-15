@@ -2,6 +2,7 @@ import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
 import { SCREEN_HEIGHT, SCREEN_WIDTH } from '../core/types';
 import { sliceTexture } from '../engine/BitmapFont';
 import {
+  createHdIntroLogoSprite,
   createHdTextSprite,
   createHdTrumpeter,
   getWarmGlowTexture,
@@ -128,9 +129,6 @@ export class IntroScene implements Scene {
     const frameOverlay = new Graphics();
     frameOverlay.rect(0, 0, SCREEN_WIDTH, 42).fill({ color: 0x050608, alpha: 0.48 });
     frameOverlay.rect(0, SCREEN_HEIGHT - 44, SCREEN_WIDTH, 44).fill({ color: 0x050608, alpha: 0.52 });
-    frameOverlay
-      .rect(10, 8, SCREEN_WIDTH - 20, SCREEN_HEIGHT - 16)
-      .stroke({ color: 0xd4af37, width: 1, alpha: 0.45 });
     this.viewRoot.addChild(frameOverlay);
 
     // Warm animated spotlight glow behind Monte Carlo skyline & top hat
@@ -152,7 +150,7 @@ export class IntroScene implements Scene {
       shadowBlur: 3,
     });
     copy1.anchor.set(0.5);
-    copy1.position.set(SCREEN_WIDTH * 0.5, 16);
+    copy1.position.set(SCREEN_WIDTH * 0.5, 13);
     this.viewRoot.addChild(copy1);
 
     const copy2 = createHdTextSprite('GAMOS LOGICAL SERIAL  •  ISSUE NO. FOUR', 440, 14, {
@@ -163,22 +161,10 @@ export class IntroScene implements Scene {
       shadowBlur: 3,
     });
     copy2.anchor.set(0.5);
-    copy2.position.set(SCREEN_WIDTH * 0.5, 29);
+    copy2.position.set(SCREEN_WIDTH * 0.5, 25);
     this.viewRoot.addChild(copy2);
 
-    const title = createHdTextSprite('MONTE CARLO', 460, 52, {
-      font: 'bold 34px Georgia, "Times New Roman", serif',
-      fill: ['#fff4c2', '#d49a24'],
-      stroke: '#241404',
-      strokeWidth: 3.6,
-      align: 'center',
-      shadowColor: 'rgba(0, 0, 0, 0.88)',
-      shadowBlur: 8,
-      shadowOffsetY: 3,
-    });
-    title.anchor.set(0.5);
-    title.position.set(SCREEN_WIDTH * 0.5, 58);
-    this.viewRoot.addChild(title);
+    this.viewRoot.addChild(createHdIntroLogoSprite(ctx.assets.hdBanners.monteCarlo, SCREEN_WIDTH * 0.5, 81, 456, 114));
 
     // Sparkle particle layer behind/around trumpeters
     this.sparkleLayer = new Container();

@@ -41,13 +41,19 @@ registerProcessor('nine-opl2-processor', NineOpl2Processor);
 `;
 
 export type MusicSourceMode = 'mp3' | 'adlib';
+export type Mp3StingerId = 'victory' | 'bankrupt' | 'welcome';
+type Mp3CueId = MscTrackId | Mp3StingerId;
 
 const ASSET_BASE = (import.meta.env?.BASE_URL ?? '/').replace(/\/$/, '');
-const MP3_TRACK_URLS: Record<MscTrackId, string> = {
+const MP3_TRACK_URLS: Record<Mp3CueId, string> = {
   intro: `${ASSET_BASE}/assets/audio/01_intro_fanfare.mp3`,
   menu: `${ASSET_BASE}/assets/audio/02_club_menu_piano.mp3`,
   table: `${ASSET_BASE}/assets/audio/03_card_table_theme.mp3`,
+  victory: `${ASSET_BASE}/assets/audio/04_victory_fanfare.mp3`,
+  bankrupt: `${ASSET_BASE}/assets/audio/05_bankrupt_coda.mp3`,
+  welcome: `${ASSET_BASE}/assets/audio/06_dealer_welcome.mp3`,
 };
+const MP3_PRELOAD_ORDER: readonly Mp3CueId[] = ['intro', 'welcome', 'menu', 'table', 'victory', 'bankrupt'];
 
 export class Opl2MusicEngine {
   private ctx: AudioContext | null = null;
@@ -60,11 +66,15 @@ export class Opl2MusicEngine {
   private pendingTrack: MscTrackId | null = null;
   private gainValue = 0.72;
   private playSerial = 0;
+  private stingerSerial = 0;
 
   private mp3Gain: GainNode | null = null;
   private mp3Source: AudioBufferSourceNode | null = null;
-  private mp3Buffers = new Map<MscTrackId, AudioBuffer>();
-  private mp3Loads = new Map<MscTrackId, Promise<AudioBuffer | null>>();
+  private mp3StingerSource: AudioBufferSourceNode | null = null;
+  private mp3StingerGain: GainNode | null = null;
+  private stingerFadeTimer: number | null = null;
+  private mp3Buffers = new Map<Mp3CueId, AudioBuffer>();
+  private mp3Loads = new Map<Mp3CueId, Promise<AudioBuffer | null>>();
 
   // Fallback timer-driven synth when AudioWorklet is unavailable
   private fallbackTimer: number | null = null;
@@ -145,6 +155,7 @@ export class Opl2MusicEngine {
     this.enabled = enabled;
     if (!enabled) {
       ++this.playSerial;
+      ++this.stingerSerial;
       this.stopPlaybackOnly();
     } else if (this.currentTrack) {
       this.play(this.currentTrack);
@@ -175,16 +186,38 @@ export class Opl2MusicEngine {
 
     if (this.musicMode === 'mp3') {
       this.stopOpl2Only();
+      this.fadeOutStinger(900);
       void this.startMp3Track(trackId, serial);
       return;
     }
 
     this.stopMp3Source();
+    this.stopStingerSource();
     this.startOpl2Track(trackId);
+  }
+
+  /**
+   * Play a one-shot MP3 stinger when Music mode is 'mp3', falling back cleanly
+   * to the synthesized PC-speaker/SFX cue if muted/OPL2 or if decode fails.
+   */
+  playStinger(stingerId: Mp3StingerId, onFallback?: () => void): void {
+    const serial = ++this.stingerSerial;
+    if (!this.enabled) return;
+
+    if (this.musicMode !== 'mp3' || !this.ctx) {
+      onFallback?.();
+      return;
+    }
+
+    if (this.ctx.state === 'suspended') {
+      void this.ctx.resume();
+    }
+    void this.startMp3Stinger(stingerId, serial, onFallback);
   }
 
   stop(): void {
     ++this.playSerial;
+    ++this.stingerSerial;
     this.currentTrack = null;
     this.pendingTrack = null;
     this.stopPlaybackOnly();
@@ -202,6 +235,48 @@ export class Opl2MusicEngine {
     }
   }
 
+  private clearStingerFadeTimer(): void {
+    if (this.stingerFadeTimer !== null) {
+      window.clearTimeout(this.stingerFadeTimer);
+      this.stingerFadeTimer = null;
+    }
+  }
+
+  private stopStingerSource(): void {
+    this.clearStingerFadeTimer();
+    if (this.mp3StingerSource) {
+      try {
+        this.mp3StingerSource.onended = null;
+        this.mp3StingerSource.stop();
+      } catch {
+        // Ignore already-stopped source
+      }
+      this.mp3StingerSource.disconnect();
+      this.mp3StingerSource = null;
+    }
+    if (this.mp3StingerGain) {
+      this.mp3StingerGain.disconnect();
+      this.mp3StingerGain = null;
+    }
+  }
+
+  private fadeOutStinger(durationMs: number): void {
+    if (!this.ctx || !this.mp3StingerSource || !this.mp3StingerGain) return;
+    this.clearStingerFadeTimer();
+    const now = this.ctx.currentTime;
+    const gainParam = this.mp3StingerGain.gain;
+    gainParam.cancelScheduledValues(now);
+    gainParam.setValueAtTime(gainParam.value, now);
+    gainParam.linearRampToValueAtTime(0, now + durationMs / 1000);
+    const activeSrc = this.mp3StingerSource;
+    this.stingerFadeTimer = window.setTimeout(() => {
+      this.stingerFadeTimer = null;
+      if (this.mp3StingerSource === activeSrc) {
+        this.stopStingerSource();
+      }
+    }, durationMs + 30);
+  }
+
   private stopOpl2Only(): void {
     this.workletNode?.port.postMessage({ type: 'stop' });
     this.stopFallback();
@@ -209,6 +284,7 @@ export class Opl2MusicEngine {
 
   private stopPlaybackOnly(): void {
     this.stopMp3Source();
+    this.stopStingerSource();
     this.stopOpl2Only();
   }
 
@@ -228,29 +304,61 @@ export class Opl2MusicEngine {
     }
   }
 
-  private loadMp3Buffer(trackId: MscTrackId): Promise<AudioBuffer | null> {
-    const cached = this.mp3Buffers.get(trackId);
+  private loadMp3Buffer(cueId: Mp3CueId): Promise<AudioBuffer | null> {
+    const cached = this.mp3Buffers.get(cueId);
     if (cached) return Promise.resolve(cached);
-    const inflight = this.mp3Loads.get(trackId);
+    const inflight = this.mp3Loads.get(cueId);
     if (inflight) return inflight;
 
     const p = (async () => {
       if (!this.ctx) return null;
       try {
-        const res = await fetch(MP3_TRACK_URLS[trackId]);
+        const res = await fetch(MP3_TRACK_URLS[cueId]);
         if (!res.ok) return null;
         const arr = await res.arrayBuffer();
         const decoded = await this.ctx.decodeAudioData(arr);
-        this.mp3Buffers.set(trackId, decoded);
+        this.mp3Buffers.set(cueId, decoded);
         return decoded;
       } catch {
         return null;
       } finally {
-        this.mp3Loads.delete(trackId);
+        this.mp3Loads.delete(cueId);
       }
     })();
-    this.mp3Loads.set(trackId, p);
+    this.mp3Loads.set(cueId, p);
     return p;
+  }
+
+  private async startMp3Stinger(
+    stingerId: Mp3StingerId,
+    serial: number,
+    onFallback?: () => void,
+  ): Promise<void> {
+    const buf = await this.loadMp3Buffer(stingerId);
+    if (serial !== this.stingerSerial || !this.enabled || this.musicMode !== 'mp3') {
+      return;
+    }
+    if (!buf || !this.ctx || !this.mp3Gain) {
+      onFallback?.();
+      return;
+    }
+    this.stopStingerSource();
+    const stingerGain = this.ctx.createGain();
+    stingerGain.gain.value = 1;
+    stingerGain.connect(this.mp3Gain);
+
+    const src = this.ctx.createBufferSource();
+    src.buffer = buf;
+    src.loop = false;
+    src.connect(stingerGain);
+    src.onended = () => {
+      if (this.mp3StingerSource === src) {
+        this.stopStingerSource();
+      }
+    };
+    src.start(0);
+    this.mp3StingerSource = src;
+    this.mp3StingerGain = stingerGain;
   }
 
   private async startMp3Track(trackId: MscTrackId, serial: number): Promise<void> {
@@ -275,8 +383,8 @@ export class Opl2MusicEngine {
     src.start(0);
     this.mp3Source = src;
 
-    // Warm remaining MP3 tracks in background so scene changes start instantaneously
-    for (const nextId of ['intro', 'menu', 'table'] as const) {
+    // Warm remaining MP3 tracks & stingers in background so scene transitions start instantaneously
+    for (const nextId of MP3_PRELOAD_ORDER) {
       if (nextId !== trackId && !this.mp3Buffers.has(nextId)) {
         void this.loadMp3Buffer(nextId);
       }

@@ -2,7 +2,7 @@ import { parseNineMsc } from './audio/mscParser';
 import { createAudioController } from './audio/opl2Engine';
 import { loadGameAssets } from './engine/AssetManager';
 import { setHdCourtArt } from './engine/hdCards';
-import { setHdDealerArt, setHdRivalArt } from './engine/hdCharacters';
+import { setHdCandelabraArt, setHdDealerArt, setHdRivalArt, setHdTrumpeterArt } from './engine/hdCharacters';
 import { InputController } from './engine/InputController';
 import { StageApp } from './engine/StageApp';
 import { ClubMenuScene } from './scenes/ClubMenuScene';
@@ -20,6 +20,8 @@ async function bootstrap(): Promise<void> {
   setHdCourtArt(assets.hdCourtArt);
   setHdRivalArt(assets.hdRivalArt);
   setHdDealerArt(assets.hdDealerArt);
+  setHdTrumpeterArt(assets.hdTrumpeterArt);
+  setHdCandelabraArt(assets.hdCandelabraArt);
   const tracks = parseNineMsc(assets.mscBytes);
 
   appEl.innerHTML = '';
@@ -60,7 +62,12 @@ async function bootstrap(): Promise<void> {
   scenes.ctx.onStateChange = () => shell.sync();
 
   input.onFirstGesture(() => {
-    void audio.unlock().then(() => shell.sync());
+    const wasUnlocked = audio.isUnlocked();
+    void audio.unlock().then(() => {
+      if (!wasUnlocked && audio.isUnlocked()) {
+        shell.sync();
+      }
+    });
   });
   if (scenes.ctx.config.soundMusicEnabled) {
     void audio.unlock().then(() => shell.sync());

@@ -281,17 +281,29 @@ export function applyPass(state: MatchState): MatchState {
   };
 }
 
+export interface HandLayoutOptions {
+  readonly cardWidth?: number;
+  readonly cardHitWidth?: number;
+  readonly overlapStep?: number;
+  readonly areaWidth?: number;
+}
+
 /**
  * Computes exact pixel coordinates & hitboxes for the human hand fan
  * matching SortAndRenderPlayerHand (CS:8752..8832).
  */
-export function computeHandLayout(cards: readonly Card[]): HandCardLayout[] {
+export function computeHandLayout(cards: readonly Card[], opts: HandLayoutOptions = {}): HandCardLayout[] {
   if (cards.length === 0) return [];
+  const cardWidth = opts.cardWidth ?? HAND_CARD_WIDTH;
+  const cardHitWidth = opts.cardHitWidth ?? HAND_CARD_HIT_WIDTH;
+  const overlapStep = opts.overlapStep ?? HAND_OVERLAP_STEP;
+  const areaWidth = opts.areaWidth ?? HAND_AREA_WIDTH;
+
   const sorted = sortHand(cards);
   const suitsPresent = new Set<Suit>();
   for (const c of sorted) suitsPresent.add(c.suit);
 
-  const baseX = Math.floor((HAND_AREA_WIDTH - suitsPresent.size * HAND_CARD_HIT_WIDTH) / 2);
+  const baseX = Math.floor((areaWidth - suitsPresent.size * cardHitWidth) / 2);
   const result: HandCardLayout[] = [];
   let curX = baseX;
 
@@ -299,19 +311,19 @@ export function computeHandLayout(cards: readonly Card[]): HandCardLayout[] {
     const card = sorted[i];
     const next = i + 1 < sorted.length ? sorted[i + 1] : null;
     const sameNextSuit = next !== null && next.suit === card.suit;
-    const hitWidth = sameNextSuit ? HAND_OVERLAP_STEP : HAND_CARD_HIT_WIDTH;
+    const hitWidth = sameNextSuit ? overlapStep : cardHitWidth;
 
     result.push({
       card,
       x: curX,
       y: HAND_TOP_Y,
       hitWidth,
-      width: HAND_CARD_WIDTH,
+      width: cardWidth,
       height: HAND_CARD_HEIGHT,
     });
 
     if (next) {
-      curX += next.suit === card.suit ? HAND_OVERLAP_STEP : HAND_CARD_HIT_WIDTH + HAND_OVERLAP_STEP;
+      curX += next.suit === card.suit ? overlapStep : cardHitWidth + overlapStep;
     }
   }
 

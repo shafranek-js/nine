@@ -354,15 +354,9 @@
       .stage-frame {
         position: relative;
         background: #000;
-        border: 1px solid #262933;
+        border: none;
         box-shadow: 0 20px 60px rgba(0, 0, 0, 0.85);
         line-height: 0;
-        transition: border-color 0.25s ease, box-shadow 0.25s ease;
-      }
-
-      .stage-frame.mode-hd {
-        border-color: rgba(212, 175, 55, 0.45);
-        box-shadow: 0 24px 72px rgba(0, 0, 0, 0.9), 0 0 42px rgba(212, 175, 55, 0.14);
       }
 
       .stage-frame canvas {
@@ -464,6 +458,169 @@
           grid-column: 1;
           grid-row: 3;
         }
+      }
+      .advisor-card {
+        display: flex;
+        flex-direction: column;
+        gap: 7px;
+        min-height: 0;
+        overflow-y: auto;
+        scrollbar-width: thin;
+        scrollbar-color: rgba(215, 178, 92, 0.35) transparent;
+        border-color: rgba(82, 224, 144, 0.28);
+        background: linear-gradient(180deg, rgba(16, 28, 20, 0.94) 0%, rgba(11, 14, 12, 0.96) 100%);
+      }
+      .advisor-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
+      }
+      .advisor-title-wrap .panel-title {
+        margin: 0;
+      }
+      .advisor-toggle-btn {
+        font-size: 11px;
+        padding: 4px 8px;
+        line-height: 1.1;
+        border-color: rgba(215, 178, 92, 0.32);
+      }
+      .advisor-toggle-btn.is-active {
+        background: rgba(34, 96, 58, 0.85);
+        border-color: rgba(94, 238, 160, 0.65);
+        color: #dcfce7;
+      }
+      .advisor-top-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+      }
+      .advisor-mascot-frame {
+        flex: 0 0 auto;
+        border-radius: 6px;
+        overflow: hidden;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
+      }
+      .advisor-mascot-canvas {
+        display: block;
+      }
+      .advisor-bubble {
+        flex: 1 1 auto;
+        min-width: 0;
+        position: relative;
+        padding: 7px 9px;
+        border-radius: 7px;
+        background: rgba(25, 38, 29, 0.95);
+        border: 1px solid rgba(94, 238, 160, 0.32);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      }
+      .advisor-bubble::before {
+        content: '';
+        position: absolute;
+        left: -6px;
+        top: 16px;
+        width: 0;
+        height: 0;
+        border-top: 5px solid transparent;
+        border-bottom: 5px solid transparent;
+        border-right: 6px solid rgba(94, 238, 160, 0.4);
+      }
+      .advisor-headline {
+        font-size: 12.5px;
+        font-weight: 700;
+        color: #f4e6be;
+        line-height: 1.25;
+      }
+      .advisor-meta {
+        margin-top: 3px;
+        font-size: 10.5px;
+        color: #93b8a1;
+      }
+      .advisor-reasons {
+        margin: 0;
+        padding-left: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 11.5px;
+        line-height: 1.32;
+        color: #e4e1d6;
+      }
+      .advisor-reasons li::marker {
+        color: #5eeea0;
+      }
+      .advisor-subhead {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: #b7a982;
+        margin-bottom: 3px;
+      }
+      .advisor-candidates {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+      .advisor-cand-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 3px 6px;
+        border-radius: 5px;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        font-size: 11px;
+        color: #cbc6b8;
+      }
+      .advisor-cand-row.is-best {
+        background: rgba(34, 96, 58, 0.38);
+        border-color: rgba(94, 238, 160, 0.45);
+        color: #f4f1e6;
+      }
+      .advisor-cand-card {
+        font-weight: 600;
+      }
+      .advisor-cand-stats {
+        font-variant-numeric: tabular-nums;
+        font-size: 10.5px;
+        color: #b8ceb8;
+      }
+      .advisor-deduction {
+        margin-top: auto;
+        padding-top: 5px;
+        border-top: 1px solid rgba(215, 178, 92, 0.16);
+        font-size: 10.5px;
+        line-height: 1.3;
+        color: #a9a28d;
+      }
+      .advisor-card-chip {
+        display: inline-block;
+        padding: 0 3px;
+        margin: 0 1px;
+        border-radius: 3px;
+        background: #f6eedb;
+        font-weight: 700;
+        font-size: 0.94em;
+        line-height: 1.2;
+      }
+      .advisor-card-chip.is-red {
+        color: #b91c1c;
+      }
+      .advisor-card-chip.is-black {
+        color: #17191c;
+      }
+      .leader-row.is-clickable {
+        cursor: pointer;
+        border-radius: 4px;
+        padding: 2px 5px;
+        transition: background 0.14s ease, border-color 0.14s ease;
+      }
+      .leader-row.is-clickable:hover {
+        background: rgba(215, 178, 92, 0.14);
+      }
+      .leader-row.is-current .leader-name {
+        color: #f6d375;
+        font-weight: 700;
       }
     </style>
   </head>
