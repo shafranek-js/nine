@@ -65,7 +65,7 @@ export function getHdAnteIntroState(elapsedMs: number): HdAnteTimelineState {
   const rightStartMs = leftStartMs + HD_BOT_PURSE_TOSS_TOTAL_MS + 40;
   const humanStartMs = rightStartMs + HD_BOT_PURSE_TOSS_TOTAL_MS + 40;
   const closeStartMs = humanStartMs + 560;
-  const endMs = closeStartMs + 320;
+  const endMs = closeStartMs + 520;
 
   let dealerHatProgress = 0;
   let dealerHatOpen = false;
@@ -76,7 +76,7 @@ export function getHdAnteIntroState(elapsedMs: number): HdAnteTimelineState {
     dealerHatOpen = true;
     dealerHatProgress = 1;
   } else if (elapsedMs >= closeStartMs && elapsedMs < endMs) {
-    dealerHatOpen = true;
+    dealerHatOpen = false;
     dealerHatProgress = 1 - (elapsedMs - closeStartMs) / (endMs - closeStartMs);
   }
 

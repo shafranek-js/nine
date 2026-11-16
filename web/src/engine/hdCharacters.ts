@@ -873,12 +873,15 @@ function isLoadedImage(img: HTMLImageElement | undefined): img is HTMLImageEleme
 function sliceSheet4x4(img: HTMLImageElement): { frames: Texture[]; cw: number; ch: number } {
   const baseTex = Texture.from(img);
   baseTex.source.scaleMode = 'linear';
-  const cw = Math.floor(img.naturalWidth / 4);
-  const ch = Math.floor(img.naturalHeight / 4);
+  const cols = img.naturalWidth >= img.naturalHeight * 1.65 ? 8 : 4;
+  const rows = 4;
+  const cw = Math.floor(img.naturalWidth / cols);
+  const ch = Math.floor(img.naturalHeight / rows);
+  const total = cols * rows;
   const frames: Texture[] = [];
-  for (let idx = 0; idx < 16; idx++) {
-    const col = idx % 4;
-    const row = Math.floor(idx / 4);
+  for (let idx = 0; idx < total; idx++) {
+    const col = idx % cols;
+    const row = Math.floor(idx / cols);
     frames.push(new Texture({ source: baseTex.source, frame: new Rectangle(col * cw, row * ch, cw, ch) }));
   }
   return { frames, cw, ch };
@@ -916,6 +919,8 @@ export function createHdDealer(scale = 1): HdDealerController {
   const aspectRig = createAspectRig(30, 44);
   container.addChild(aspectRig);
 
+  const idlePoseImg = hdDealerArtMap.get('idle_pose');
+  const blinkSheetImg = hdDealerArtMap.get('blink_sheet');
   const bodyImg = hdDealerArtMap.get('body');
   const hatImg = hdDealerArtMap.get('hat');
   const wagSheetImg = hdDealerArtMap.get('wag_sheet');
@@ -933,27 +938,35 @@ export function createHdDealer(scale = 1): HdDealerController {
     y: container.y + (aspectRig.y + ly * aspectRig.scale.y) * container.scale.y,
   });
 
-  if (isLoadedImage(bodyImg)) {
+  const useUnifiedIdle = isLoadedImage(idlePoseImg);
+  const idleBaseImg = useUnifiedIdle ? idlePoseImg : bodyImg;
+
+  if (isLoadedImage(idleBaseImg)) {
     const bodyPivot = new Container();
     bodyPivot.position.set(0, 0);
     aspectRig.addChild(bodyPivot);
 
-    const bodyW = 62.7;
-    const bodyH = bodyW * (bodyImg.naturalHeight / bodyImg.naturalWidth);
-    const torsoTex = Texture.from(bodyImg);
+    const bodyW = useUnifiedIdle ? (205 * 62.7) / 206 : 62.7;
+    const bodyH = bodyW * (idleBaseImg.naturalHeight / idleBaseImg.naturalWidth);
+    const torsoTex = Texture.from(idleBaseImg);
     torsoTex.source.scaleMode = 'linear';
     const bodySpr = new Sprite(torsoTex);
     bodySpr.anchor.set(0.5, 1);
-    bodySpr.position.set(0, 0);
+    bodySpr.position.set(0, useUnifiedIdle ? -0.3 : 0);
     bodySpr.width = bodyW;
     bodySpr.height = bodyH;
     bodyPivot.addChild(bodySpr);
 
-    // Live glossy pupils + raster gradient eyelids clipped neatly inside illustrated sclera
-    const dealerEyes = [
-      { x: -0.083 * bodyW, y: -0.8122 * bodyH, rx: 0.077 * bodyW, ry: 0.068 * bodyH, gazeX: 0.9 },
-      { x: 0.0908 * bodyW, y: -0.8108 * bodyH, rx: 0.073 * bodyW, ry: 0.067 * bodyH, gazeX: -0.9 },
-    ];
+    // Live glossy pupils (for hatless bodyImg) + raster gradient eyelids clipped inside illustrated sclera
+    const dealerEyes = useUnifiedIdle
+      ? [
+          { x: -0.0869 * bodyW, y: -0.58 * bodyH - 0.3, rx: 0.085 * bodyW, ry: 0.085 * bodyH, gazeX: 0 },
+          { x: 0.084 * bodyW, y: -0.5992 * bodyH - 0.3, rx: 0.084 * bodyW, ry: 0.081 * bodyH, gazeX: 0 },
+        ]
+      : [
+          { x: -0.083 * bodyW, y: -0.8122 * bodyH, rx: 0.077 * bodyW, ry: 0.068 * bodyH, gazeX: 0.9 },
+          { x: 0.0908 * bodyW, y: -0.8108 * bodyH, rx: 0.073 * bodyW, ry: 0.067 * bodyH, gazeX: -0.9 },
+        ];
     const pupilTex = createGlossyPupilTexture(2.05);
     const lidTex = createLinearEyelidTexture('#b80404', '#ea1414', '#8e0202', '#180303');
     const eyelids: { spr: Sprite; closedY: number; openY: number }[] = [];
@@ -966,35 +979,37 @@ export function createHdDealer(scale = 1): HdDealerController {
       eyeC.addChild(maskGfx);
       eyeC.mask = maskGfx;
 
-      const pupilSpr = new Sprite(pupilTex);
-      pupilSpr.anchor.set(0.5);
-      pupilSpr.position.set(eye.gazeX, 0.45);
-      eyeC.addChild(pupilSpr);
-      pupils.push({ spr: pupilSpr, baseX: eye.gazeX });
+      if (!useUnifiedIdle) {
+        const pupilSpr = new Sprite(pupilTex);
+        pupilSpr.anchor.set(0.5);
+        pupilSpr.position.set(eye.gazeX, 0.45);
+        eyeC.addChild(pupilSpr);
+        pupils.push({ spr: pupilSpr, baseX: eye.gazeX });
 
-      const lidSpr = new Sprite(lidTex);
-      lidSpr.anchor.set(0.5, 1);
-      lidSpr.width = eye.rx * 2.2;
-      lidSpr.height = eye.ry * 2.2;
-      const openY = -eye.ry * 1.15;
-      const closedY = eye.ry * 1.1;
-      lidSpr.position.set(0, openY);
-      lidSpr.visible = false;
-      eyeC.addChild(lidSpr);
-      eyelids.push({ spr: lidSpr, closedY, openY });
+        const lidSpr = new Sprite(lidTex);
+        lidSpr.anchor.set(0.5, 1);
+        lidSpr.width = eye.rx * 2.2;
+        lidSpr.height = eye.ry * 2.2;
+        const openY = -eye.ry * 1.15;
+        const closedY = eye.ry * 1.1;
+        lidSpr.position.set(0, openY);
+        lidSpr.visible = false;
+        eyeC.addChild(lidSpr);
+        eyelids.push({ spr: lidSpr, closedY, openY });
+      }
 
       bodyPivot.addChild(eyeC);
     }
 
-    const hatBaseY = -43.5;
+    const hatBaseY = -45.2;
     const hatPivot = new Container();
     hatPivot.position.set(0, hatBaseY);
-    if (isLoadedImage(hatImg)) {
+    if (isLoadedImage(hatImg) && !useUnifiedIdle) {
       const hatTex = Texture.from(hatImg);
       hatTex.source.scaleMode = 'linear';
       const hatSpr = new Sprite(hatTex);
       hatSpr.anchor.set(0.5, 0.72);
-      const hatW = bodyW * 0.76;
+      const hatW = 62.7 * 0.76;
       hatSpr.width = hatW;
       hatSpr.height = hatW * (hatImg.naturalHeight / hatImg.naturalWidth);
       hatPivot.addChild(hatSpr);
@@ -1007,7 +1022,7 @@ export function createHdDealer(scale = 1): HdDealerController {
       const sliced = sliceSheet4x4(wagSheetImg);
       wagFrames = sliced.frames;
       wagSpr = new Sprite(wagFrames[0]);
-      const sc = 54 / 244;
+      const sc = 57.5 / 244;
       wagSpr.width = sliced.cw * sc;
       wagSpr.height = sliced.ch * sc;
       wagSpr.anchor.set(0.5367, 1.0);
@@ -1091,7 +1106,7 @@ export function createHdDealer(scale = 1): HdDealerController {
       aspectRig.addChild(hatCollectSpr);
     }
 
-    const loadOptionalPour = (img: HTMLImageElement | undefined): { frames: Texture[]; spr: Sprite } | null => {
+    const loadOptionalSheet = (img: HTMLImageElement | undefined): { frames: Texture[]; spr: Sprite } | null => {
       if (!isLoadedImage(img)) return null;
       const sliced = sliceSheet4x4(img);
       const spr = new Sprite(sliced.frames[0]);
@@ -1104,9 +1119,10 @@ export function createHdDealer(scale = 1): HdDealerController {
       aspectRig.addChild(spr);
       return { frames: sliced.frames, spr };
     };
-    const pourLeftArt = loadOptionalPour(pourLeftSheetImg);
-    const pourRightArt = loadOptionalPour(pourRightSheetImg);
-    const pourDownArt = loadOptionalPour(pourDownSheetImg);
+    const blinkArt = loadOptionalSheet(blinkSheetImg);
+    const pourLeftArt = loadOptionalSheet(pourLeftSheetImg);
+    const pourRightArt = loadOptionalSheet(pourRightSheetImg);
+    const pourDownArt = loadOptionalSheet(pourDownSheetImg);
 
     // Temporary vector overlays used whenever optional dealer sprite sheets aren't provided yet.
     const vectorHatSpr = new Sprite(getDealerInvertedHatTexture());
@@ -1124,12 +1140,20 @@ export function createHdDealer(scale = 1): HdDealerController {
     const hideExtraOverlays = (): void => {
       if (dealSpr) dealSpr.visible = false;
       if (hatCollectSpr) hatCollectSpr.visible = false;
+      if (blinkArt) blinkArt.spr.visible = false;
       if (pourLeftArt) pourLeftArt.spr.visible = false;
       if (pourRightArt) pourRightArt.spr.visible = false;
       if (pourDownArt) pourDownArt.spr.visible = false;
       vectorHatSpr.visible = false;
       vectorDealArmSpr.visible = false;
     };
+
+    let activeSheetGroup: 'none' | 'deal' | 'collect' | 'pourLeft' | 'pourRight' | 'pourDown' = 'none';
+    let sheetGroupTimeMs = 0;
+    let sheetOutroStartMs = -1;
+    let blinkTimeMs = -1;
+    let lastDealerCallMs = 0;
+    let lastPerfNowMs = typeof performance !== 'undefined' ? performance.now() : 0;
 
     return {
       container,
@@ -1140,50 +1164,180 @@ export function createHdDealer(scale = 1): HdDealerController {
         return toWorldPoint(0, -22);
       },
       setTableExpression(mode, elapsedMs) {
-        const showWag = Boolean(wagSpr && wagFrames.length === 16 && mode === 'wag');
-        const showBell = Boolean(bellSpr && bellFrames.length === 16 && mode === 'bell');
+        const nowMs = Math.max(0, elapsedMs);
+        const perfNow = typeof performance !== 'undefined' ? performance.now() : nowMs;
+        const perfDt = perfNow - lastPerfNowMs;
+        lastPerfNowMs = perfNow;
+        const argDt = nowMs >= lastDealerCallMs && nowMs - lastDealerCallMs < 200 ? nowMs - lastDealerCallMs : 16.6;
+        const dt = perfDt > 1 && perfDt < 120 ? perfDt : argDt;
+        lastDealerCallMs = nowMs;
+
+        const DEAL_OUTRO_DURATION_MS = 720;
+        const COLLECT_OUTRO_DURATION_MS = 400;
+        const getOutroDurationMs = (grp: typeof activeSheetGroup): number =>
+          grp === 'collect' ? COLLECT_OUTRO_DURATION_MS : DEAL_OUTRO_DURATION_MS;
+        const showWag = Boolean(wagSpr && wagFrames.length >= 16 && mode === 'wag');
+        const showBell = Boolean(bellSpr && bellFrames.length >= 16 && mode === 'bell');
         const isDeal = mode === 'dealLeft' || mode === 'dealDown' || mode === 'dealRight';
         const isPour = mode === 'pourLeft' || mode === 'pourRight' || mode === 'pourDown';
+
+        const targetGroup: typeof activeSheetGroup = isDeal
+          ? 'deal'
+          : mode === 'hatCollect'
+            ? 'collect'
+            : mode === 'pourLeft'
+              ? 'pourLeft'
+              : mode === 'pourRight'
+                ? 'pourRight'
+                : mode === 'pourDown'
+                  ? 'pourDown'
+                  : 'none';
+
+        if (targetGroup !== 'none') {
+          if (activeSheetGroup !== targetGroup) {
+            activeSheetGroup = targetGroup;
+            sheetGroupTimeMs = 0;
+          } else {
+            sheetGroupTimeMs += dt;
+          }
+          sheetOutroStartMs = -1;
+        } else if (activeSheetGroup !== 'none' && !showWag && !showBell) {
+          const isPourComplete =
+            (activeSheetGroup === 'pourLeft' ||
+              activeSheetGroup === 'pourRight' ||
+              activeSheetGroup === 'pourDown') &&
+            sheetGroupTimeMs >= 2050;
+          if (isPourComplete) {
+            activeSheetGroup = 'none';
+            sheetOutroStartMs = -1;
+          } else {
+            if (sheetOutroStartMs < 0) {
+              sheetOutroStartMs = 0;
+            } else {
+              sheetOutroStartMs += dt;
+            }
+            if (sheetOutroStartMs >= getOutroDurationMs(activeSheetGroup)) {
+              activeSheetGroup = 'none';
+              sheetOutroStartMs = -1;
+            }
+          }
+        } else {
+          activeSheetGroup = 'none';
+          sheetOutroStartMs = -1;
+        }
+
+        const effectiveGroup = activeSheetGroup;
         const activePourArt =
-          mode === 'pourLeft' ? pourLeftArt : mode === 'pourRight' ? pourRightArt : mode === 'pourDown' ? pourDownArt : null;
+          effectiveGroup === 'pourLeft'
+            ? pourLeftArt
+            : effectiveGroup === 'pourRight'
+              ? pourRightArt
+              : effectiveGroup === 'pourDown'
+                ? pourDownArt
+                : null;
 
         if (hatTipSpr) hatTipSpr.visible = false;
         if (shuffleSpr) shuffleSpr.visible = false;
         hideExtraOverlays();
 
-        const useDealSheet = Boolean(isDeal && dealSpr && dealFrames.length === 16);
-        const useCollectSheet = Boolean(mode === 'hatCollect' && hatCollectSpr && hatCollectFrames.length === 16);
-        const usePourSheet = Boolean(isPour && activePourArt && activePourArt.frames.length === 16);
+        const useDealSheet = Boolean(effectiveGroup === 'deal' && dealSpr && dealFrames.length >= 16);
+        const useCollectSheet = Boolean(effectiveGroup === 'collect' && hatCollectSpr && hatCollectFrames.length >= 16);
+        const usePourSheet = Boolean(activePourArt && activePourArt.frames.length >= 16);
+        const BLINK_DURATION_MS = 340;
+        const useBlinkSheet = Boolean(
+          blinkArt &&
+            blinkArt.frames.length >= 16 &&
+            mode === 'blink' &&
+            !showWag &&
+            !showBell &&
+            effectiveGroup === 'none'
+        );
+        if (useBlinkSheet) {
+          blinkTimeMs = blinkTimeMs < 0 ? 0 : blinkTimeMs + dt;
+        } else {
+          blinkTimeMs = -1;
+        }
 
-        bodyPivot.visible = !showWag && !showBell && !useDealSheet && !useCollectSheet && !usePourSheet;
+        bodyPivot.visible =
+          !showWag && !showBell && !useDealSheet && !useCollectSheet && !usePourSheet && !useBlinkSheet;
 
         if (wagSpr) {
           wagSpr.visible = showWag;
           if (showWag) {
-            const idx = Math.min(15, Math.floor(Math.max(0, elapsedMs) / 55));
+            const n = wagFrames.length;
+            const step = n >= 32 ? 62 : 124;
+            const idx = Math.min(n - 1, Math.floor(nowMs / step));
             wagSpr.texture = wagFrames[idx];
           }
         }
         if (bellSpr) {
           bellSpr.visible = showBell;
           if (showBell) {
-            const idx = Math.min(15, Math.floor(Math.max(0, elapsedMs) / 92));
+            const n = bellFrames.length;
+            const step = n >= 32 ? 68 : 136;
+            const idx = Math.min(n - 1, Math.floor(nowMs / step));
             bellSpr.texture = bellFrames[idx];
           }
         }
         if (useDealSheet && dealSpr) {
           dealSpr.visible = true;
-          dealSpr.scale.x = mode === 'dealLeft' ? -Math.abs(dealSpr.scale.x) : Math.abs(dealSpr.scale.x);
-          const idx = Math.min(15, Math.floor((Math.max(0, elapsedMs) / 45) % 16));
+          dealSpr.scale.x = Math.abs(dealSpr.scale.x);
+          const n = dealFrames.length;
+          const k = n >= 32 ? 2 : 1;
+          const stepMs = n >= 32 ? 68 : 136;
+          let idx: number;
+          if (sheetOutroStartMs >= 0) {
+            const startF = 10 * k;
+            const span = Math.max(1, n - 1 - startF);
+            idx = Math.min(n - 1, startF + Math.floor((sheetOutroStartMs / DEAL_OUTRO_DURATION_MS) * span));
+          } else if (sheetGroupTimeMs < 540) {
+            idx = Math.min(4 * k - 1, Math.floor((sheetGroupTimeMs / 540) * (4 * k)));
+          } else {
+            const lo = 4 * k;
+            const hi = 10 * k - 1;
+            const period = (hi - lo) * 2;
+            const pos = Math.floor((sheetGroupTimeMs - 540) / stepMs) % period;
+            idx = pos <= hi - lo ? lo + pos : hi - (pos - (hi - lo));
+          }
           dealSpr.texture = dealFrames[idx];
         } else if (useCollectSheet && hatCollectSpr) {
           hatCollectSpr.visible = true;
-          const idx = Math.min(15, Math.floor((Math.max(0, elapsedMs) / 60) % 16));
+          const n = hatCollectFrames.length;
+          const k = n >= 32 ? 2 : 1;
+          const holdStepMs = n >= 32 ? 90 : 180;
+          let idx: number;
+          if (sheetOutroStartMs >= 0) {
+            const startF = 11 * k;
+            const span = Math.max(1, n - 1 - startF);
+            idx = Math.min(n - 1, startF + Math.floor((sheetOutroStartMs / COLLECT_OUTRO_DURATION_MS) * span));
+          } else if (sheetGroupTimeMs < 560) {
+            idx = Math.min(6 * k - 1, Math.floor((sheetGroupTimeMs / 560) * (6 * k)));
+          } else {
+            const lo = 6 * k;
+            const hi = 10 * k;
+            const period = (hi - lo) * 2;
+            const pos = Math.floor((sheetGroupTimeMs - 560) / holdStepMs) % period;
+            idx = pos <= hi - lo ? lo + pos : hi - (pos - (hi - lo));
+          }
           hatCollectSpr.texture = hatCollectFrames[idx];
         } else if (usePourSheet && activePourArt) {
           activePourArt.spr.visible = true;
-          const idx = Math.min(15, Math.floor((Math.max(0, elapsedMs) / 65) % 16));
+          const n = activePourArt.frames.length;
+          const k = n >= 32 ? 2 : 1;
+          let idx: number;
+          if (sheetOutroStartMs >= 0) {
+            const startF = 11 * k;
+            const span = Math.max(1, n - 1 - startF);
+            idx = Math.min(n - 1, startF + Math.floor((sheetOutroStartMs / DEAL_OUTRO_DURATION_MS) * span));
+          } else {
+            idx = Math.min(n - 1, Math.floor((sheetGroupTimeMs / 2100) * n));
+          }
           activePourArt.spr.texture = activePourArt.frames[idx];
+        } else if (useBlinkSheet && blinkArt) {
+          blinkArt.spr.visible = true;
+          const n = blinkArt.frames.length;
+          const idx = Math.min(n - 1, Math.floor((blinkTimeMs / BLINK_DURATION_MS) * n));
+          blinkArt.spr.texture = blinkArt.frames[idx];
         }
 
         if (bodyPivot.visible) {
@@ -1200,10 +1354,14 @@ export function createHdDealer(scale = 1): HdDealerController {
             p.spr.position.set(p.baseX + pupilShiftX, 0.45);
           }
 
-          const hideHeadHat = mode === 'hatCollect' || isPour;
+          const hideHeadHat = useUnifiedIdle || mode === 'hatCollect' || isPour;
           hatPivot.visible = !hideHeadHat;
           hatPivot.position.set(0, hatBaseY);
           hatPivot.rotation = mode === 'glanceLeft' ? -0.05 : mode === 'glanceRight' ? 0.05 : 0;
+          if (useUnifiedIdle) {
+            bodyPivot.rotation = mode === 'glanceLeft' ? -0.032 : mode === 'glanceRight' ? 0.032 : 0;
+            bodyPivot.position.x = mode === 'glanceLeft' ? -0.8 : mode === 'glanceRight' ? 0.8 : 0;
+          }
 
           if (mode === 'hatCollect') {
             vectorHatSpr.visible = true;
@@ -1951,7 +2109,7 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   // Articulated Top Hat on top of kolobok head (lifts on celebration, tilts on think, dips on pass)
   const hatPivot = new Container();
   const baseHatRot = hasCustomHat ? 0 : dir * 0.045;
-  const hatBaseY = hasCustomHat ? -42.5 : -29;
+  const hatBaseY = hasCustomHat ? (isLeft ? -42.5 : -39.8) : -29;
   hatPivot.position.set(0, hatBaseY);
   hatPivot.rotation = baseHatRot;
 
@@ -2149,28 +2307,62 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   let playTimerMs = 0;
 
   let actionSheetTimerMs = 0;
-  let lastActionMode: RivalAnimMode = 'idle';
+  let lastActionGroup: 'none' | 'play' | 'purse' | 'broke' | 'yawn' | 'impatient' = 'none';
+  let rivalOutroMs = -1;
 
   return {
     container,
     setState(mode, elapsedMs, lookTarget, dtMs = 16.6) {
-      if (mode !== lastActionMode) {
-        actionSheetTimerMs = 0;
-        lastActionMode = mode;
-      } else {
-        actionSheetTimerMs += dtMs;
+      const isPurseMode =
+        mode === 'purseReach' || mode === 'purseOpen' || mode === 'purseClose' || mode === 'purseReceive';
+      const isBrokeMode = mode === 'brokeShake' || mode === 'brokeShrug';
+      const targetGroup: typeof lastActionGroup =
+        mode === 'play'
+          ? 'play'
+          : isPurseMode
+            ? 'purse'
+            : isBrokeMode
+              ? 'broke'
+              : mode === 'yawn'
+                ? 'yawn'
+                : mode === 'impatient'
+                  ? 'impatient'
+                  : 'none';
+
+      if (targetGroup !== 'none') {
+        if (lastActionGroup !== targetGroup) {
+          actionSheetTimerMs = 0;
+          lastActionGroup = targetGroup;
+        } else {
+          actionSheetTimerMs += dtMs;
+        }
+        rivalOutroMs = -1;
+      } else if (lastActionGroup !== 'none') {
+        if (rivalOutroMs < 0) {
+          rivalOutroMs = 0;
+        } else {
+          rivalOutroMs += dtMs;
+        }
+        if (rivalOutroMs >= 260) {
+          lastActionGroup = 'none';
+          rivalOutroMs = -1;
+        }
       }
 
+      const activeGroup = lastActionGroup;
       hideVectorProps();
       hideOptionalActionSheets();
 
-      if (playSpr && playFrames.length === 16 && mode === 'play') {
+      if (playSpr && playFrames.length >= 16 && activeGroup === 'play') {
         playTimerMs += dtMs;
-        const stepMs = 45;
-        const idx = Math.min(15, 1 + Math.floor(playTimerMs / stepMs));
+        const n = playFrames.length;
+        const stepMs = n >= 32 ? 26 : 52;
+        const idx =
+          rivalOutroMs >= 0
+            ? Math.min(n - 1, Math.floor((n * 0.72) + (rivalOutroMs / 260) * (n * 0.28)))
+            : Math.min(n - 1, Math.floor(playTimerMs / stepMs));
         playSpr.texture = playFrames[idx];
         playSpr.visible = true;
-        // Subtle forward lean toward lower mini-card row while picking card from stack.
         const farReach = lookTarget && lookTarget.y > 154 ? 1 : 0;
         playSpr.position.set(dir * farReach * 1.4, 1.5 + farReach * 1.4);
         playSpr.rotation = dir * farReach * 0.04;
@@ -2186,28 +2378,62 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
         playSpr.visible = false;
       }
 
-      const isPurseMode =
-        mode === 'purseReach' || mode === 'purseOpen' || mode === 'purseClose' || mode === 'purseReceive';
-      const isBrokeMode = mode === 'brokeShake' || mode === 'brokeShrug';
-
-      if (purseSheetArt && isPurseMode) {
-        const idx = Math.min(15, Math.floor(actionSheetTimerMs / 65) % 16);
+      if (purseSheetArt && activeGroup === 'purse') {
+        const n = purseSheetArt.frames.length;
+        const k = n >= 32 ? 2 : 1;
+        let idx = 0;
+        if (rivalOutroMs >= 0) {
+          const startF = 11 * k;
+          idx = Math.min(n - 1, startF + Math.floor((rivalOutroMs / 260) * (n - 1 - startF)));
+        } else if (mode === 'purseReceive') {
+          const lo = 4 * k;
+          const hi = 7 * k;
+          const period = (hi - lo) * 2;
+          const pos = Math.floor(actionSheetTimerMs / (65 / k)) % period;
+          idx = pos <= hi - lo ? lo + pos : hi - (pos - (hi - lo));
+        } else {
+          // Continuous full purse sequence across purseReach -> purseOpen -> purseClose (~1300ms total)
+          idx = Math.min(n - 1, Math.floor((actionSheetTimerMs / 1300) * n));
+        }
         purseSheetArt.spr.texture = purseSheetArt.frames[idx];
         purseSheetArt.spr.visible = true;
         if (impatientSpr) impatientSpr.visible = false;
         bodyPivot.visible = false;
         return;
       }
-      if (brokeSheetArt && isBrokeMode) {
-        const idx = Math.min(15, Math.floor(actionSheetTimerMs / 85) % 16);
+      if (brokeSheetArt && activeGroup === 'broke') {
+        const n = brokeSheetArt.frames.length;
+        const k = n >= 32 ? 2 : 1;
+        let idx = 0;
+        if (rivalOutroMs >= 0) {
+          const startF = 12 * k;
+          idx = Math.min(n - 1, startF + Math.floor((rivalOutroMs / 260) * (n - 1 - startF)));
+        } else if (mode === 'brokeShake') {
+          if (actionSheetTimerMs < 480) {
+            idx = Math.min(5 * k - 1, Math.floor((actionSheetTimerMs / 480) * (5 * k)));
+          } else {
+            const lo = 5 * k;
+            const hi = 8 * k;
+            const period = (hi - lo) * 2;
+            const pos = Math.floor((actionSheetTimerMs - 480) / (60 / k)) % period;
+            idx = pos <= hi - lo ? lo + pos : hi - (pos - (hi - lo));
+          }
+        } else {
+          const startF = 8 * k;
+          idx = Math.min(n - 1, startF + Math.floor((actionSheetTimerMs / 950) * (n - startF)));
+        }
         brokeSheetArt.spr.texture = brokeSheetArt.frames[idx];
         brokeSheetArt.spr.visible = true;
         if (impatientSpr) impatientSpr.visible = false;
         bodyPivot.visible = false;
         return;
       }
-      if (yawnSheetArt && mode === 'yawn') {
-        const idx = Math.min(15, Math.floor(actionSheetTimerMs / 95) % 16);
+      if (yawnSheetArt && activeGroup === 'yawn') {
+        const n = yawnSheetArt.frames.length;
+        const idx =
+          rivalOutroMs >= 0
+            ? Math.min(n - 1, Math.floor(n * 0.75 + (rivalOutroMs / 260) * (n * 0.25)))
+            : Math.min(n - 1, Math.floor((actionSheetTimerMs / 2050) * n));
         yawnSheetArt.spr.texture = yawnSheetArt.frames[idx];
         yawnSheetArt.spr.visible = true;
         if (impatientSpr) impatientSpr.visible = false;
@@ -2215,15 +2441,24 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
         return;
       }
 
-      if (impatientSpr && impatientFrames.length === 16 && mode === 'impatient') {
+      if (impatientSpr && impatientFrames.length >= 16 && activeGroup === 'impatient') {
+        const n = impatientFrames.length;
+        const k = n >= 32 ? 2 : 1;
         impatientTimerMs += dtMs;
-        const introFrameMs = 130;
-        const loopFrameMs = 155;
-        const introTotalMs = 5 * introFrameMs;
-        const frameIdx =
-          impatientTimerMs < introTotalMs
-            ? Math.min(4, Math.floor(impatientTimerMs / introFrameMs))
-            : 5 + (Math.floor((impatientTimerMs - introTotalMs) / loopFrameMs) % 11);
+        let frameIdx: number;
+        if (rivalOutroMs >= 0) {
+          const introMax = 5 * k - 1;
+          frameIdx = Math.max(0, Math.round(introMax * (1 - rivalOutroMs / 260)));
+        } else {
+          const introFrameMs = 120 / k;
+          const loopFrameMs = 140 / k;
+          const introCount = 5 * k;
+          const introTotalMs = introCount * introFrameMs;
+          frameIdx =
+            impatientTimerMs < introTotalMs
+              ? Math.min(introCount - 1, Math.floor(impatientTimerMs / introFrameMs))
+              : introCount + (Math.floor((impatientTimerMs - introTotalMs) / loopFrameMs) % (n - introCount));
+        }
         impatientSpr.texture = impatientFrames[frameIdx];
         impatientSpr.visible = true;
         bodyPivot.visible = false;

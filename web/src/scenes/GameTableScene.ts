@@ -2750,14 +2750,14 @@ export class GameTableScene implements Scene {
       this.hdTurnHalos.human.alpha = pulse;
     }
 
-    const blinking = (this.idleBlinkMs % 3200) > 2950;
+    const blinking = (this.idleBlinkMs % 3200) > 2860;
     if (this.phase === 'waitingTurn') {
       if (this.hdDealer) {
         const bellActive = round && !round.roundOver && round.currentTurn === 3 && this.humanWaitMs >= 10500;
         const bellCycleIdx = bellActive ? Math.floor((this.humanWaitMs - 10500) / 12000) : -1;
         const bellCycleMs = bellActive ? (this.humanWaitMs - 10500) % 12000 : 0;
         const glanceActive = round && !round.roundOver && round.currentTurn === 3 && this.humanWaitMs >= 6500 && this.humanWaitMs < 8500;
-        if (bellActive && bellCycleMs < 1480) {
+        if (bellActive && bellCycleMs < 2150) {
           this.hdDealer.setTableExpression('bell', bellCycleMs);
           if (bellCycleIdx !== this.idleBellCycleTriggered) {
             this.idleBellCycleTriggered = bellCycleIdx;
@@ -2828,7 +2828,7 @@ export class GameTableScene implements Scene {
             if (Math.floor(waitCycleIdx / 2) % 2 === 1 && waitCycleMs < 2100) {
               return 'impatient';
             }
-            if (waitCycleMs < 1360) {
+            if (waitCycleMs < 2100) {
               return 'yawn';
             }
           }
@@ -2957,7 +2957,7 @@ export class GameTableScene implements Scene {
         const fIdx = Math.floor(this.phaseTimerMs / 115) % this.dealerWagFrames.length;
         this.dealerSpr.texture = this.dealerWagFrames[fIdx];
       }
-      if (this.phaseTimerMs >= (isHd ? 900 : 720)) {
+      if (this.phaseTimerMs >= (isHd ? 1950 : 720)) {
         if (this.dealerSpr) this.dealerSpr.texture = this.dealerIdleTex;
         this.phase = 'waitingTurn';
         this.phaseTimerMs = 0;
@@ -2969,12 +2969,13 @@ export class GameTableScene implements Scene {
       if (this.hdDealer) {
         const isBotBroke = this.passingBroke && (this.passingSeat === 1 || this.passingSeat === 2);
         const isBotNormal = !this.passingBroke && (this.passingSeat === 1 || this.passingSeat === 2);
+        const closeHatMs = isBotNormal ? 100 + HD_BOT_PURSE_COIN_RELEASE_MS + HD_BOT_PURSE_COIN_FLIGHT_MS - 20 : 640;
         const endMs = isBotBroke
           ? HD_BOT_BROKE_SHAKE_DURATION_MS + 20
           : isBotNormal
-            ? 100 + HD_BOT_PURSE_TOSS_TOTAL_MS + 180
-            : 1020;
-        const hatOpen = !this.passingBroke && this.phaseTimerMs >= 80 && this.phaseTimerMs < endMs - 140;
+            ? 100 + HD_BOT_PURSE_TOSS_TOTAL_MS + 260
+            : 1100;
+        const hatOpen = !this.passingBroke && this.phaseTimerMs >= 80 && this.phaseTimerMs < closeHatMs;
         this.hdDealer.setTableExpression(hatOpen ? 'hatCollect' : blinking ? 'blink' : 'idle', this.phaseTimerMs);
         if (this.phaseTimerMs >= endMs) {
           this.passingSeat = null;
@@ -3062,9 +3063,7 @@ export class GameTableScene implements Scene {
 
     if (this.phase === 'roundEnd') {
       if (this.hdDealer) {
-        if (this.roundWonPot > 0 && this.phaseTimerMs < 320) {
-          this.hdDealer.setTableExpression('hatCollect', this.phaseTimerMs);
-        } else if (this.roundWonPot > 0 && this.phaseTimerMs < 1380) {
+        if (this.roundWonPot > 0 && this.phaseTimerMs < 2100) {
           const winner = this.roundWinner ?? 3;
           const pourMode = winner === 1 ? 'pourLeft' : winner === 2 ? 'pourRight' : 'pourDown';
           this.hdDealer.setTableExpression(pourMode, this.phaseTimerMs);
@@ -3074,7 +3073,7 @@ export class GameTableScene implements Scene {
       } else if (this.egaBank) {
         this.updateEgaRoundEndPose(this.phaseTimerMs);
       }
-      if (this.phaseTimerMs >= 1960) {
+      if (this.phaseTimerMs >= (isHd ? 2450 : 1960)) {
         if (!isHd) this.clearEgaActionOverlays();
         else if (this.dealerSpr) this.dealerSpr.texture = this.dealerIdleTex;
         if (this.match.matchOver) {

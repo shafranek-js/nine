@@ -46,9 +46,17 @@ export const HD_RIVAL_ART_ENTRIES: readonly { key: HdRivalArtKey; file: string }
   { key: 'right_impatient_sheet', file: 'rival_right_impatient_sheet.png' },
   { key: 'left_play_sheet', file: 'rival_left_play_sheet.png' },
   { key: 'right_play_sheet', file: 'rival_right_play_sheet.png' },
+  { key: 'left_purse_sheet', file: 'rival_left_purse_sheet.png' },
+  { key: 'right_purse_sheet', file: 'rival_right_purse_sheet.png' },
+  { key: 'left_broke_sheet', file: 'rival_left_broke_sheet.png' },
+  { key: 'right_broke_sheet', file: 'rival_right_broke_sheet.png' },
+  { key: 'left_yawn_sheet', file: 'rival_left_yawn_sheet.png' },
+  { key: 'right_yawn_sheet', file: 'rival_right_yawn_sheet.png' },
 ];
 
 export type HdDealerArtKey =
+  | 'idle_pose'
+  | 'blink_sheet'
   | 'body'
   | 'hat'
   | 'wag_sheet'
@@ -63,12 +71,19 @@ export type HdDealerArtKey =
   | 'pour_down_sheet';
 
 export const HD_DEALER_ART_ENTRIES: readonly { key: HdDealerArtKey; file: string }[] = [
+  { key: 'idle_pose', file: 'dealer_starting_pose.png' },
+  { key: 'blink_sheet', file: 'dealer_blink_sheet.png' },
   { key: 'body', file: 'dealer_body.png' },
   { key: 'hat', file: 'dealer_hat.png' },
   { key: 'wag_sheet', file: 'dealer_wag_sheet.png' },
   { key: 'bell_sheet', file: 'dealer_bell_sheet.png' },
   { key: 'hat_tip_sheet', file: 'dealer_hat_tip_sheet.png' },
   { key: 'shuffle_sheet', file: 'dealer_shuffle_sheet.png' },
+  { key: 'deal_sheet', file: 'dealer_deal_sheet.png' },
+  { key: 'hat_collect_sheet', file: 'dealer_hat_collect_sheet.png' },
+  { key: 'pour_left_sheet', file: 'dealer_pour_left_sheet.png' },
+  { key: 'pour_right_sheet', file: 'dealer_pour_right_sheet.png' },
+  { key: 'pour_down_sheet', file: 'dealer_pour_down_sheet.png' },
 ];
 
 export const HD_TRUMPETER_ART_FILE = 'trumpeter_sheet.png';

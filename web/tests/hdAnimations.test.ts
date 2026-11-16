@@ -49,6 +49,10 @@ describe('hdAnimations EGA-parity timelines', () => {
     expect(rightOpen.leftMode).toBe('idle');
     expect(rightOpen.rightMode).toBe('purseOpen');
 
+    const closing = getHdAnteIntroState(start.endMs - 450);
+    expect(closing.dealerHatOpen).toBe(false);
+    expect(closing.dealerHatProgress).toBeGreaterThan(0);
+
     const settled = getHdAnteIntroState(start.endMs + 20);
     expect(settled.dealerHatOpen).toBe(false);
     expect(settled.leftMode).toBe('idle');
