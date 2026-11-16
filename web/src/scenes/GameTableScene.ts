@@ -606,7 +606,6 @@ export class GameTableScene implements Scene {
 
     this.buildVisuals();
 
-    ctx.audio.music.play('table');
     this.beginRoundPresentation();
 
     this.unbindKey = ctx.input.onKeyDown(this.handleKeyDown);
@@ -1175,6 +1174,7 @@ export class GameTableScene implements Scene {
   }
 
   private beginRoundPresentation(): void {
+    this.ctx?.audio.music.playNextTableTrack();
     this.tableCardsLayer.removeChildren();
     this.overlayLayer.removeChildren();
     this.clearEgaActionOverlays();

@@ -42,18 +42,57 @@ registerProcessor('nine-opl2-processor', NineOpl2Processor);
 
 export type MusicSourceMode = 'mp3' | 'adlib';
 export type Mp3StingerId = 'victory' | 'bankrupt' | 'welcome';
-type Mp3CueId = MscTrackId | Mp3StingerId;
+export const TABLE_MP3_TRACK_IDS = [
+  'table_03',
+  'table_04',
+  'table_05',
+  'table_06',
+  'table_07',
+  'table_08',
+  'table_09',
+  'table_10',
+  'table_11',
+  'table_12',
+] as const;
+export type TableMp3TrackId = (typeof TABLE_MP3_TRACK_IDS)[number];
+type Mp3CueId = Exclude<MscTrackId, 'table'> | TableMp3TrackId | Mp3StingerId;
 
 const ASSET_BASE = (import.meta.env?.BASE_URL ?? '/').replace(/\/$/, '');
 const MP3_TRACK_URLS: Record<Mp3CueId, string> = {
   intro: `${ASSET_BASE}/assets/audio/01_intro_fanfare.mp3`,
   menu: `${ASSET_BASE}/assets/audio/02_club_menu_piano.mp3`,
-  table: `${ASSET_BASE}/assets/audio/03_card_table_theme.mp3`,
+  table_03: `${ASSET_BASE}/assets/audio/03_card_table_theme.mp3`,
+  table_04: `${ASSET_BASE}/assets/audio/04_card_table_theme.mp3`,
+  table_05: `${ASSET_BASE}/assets/audio/05_card_table_theme.mp3`,
+  table_06: `${ASSET_BASE}/assets/audio/06_card_table_theme.mp3`,
+  table_07: `${ASSET_BASE}/assets/audio/07_card_table_theme.mp3`,
+  table_08: `${ASSET_BASE}/assets/audio/08_card_table_theme.mp3`,
+  table_09: `${ASSET_BASE}/assets/audio/09_card_table_theme.mp3`,
+  table_10: `${ASSET_BASE}/assets/audio/10_card_table_theme.mp3`,
+  table_11: `${ASSET_BASE}/assets/audio/11_card_table_theme.mp3`,
+  table_12: `${ASSET_BASE}/assets/audio/12_card_table_theme.mp3`,
   victory: `${ASSET_BASE}/assets/audio/04_victory_fanfare.mp3`,
   bankrupt: `${ASSET_BASE}/assets/audio/05_bankrupt_coda.mp3`,
   welcome: `${ASSET_BASE}/assets/audio/06_dealer_welcome.mp3`,
 };
-const MP3_PRELOAD_ORDER: readonly Mp3CueId[] = ['intro', 'welcome', 'menu', 'table', 'victory', 'bankrupt'];
+const MP3_PRELOAD_ORDER: readonly Mp3CueId[] = ['intro', 'welcome', 'menu', 'victory', 'bankrupt'];
+
+/** Fisher–Yates shuffle helper for a fresh non-repeating table track bag. */
+export function buildShuffledTableBag(
+  lastPlayed: TableMp3TrackId | null,
+  rand: () => number = Math.random,
+): TableMp3TrackId[] {
+  const bag: TableMp3TrackId[] = [...TABLE_MP3_TRACK_IDS];
+  for (let i = bag.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    [bag[i], bag[j]] = [bag[j], bag[i]];
+  }
+  // Bag is consumed via pop(), so avoid matching lastPlayed at the tail (first popped element).
+  if (lastPlayed && bag.length > 1 && bag[bag.length - 1] === lastPlayed) {
+    [bag[0], bag[bag.length - 1]] = [bag[bag.length - 1], bag[0]];
+  }
+  return bag;
+}
 
 export class Opl2MusicEngine {
   private ctx: AudioContext | null = null;
@@ -70,6 +109,11 @@ export class Opl2MusicEngine {
 
   private mp3Gain: GainNode | null = null;
   private mp3Source: AudioBufferSourceNode | null = null;
+  private mp3TrackGain: GainNode | null = null;
+  private fadingOutTracks = new Set<{ src: AudioBufferSourceNode; gain: GainNode; timer: number }>();
+  private tableShuffleBag: TableMp3TrackId[] = [];
+  private activeTableCue: TableMp3TrackId | null = null;
+  private activeOpl2Track: MscTrackId | null = null;
   private mp3StingerSource: AudioBufferSourceNode | null = null;
   private mp3StingerGain: GainNode | null = null;
   private stingerFadeTimer: number | null = null;
@@ -170,6 +214,35 @@ export class Opl2MusicEngine {
     return this.currentTrack;
   }
 
+  getActiveTableCue(): TableMp3TrackId | null {
+    return this.activeTableCue;
+  }
+
+  private ensureTableBag(): TableMp3TrackId[] {
+    if (this.tableShuffleBag.length === 0) {
+      this.tableShuffleBag = buildShuffledTableBag(this.activeTableCue);
+    }
+    return this.tableShuffleBag;
+  }
+
+  private takeNextTableCue(): TableMp3TrackId {
+    const bag = this.ensureTableBag();
+    const next = bag.pop() ?? 'table_03';
+    this.activeTableCue = next;
+    return next;
+  }
+
+  private peekNextTableCue(): TableMp3TrackId {
+    const bag = this.ensureTableBag();
+    return bag[bag.length - 1] ?? 'table_03';
+  }
+
+  /** Advance to a fresh shuffled card-table MP3 theme with smooth fade-out -> fade-in crossfade. */
+  playNextTableTrack(): void {
+    this.takeNextTableCue();
+    this.play('table');
+  }
+
   play(trackId: MscTrackId): void {
     this.currentTrack = trackId;
     const serial = ++this.playSerial;
@@ -187,12 +260,18 @@ export class Opl2MusicEngine {
     if (this.musicMode === 'mp3') {
       this.stopOpl2Only();
       this.fadeOutStinger(900);
-      void this.startMp3Track(trackId, serial);
+      const cueId: Mp3CueId =
+        trackId === 'table' ? (this.activeTableCue ?? this.takeNextTableCue()) : trackId;
+      void this.startMp3Track(trackId, cueId, serial);
       return;
     }
 
     this.stopMp3Source();
     this.stopStingerSource();
+    // Avoid restarting the single AdLib 'table' loop mid-match when changing rounds.
+    if (trackId === 'table' && this.activeOpl2Track === 'table') {
+      return;
+    }
     this.startOpl2Track(trackId);
   }
 
@@ -224,8 +303,22 @@ export class Opl2MusicEngine {
   }
 
   private stopMp3Source(): void {
+    for (const item of this.fadingOutTracks) {
+      window.clearTimeout(item.timer);
+      try {
+        item.src.onended = null;
+        item.src.stop();
+      } catch {
+        // Ignore already-stopped source
+      }
+      item.src.disconnect();
+      item.gain.disconnect();
+    }
+    this.fadingOutTracks.clear();
+
     if (this.mp3Source) {
       try {
+        this.mp3Source.onended = null;
         this.mp3Source.stop();
       } catch {
         // Ignore already-stopped source
@@ -233,6 +326,41 @@ export class Opl2MusicEngine {
       this.mp3Source.disconnect();
       this.mp3Source = null;
     }
+    if (this.mp3TrackGain) {
+      this.mp3TrackGain.disconnect();
+      this.mp3TrackGain = null;
+    }
+  }
+
+  private fadeOutActiveMp3Track(durationMs: number): boolean {
+    if (!this.ctx || !this.mp3Source || !this.mp3TrackGain) return false;
+    const src = this.mp3Source;
+    const gain = this.mp3TrackGain;
+    src.onended = null;
+    this.mp3Source = null;
+    this.mp3TrackGain = null;
+
+    const now = this.ctx.currentTime;
+    gain.gain.cancelScheduledValues(now);
+    gain.gain.setValueAtTime(gain.gain.value, now);
+    gain.gain.linearRampToValueAtTime(0, now + durationMs / 1000);
+
+    const entry = {
+      src,
+      gain,
+      timer: window.setTimeout(() => {
+        this.fadingOutTracks.delete(entry);
+        try {
+          src.stop();
+        } catch {
+          // Ignore already-stopped source
+        }
+        src.disconnect();
+        gain.disconnect();
+      }, durationMs + 40),
+    };
+    this.fadingOutTracks.add(entry);
+    return true;
   }
 
   private clearStingerFadeTimer(): void {
@@ -278,6 +406,7 @@ export class Opl2MusicEngine {
   }
 
   private stopOpl2Only(): void {
+    this.activeOpl2Track = null;
     this.workletNode?.port.postMessage({ type: 'stop' });
     this.stopFallback();
   }
@@ -293,6 +422,7 @@ export class Opl2MusicEngine {
       this.pendingTrack = trackId;
       return;
     }
+    this.activeOpl2Track = trackId;
     if (this.workletNode) {
       this.stopFallback();
       this.startWorkletTrack(trackId);
@@ -361,8 +491,8 @@ export class Opl2MusicEngine {
     this.mp3StingerGain = stingerGain;
   }
 
-  private async startMp3Track(trackId: MscTrackId, serial: number): Promise<void> {
-    const buf = await this.loadMp3Buffer(trackId);
+  private async startMp3Track(trackId: MscTrackId, cueId: Mp3CueId, serial: number): Promise<void> {
+    const buf = await this.loadMp3Buffer(cueId);
     if (
       serial !== this.playSerial ||
       !this.enabled ||
@@ -375,18 +505,62 @@ export class Opl2MusicEngine {
       this.startOpl2Track(trackId);
       return;
     }
-    this.stopMp3Source();
+
+    const isTableTrack = trackId === 'table';
+    const hadActive = isTableTrack ? this.fadeOutActiveMp3Track(1500) : false;
+    if (!isTableTrack) {
+      this.stopMp3Source();
+    }
+
+    const trackGain = this.ctx.createGain();
+    const now = this.ctx.currentTime;
+    if (isTableTrack) {
+      const fadeInSec = hadActive ? 0.9 : 0.45;
+      trackGain.gain.setValueAtTime(0.001, now);
+      trackGain.gain.linearRampToValueAtTime(1, now + fadeInSec);
+    } else {
+      trackGain.gain.setValueAtTime(1, now);
+    }
+    trackGain.connect(this.mp3Gain);
+
     const src = this.ctx.createBufferSource();
     src.buffer = buf;
-    src.loop = true;
-    src.connect(this.mp3Gain);
+    src.loop = !isTableTrack;
+    src.connect(trackGain);
+    if (isTableTrack) {
+      src.onended = () => {
+        if (
+          this.mp3Source === src &&
+          this.enabled &&
+          this.musicMode === 'mp3' &&
+          this.currentTrack === 'table'
+        ) {
+          this.mp3Source = null;
+          this.mp3TrackGain?.disconnect();
+          this.mp3TrackGain = null;
+          this.playNextTableTrack();
+        }
+      };
+    }
     src.start(0);
     this.mp3Source = src;
+    this.mp3TrackGain = trackGain;
 
-    // Warm remaining MP3 tracks & stingers in background so scene transitions start instantaneously
+    // Warm remaining UI/stinger cues & only the next queued table track to cap decoded PCM memory.
     for (const nextId of MP3_PRELOAD_ORDER) {
-      if (nextId !== trackId && !this.mp3Buffers.has(nextId)) {
+      if (nextId !== cueId && !this.mp3Buffers.has(nextId)) {
         void this.loadMp3Buffer(nextId);
+      }
+    }
+    if (isTableTrack) {
+      const upcoming = this.peekNextTableCue();
+      for (const cachedKey of Array.from(this.mp3Buffers.keys())) {
+        if (cachedKey.startsWith('table_') && cachedKey !== cueId && cachedKey !== upcoming) {
+          this.mp3Buffers.delete(cachedKey);
+        }
+      }
+      if (upcoming !== cueId && !this.mp3Buffers.has(upcoming)) {
+        void this.loadMp3Buffer(upcoming);
       }
     }
   }

@@ -1037,10 +1037,10 @@ export function createHdDealer(scale = 1): HdDealerController {
       const sliced = sliceSheet4x4(bellSheetImg);
       bellFrames = sliced.frames;
       bellSpr = new Sprite(bellFrames[0]);
-      const sc = 54 / 218;
+      const sc = bodyW / 206;
       bellSpr.width = sliced.cw * sc;
       bellSpr.height = sliced.ch * sc;
-      bellSpr.anchor.set(0.5414, 0.9547);
+      bellSpr.anchor.set(0.5, 1.0);
       bellSpr.position.set(0, 0);
       bellSpr.visible = false;
       aspectRig.addChild(bellSpr);
