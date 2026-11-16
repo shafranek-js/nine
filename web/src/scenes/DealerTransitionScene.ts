@@ -16,14 +16,16 @@ interface DealerBeat {
 }
 
 // Exact DOS post-intro sequence (NINE_MAIN_CODE.asm CS:5B52..5E87):
-// 0 -> 1..4 (hat raise, 120ms/step) -> 5 (hat extended hold during TR_Nine load) -> 4..0 (hat lowered)
+// 0 -> 1..4 (120ms/step) -> 5 (hat up 300ms during TR_Nine load) -> 6 (wink) -> 5..0 (120ms/step)
 const DEALER_SEQUENCE: readonly DealerBeat[] = [
   { frame: 0, durationMs: 120 },
   { frame: 1, durationMs: 120 },
   { frame: 2, durationMs: 120 },
   { frame: 3, durationMs: 120 },
   { frame: 4, durationMs: 120 },
-  { frame: 5, durationMs: 720 },
+  { frame: 5, durationMs: 300 },
+  { frame: 6, durationMs: 300 },
+  { frame: 5, durationMs: 120 },
   { frame: 4, durationMs: 120 },
   { frame: 3, durationMs: 120 },
   { frame: 2, durationMs: 120 },
@@ -118,14 +120,23 @@ export class DealerTransitionScene implements Scene {
     ];
     for (let r = 0; r < 2; r++) {
       for (let c = 0; c < 3; c++) {
+        // In DOS (CS:5B52..5E87), frame 0 (92x60) and frames 1..6 (78x60) are ALL drawn at the exact same
+        // (X=265, Y=130): PutImage overwrites columns 0..77 while leaving columns 78..91 of frame 0 intact.
         this.frames.push(
           sliceMaskedTexture(zr, 403 + c * 79, 228 + r * 61, 78, 60, {
-            baseRect: restRect,
             remapRgb: tfGreenLedgeRemap,
           }),
         );
       }
     }
+
+    const baseRightTail = new Sprite(
+      sliceMaskedTexture(zr, restRect.x + 78, restRect.y, restRect.w - 78, restRect.h, {
+        remapRgb: tfGreenLedgeRemap,
+      }),
+    );
+    baseRightTail.position.set(265 + 78, 130);
+    this.viewRoot.addChild(baseRightTail);
 
     const currentFrame = DEALER_SEQUENCE[this.beatIndex]?.frame ?? 0;
     this.dealerSprite = new Sprite(this.frames[currentFrame] ?? this.frames[0]);
@@ -192,7 +203,9 @@ export class DealerTransitionScene implements Scene {
         return;
       }
       if (this.dealerSprite) {
-        this.dealerSprite.texture = this.frames[DEALER_SEQUENCE[this.beatIndex].frame] ?? this.frames[0];
+        const nextFrame = DEALER_SEQUENCE[this.beatIndex].frame;
+        this.dealerSprite.texture = this.frames[nextFrame] ?? this.frames[0];
+        this.dealerSprite.x = 265;
       }
     }
   }

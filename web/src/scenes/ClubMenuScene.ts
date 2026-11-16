@@ -265,7 +265,8 @@ export class ClubMenuScene implements Scene {
     this.dealBackdropGfx.visible = false;
     this.root.addChild(this.dealBackdropGfx);
 
-    this.f1HeadTex = sliceTexture(tr, 150, 290, 76, 41);
+    // Exact TR_NINE cell from NINE.EXE 0x5d07: (150, 287, 80, 44) includes full top-hat crown AND 2px green tabletop (y=329..330)
+    this.f1HeadTex = sliceTexture(tr, 150, 287, 80, 44);
     this.f1Col1Frames = Array.from({ length: 11 }, (_, r) => sliceTexture(tr, 150, 1 + r * 26, 72, 25));
     this.f1Col2Frames = Array.from({ length: 11 }, (_, r) => sliceTexture(tr, 223, 1 + r * 26, 72, 25));
 
@@ -775,11 +776,14 @@ export class ClubMenuScene implements Scene {
       return;
     }
 
-    const seq = nextEnabled ? [frames[2], frames[1], frames[0]] : [frames[0], frames[1], frames[2]];
+    // DOS CS:2C53..2CC4: transitions through frame 1 -> 0 (on) or 2 (off) at 100ms (0x64)
+    const seq = isHd
+      ? (nextEnabled ? [frames[2], frames[1], frames[0]] : [frames[0], frames[1], frames[2]])
+      : [frames[1], frames[nextEnabled ? 0 : 2]];
     this.activeAnim = {
       frames: seq,
       elapsed: 0,
-      frameDurationMs: 90,
+      frameDurationMs: isHd ? 90 : 100,
       target,
       onComplete: () => {
         target.texture = frames[nextEnabled ? 0 : 2];
@@ -976,8 +980,12 @@ export class ClubMenuScene implements Scene {
       this.dealStage.timer += dtMs;
       const isEga = this.ctx?.getGraphicsMode() === 'ega';
 
+      const headWaitMs = isEga ? 200 : 180;
+      const frameStepMs = isEga ? 140 : 45;
+      const pauseWaitMs = isEga ? 800 : 320;
+
       if (this.dealStage.step === 'head') {
-        if (this.dealStage.timer >= 180) {
+        if (this.dealStage.timer >= headWaitMs) {
           this.dealStage.step = 'col1';
           this.dealStage.timer = 0;
           this.dealStage.frameIdx = 0;
@@ -987,7 +995,7 @@ export class ClubMenuScene implements Scene {
           }
         }
       } else if (this.dealStage.step === 'col1') {
-        const nextIdx = Math.floor(this.dealStage.timer / 45);
+        const nextIdx = Math.floor(this.dealStage.timer / frameStepMs);
         if (nextIdx >= 11) {
           this.dealStage.step = 'pause';
           this.dealStage.timer = 0;
@@ -997,18 +1005,18 @@ export class ClubMenuScene implements Scene {
           if (nextIdx % 2 === 0) this.ctx?.audio.sfx.cardSlide();
         }
       } else if (this.dealStage.step === 'pause') {
-        if (this.dealStage.timer >= 320) {
+        if (this.dealStage.timer >= pauseWaitMs) {
           this.dealStage.step = 'col2';
           this.dealStage.timer = 0;
           this.dealStage.frameIdx = 0;
           if (isEga) this.f1FanSpr.texture = this.f1Col2Frames[0];
         }
       } else if (this.dealStage.step === 'col2') {
-        const nextIdx = Math.floor(this.dealStage.timer / 45);
+        const nextIdx = Math.floor(this.dealStage.timer / frameStepMs);
         if (nextIdx >= 11) {
           this.dealStage.step = 'done';
           this.ctx?.audio.music.stop();
-          this.ctx?.goTo('table', 250);
+          this.ctx?.goTo('table', isEga ? 200 : 250);
         } else if (nextIdx !== this.dealStage.frameIdx) {
           this.dealStage.frameIdx = nextIdx;
           if (isEga) this.f1FanSpr.texture = this.f1Col2Frames[nextIdx];

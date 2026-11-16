@@ -31,7 +31,6 @@ import {
   type Rank,
   type SeatIndex,
 } from '../core/types';
-import { sliceMaskedTexture, sliceTexture } from '../engine/BitmapFont';
 import {
   createHdTexture,
   drawSuitShape,
@@ -53,6 +52,32 @@ import {
   type HdRivalController,
   type RivalAnimMode,
 } from '../engine/hdCharacters';
+import {
+  EGA_BOT_BROKE_SHAKE_DURATION_MS,
+  EGA_BOT_PURSE_COIN_RELEASE_MS,
+  EGA_BOT_PURSE_TOSS_TOTAL_MS,
+  EGA_BOT_TAP_DURATION_MS,
+  EGA_BOT_THROW_FAR_MS,
+  EGA_BOT_THROW_NEAR_MS,
+  computeEgaDealCardPos,
+  computeEgaParabolicCardPos,
+  createEgaSpriteBank,
+  evaluateWaypointPath,
+  getEgaBotBrokeShakeFrame,
+  getEgaBotCardLaunchPos,
+  getEgaBotCardThrowPose,
+  getEgaBotPurseReceiveFrame,
+  getEgaBotPurseTossFrame,
+  getEgaBotTapFrame,
+  getEgaBotYawnFrame,
+  getEgaDealerDealPose,
+  getEgaDealerGlanceWagFrame,
+  getEgaHatCoinTrajectory,
+  getEgaPayoutCoinTrajectory,
+  type EgaCoinTrajectory,
+  type EgaSpriteBank,
+  type Waypoint,
+} from '../engine/egaAnimations';
 import type { AspectMode } from '../engine/StageApp';
 import type { GameContext, MoveLogEntry, MoveLogEvent, Scene } from './SceneManager';
 import {
@@ -84,6 +109,7 @@ function formatCardShort(card: Card): string {
 
 type TablePhase =
   | 'anteIntro'
+  | 'dealingCards'
   | 'waitingTurn'
   | 'movingCard'
   | 'passing'
@@ -100,6 +126,10 @@ interface FlyingCard {
   endY: number;
   elapsed: number;
   durationMs: number;
+  egaFrames?: readonly Texture[];
+  botSlotIdx?: number;
+  botCols?: number;
+  soundPlayed?: boolean;
   onLand: () => void;
 }
 
@@ -111,6 +141,10 @@ interface FlyingCoin {
   endY: number;
   elapsed: number;
   durationMs: number;
+  delayMs?: number;
+  waypoints?: readonly Waypoint[];
+  getTexture?: (t: number, elapsedMs: number) => Texture;
+  onArrive?: () => void;
 }
 
 interface SparkParticle {
@@ -441,15 +475,23 @@ export class GameTableScene implements Scene {
   private rightCashLayer = new Container();
   private humanCashLayer = new Container();
   private rivalCardsLayer = new Container();
+  private egaBank: EgaSpriteBank | null = null;
   private egaMiniBackTex: Texture | null = null;
   private thermoSpr: Sprite | null = null;
   private dealerSpr: Sprite | null = null;
   private leftBotSpr: Sprite | null = null;
   private rightBotSpr: Sprite | null = null;
+  private egaDealerHatMask: Graphics | null = null;
+  private egaDealerHatSpr: Sprite | null = null;
+  private egaDealerDealSpr: Sprite | null = null;
+  private egaDealerDealElbowMask: Graphics | null = null;
+  private egaLeftErase: Graphics | null = null;
+  private egaRightErase: Graphics | null = null;
+  private egaLeftActionSpr: Sprite | null = null;
+  private egaRightActionSpr: Sprite | null = null;
   private flameSprites: Sprite[] = [];
   private dealerIdleTex!: Texture;
   private dealerBlinkTex!: Texture;
-  private dealerBellFrames: Texture[] = [];
   private dealerWagFrames: Texture[] = [];
   private botFrames: Texture[] = [];
   private flameFrames: Texture[] = [];
@@ -474,6 +516,16 @@ export class GameTableScene implements Scene {
   private idleBlinkMs = 0;
   private activeFlightSeat: SeatIndex | null = null;
   private passingSeat: SeatIndex | null = null;
+  private passingBroke = false;
+  private egaAntePaid: Record<SeatIndex, boolean> = { 1: true, 2: true, 3: true };
+  private egaDealtCounts: Record<SeatIndex, number> | null = null;
+  private egaDealFlySpr: Sprite | null = null;
+  private egaDealPrevStep = -1;
+  private egaIdleBellCycleTriggered = -1;
+  private rivalSlotCards: Record<1 | 2, (string | null)[]> = { 1: [], 2: [] };
+  private pendingRivalRemoveSlot: { seat: 1 | 2; slotIdx: number } | null = null;
+  private egaBotThinkMode: 'quick' | 'tap' = 'quick';
+  private egaBotThinkDurationMs = 560;
   private humanWaitMs = 0;
   private rivalPlayAnimMs: Record<1 | 2, number> = { 1: 0, 2: 0 };
   private pendingMoveCard: Card | null = null;
@@ -721,10 +773,24 @@ export class GameTableScene implements Scene {
     this.hdBannerLayer.removeChildren();
     this.flameSprites = [];
     this.hdCandelabras = [];
+    this.egaBank = null;
     this.thermoSpr = null;
     this.dealerSpr = null;
     this.leftBotSpr = null;
     this.rightBotSpr = null;
+    this.egaDealerHatMask = null;
+    this.egaDealerHatSpr = null;
+    this.egaDealerDealSpr = null;
+    this.egaDealerDealElbowMask = null;
+    if (this.egaDealFlySpr) {
+      this.fxLayer.removeChild(this.egaDealFlySpr);
+      this.egaDealFlySpr.destroy();
+      this.egaDealFlySpr = null;
+    }
+    this.egaLeftErase = null;
+    this.egaRightErase = null;
+    this.egaLeftActionSpr = null;
+    this.egaRightActionSpr = null;
     this.egaMiniBackTex = null;
     this.hdDealer = null;
     this.hdLeftRival = null;
@@ -743,17 +809,18 @@ export class GameTableScene implements Scene {
   }
 
   private buildEgaVisuals(ctx: GameContext): void {
-    const gr = ctx.assets.sheets.GR_NINE;
+    const bank = createEgaSpriteBank(ctx.assets.sheets.GR_NINE, ctx.assets.sheets.VR_NINE);
+    this.egaBank = bank;
     this.bgLayer.addChild(new Sprite(ctx.assets.backgrounds.GF_NINE));
 
-    this.dealerIdleTex = sliceTexture(gr, 477, 237, 60, 39);
-    this.dealerBlinkTex = sliceTexture(gr, 477, 277, 60, 39);
-    this.dealerBellFrames = [0, 1, 2, 3].map((i) => sliceTexture(gr, 200, 1 + i * 40, 60, 39));
-    this.dealerWagFrames = [0, 1, 2].map((i) => sliceTexture(gr, 477, 117 + i * 40, 60, 39));
-    this.botFrames = [0, 1, 2, 3, 4, 5].map((i) => sliceTexture(gr, 118, 1 + i * 43, 73, 42));
-    this.coinFrames = [204, 230, 256].map((y) => sliceMaskedTexture(gr, 84, y, 24, 23));
-    this.flameFrames = [0, 1, 2].map((i) => sliceTexture(gr, 39 + i * 8, 176, 7, 10));
-    this.egaMiniBackTex = sliceTexture(gr, 478, 318, 14, 16);
+    this.dealerIdleTex = bank.dealerIdleTex;
+    this.dealerBlinkTex = bank.dealerBlinkTex;
+    this.dealerWagFrames = [...bank.dealerWagFrames];
+    this.botFrames = [...bank.botFrames];
+    this.coinFrames = [...bank.coinFrames];
+    this.flameFrames = [...bank.flameFrames];
+    this.egaMiniBackTex = bank.miniBackTex;
+    this.thermoTextures = [...bank.thermoTextures];
 
     const flameErase = new Graphics();
     for (const pos of CANDLE_POSITIONS) {
@@ -767,26 +834,26 @@ export class GameTableScene implements Scene {
       return spr;
     });
 
-    this.thermoTextures = [];
-    for (let i = 0; i <= 32; i++) {
-      let sx = 0;
-      let sy = 332;
-      if (i <= 6) {
-        sx = 119 + i * 33;
-        sy = 332;
-      } else if (i <= 19) {
-        sx = 119 + (i - 7) * 33;
-        sy = 338;
-      } else {
-        sx = 119 + (i - 20) * 33;
-        sy = 344;
-      }
-      this.thermoTextures.push(sliceTexture(gr, sx, sy, 32, 5));
-    }
-
     this.dealerSpr = new Sprite(this.dealerIdleTex);
     this.dealerSpr.position.set(281, 20);
     this.bgLayer.addChild(this.dealerSpr);
+
+    this.egaDealerDealElbowMask = new Graphics().rect(291, 49, 2, 5).fill(0x000000);
+    this.egaDealerDealElbowMask.visible = false;
+    this.bgLayer.addChild(this.egaDealerDealElbowMask);
+
+    this.egaDealerDealSpr = new Sprite(bank.dealerDealFrames[0]);
+    this.egaDealerDealSpr.position.set(293, 37);
+    this.egaDealerDealSpr.visible = false;
+    this.bgLayer.addChild(this.egaDealerDealSpr);
+
+    this.egaLeftErase = new Graphics().rect(19, 100, 74, 41).fill(0x000000);
+    this.egaLeftErase.visible = false;
+    this.bgLayer.addChild(this.egaLeftErase);
+
+    this.egaRightErase = new Graphics().rect(531, 100, 74, 41).fill(0x000000);
+    this.egaRightErase.visible = false;
+    this.bgLayer.addChild(this.egaRightErase);
 
     this.leftBotSpr = new Sprite(this.botFrames[0]);
     this.leftBotSpr.position.set(19, 101);
@@ -810,6 +877,103 @@ export class GameTableScene implements Scene {
     this.hudLayer.addChild(this.rightCashLayer);
     this.hudLayer.addChild(this.humanCashLayer);
     this.hudLayer.addChild(this.rivalCardsLayer);
+
+    // Overhanging VR_NINE overlays sit above table cards / rival card backs, below flying FX.
+    this.egaDealerHatMask = new Graphics().rect(272, 0, 76, 59).fill(0x000000);
+    this.egaDealerHatMask.visible = false;
+    this.hudLayer.addChild(this.egaDealerHatMask);
+
+    this.egaDealerHatSpr = new Sprite(bank.dealerHatOpenFrames[0]);
+    this.egaDealerHatSpr.position.set(274, 20);
+    this.egaDealerHatSpr.visible = false;
+    this.hudLayer.addChild(this.egaDealerHatSpr);
+
+    this.egaLeftActionSpr = new Sprite(bank.botTossLeftFrames[0]);
+    this.egaLeftActionSpr.position.set(33, 101);
+    this.egaLeftActionSpr.visible = false;
+    this.hudLayer.addChild(this.egaLeftActionSpr);
+
+    this.egaRightActionSpr = new Sprite(bank.botTossRightFrames[0]);
+    this.egaRightActionSpr.position.set(522, 101);
+    this.egaRightActionSpr.visible = false;
+    this.hudLayer.addChild(this.egaRightActionSpr);
+  }
+
+  private clearEgaActionOverlays(): void {
+    if (this.egaDealerHatMask) this.egaDealerHatMask.visible = false;
+    if (this.egaDealerHatSpr) this.egaDealerHatSpr.visible = false;
+    if (this.egaDealerDealElbowMask) this.egaDealerDealElbowMask.visible = false;
+    if (this.egaDealerDealSpr) this.egaDealerDealSpr.visible = false;
+    if (this.egaDealFlySpr) {
+      this.fxLayer.removeChild(this.egaDealFlySpr);
+      this.egaDealFlySpr.destroy();
+      this.egaDealFlySpr = null;
+    }
+    if (this.dealerSpr) {
+      this.dealerSpr.visible = true;
+      this.dealerSpr.texture = this.dealerIdleTex;
+    }
+    if (this.egaLeftErase) this.egaLeftErase.visible = false;
+    if (this.egaRightErase) this.egaRightErase.visible = false;
+    if (this.egaLeftActionSpr) this.egaLeftActionSpr.visible = false;
+    if (this.egaRightActionSpr) this.egaRightActionSpr.visible = false;
+    if (this.leftBotSpr) {
+      this.leftBotSpr.visible = true;
+      this.leftBotSpr.texture = this.botFrames[0];
+    }
+    if (this.rightBotSpr) {
+      this.rightBotSpr.visible = true;
+      this.rightBotSpr.texture = this.botFrames[0];
+    }
+  }
+
+  private setEgaDealerHatPose(tex: Texture | null, x = 274, y = 20, maskBakedDealer = true): void {
+    if (!this.egaDealerHatSpr || !this.dealerSpr) return;
+    if (!tex) {
+      this.egaDealerHatSpr.visible = false;
+      if (this.egaDealerHatMask) this.egaDealerHatMask.visible = false;
+      this.dealerSpr.visible = true;
+      return;
+    }
+    this.dealerSpr.visible = false;
+    if (this.egaDealerHatMask) this.egaDealerHatMask.visible = maskBakedDealer;
+    this.egaDealerHatSpr.texture = tex;
+    this.egaDealerHatSpr.position.set(x, y);
+    this.egaDealerHatSpr.visible = true;
+  }
+
+  private setEgaRivalOverlay(
+    seat: 1 | 2,
+    tex: Texture | null,
+    mode: 'vr' | 'purse' | 'yawn' = 'vr',
+    customX?: number,
+  ): void {
+    const erase = seat === 1 ? this.egaLeftErase : this.egaRightErase;
+    const actionSpr = seat === 1 ? this.egaLeftActionSpr : this.egaRightActionSpr;
+    const botSpr = seat === 1 ? this.leftBotSpr : this.rightBotSpr;
+    if (!actionSpr || !botSpr) return;
+    if (!tex) {
+      actionSpr.visible = false;
+      if (erase) erase.visible = false;
+      botSpr.visible = true;
+      return;
+    }
+    if (mode === 'vr') {
+      if (erase) erase.visible = true;
+      botSpr.visible = false;
+      actionSpr.position.set(customX ?? (seat === 1 ? 33 : 522), 101);
+    } else if (mode === 'purse') {
+      if (erase) erase.visible = false;
+      botSpr.visible = true;
+      botSpr.texture = this.botFrames[0];
+      actionSpr.position.set(seat === 1 ? 33 : 545, 101);
+    } else {
+      if (erase) erase.visible = false;
+      botSpr.visible = true;
+      actionSpr.position.set(seat === 1 ? 42 : 554, 101);
+    }
+    actionSpr.texture = tex;
+    actionSpr.visible = true;
   }
 
   private buildHdVisuals(ctx: GameContext): void {
@@ -994,31 +1158,65 @@ export class GameTableScene implements Scene {
   private beginRoundPresentation(): void {
     this.tableCardsLayer.removeChildren();
     this.overlayLayer.removeChildren();
+    this.clearEgaActionOverlays();
     this.activeFlightSeat = null;
     this.passingSeat = null;
+    this.passingBroke = false;
+    this.pendingRivalRemoveSlot = null;
     this.humanWaitMs = 0;
     this.rivalPlayAnimMs = { 1: 0, 2: 0 };
     this.statusBanner = '';
+    this.initRivalSlotCards();
+
+    const isHd = this.ctx?.getGraphicsMode() === 'hd';
+    this.egaAntePaid = !isHd
+      ? { 1: false, 2: false, 3: false }
+      : { 1: true, 2: true, 3: true };
+    this.egaDealtCounts = !isHd && this.egaBank ? { 1: 0, 2: 0, 3: 0 } : null;
+    this.egaDealPrevStep = -1;
+    this.egaIdleBellCycleTriggered = -1;
+    this.phase = 'anteIntro';
+    this.phaseTimerMs = 0;
     this.renderRivalCardBacks();
     this.renderCashAndBankHud();
     this.renderHumanHand();
     this.renderStatusBanner();
 
-    // $20 ante coins fly into BANK
-    const sl = this.getHdSeatLayout();
-    const isHd = this.ctx?.getGraphicsMode() === 'hd';
-    const bankX = isHd ? sl.candLeftX : 165;
-    this.spawnCoinFlight(sl.leftCenterX, sl.coinLeftY, bankX, 42, 420);
-    this.spawnCoinFlight(sl.rightCenterX, sl.coinLeftY, bankX + 10, 42, 420);
-    this.spawnCoinFlight(316, sl.coinHumanY, bankX + 5, 42, 420);
-    this.ctx?.audio.sfx.coinChime();
+    if (!isHd && this.egaBank) {
+      // Original MS-DOS NINE.EXE timing (`60ms`/purse step): open hat, then 1 -> 2 -> 3 sequentially reach coat, pull coin, toss into hat, close purse.
+      const bank = this.egaBank;
+      const leftStart = 360;
+      const rightStart = leftStart + EGA_BOT_PURSE_TOSS_TOTAL_MS + 40;
+      const humanStart = rightStart + EGA_BOT_PURSE_TOSS_TOTAL_MS + 40;
+      this.spawnEgaTrajectoryCoin(getEgaHatCoinTrajectory(bank, 1), leftStart + EGA_BOT_PURSE_COIN_RELEASE_MS, () => {
+        this.egaAntePaid[1] = true;
+        this.renderCashAndBankHud();
+        this.ctx?.audio.sfx.coinHatClink();
+      });
+      this.spawnEgaTrajectoryCoin(getEgaHatCoinTrajectory(bank, 2), rightStart + EGA_BOT_PURSE_COIN_RELEASE_MS, () => {
+        this.egaAntePaid[2] = true;
+        this.renderCashAndBankHud();
+        this.ctx?.audio.sfx.coinHatClink();
+      });
+      this.spawnEgaTrajectoryCoin(getEgaHatCoinTrajectory(bank, 3), humanStart, () => {
+        this.egaAntePaid[3] = true;
+        this.renderCashAndBankHud();
+        this.ctx?.audio.sfx.coinHatClink();
+      });
+    } else {
+      // $20 ante coins fly into BANK
+      const sl = this.getHdSeatLayout();
+      const bankX = sl.candLeftX;
+      this.spawnCoinFlight(sl.leftCenterX, sl.coinLeftY, bankX, 42, 420);
+      this.spawnCoinFlight(sl.rightCenterX, sl.coinLeftY, bankX + 10, 42, 420);
+      this.spawnCoinFlight(316, sl.coinHumanY, bankX + 5, 42, 420);
+      this.ctx?.audio.sfx.coinChime();
+    }
 
     this.passExclusions = { 1: new Set(), 2: new Set() };
     if (this.ctx) {
       this.ctx.advisorHint = null;
     }
-    this.phase = 'anteIntro';
-    this.phaseTimerMs = 0;
     const pot = this.match.round?.bank ?? 0;
     const roundLogText = getTranslations(this.ctx?.getLanguage() ?? DEFAULT_LANGUAGE).scenes.logRound(
       this.match.roundNumber,
@@ -1092,6 +1290,26 @@ export class GameTableScene implements Scene {
     };
   }
 
+  private initRivalSlotCards(): void {
+    const round = this.match.round;
+    if (!round) {
+      this.rivalSlotCards = { 1: [], 2: [] };
+      return;
+    }
+    const maxVisible = this.getMatchVariant() === 'fantan52' ? 18 : 12;
+    for (const seat of [1, 2] as const) {
+      const keys = round.hands[seat].slice(0, maxVisible).map((c) => cardKey(c));
+      // Shuffle visual slot layout so bots pull arbitrary card positions across their shelf (leaving gaps), as in DOS NINE.EXE.
+      for (let i = keys.length - 1; i > 0; i--) {
+        const j = this.rng.nextInt(i + 1);
+        const tmp = keys[i];
+        keys[i] = keys[j];
+        keys[j] = tmp;
+      }
+      this.rivalSlotCards[seat] = keys;
+    }
+  }
+
   private getRivalCardSlotPos(seat: 1 | 2, index: number): { x: number; y: number } {
     const m = this.getRivalCardMetrics();
     const col = index % m.cols;
@@ -1116,19 +1334,39 @@ export class GameTableScene implements Scene {
     const maxVisible = this.getMatchVariant() === 'fantan52' ? 18 : 12;
     const rm = this.getRivalCardMetrics();
     for (const seat of [1, 2] as const) {
-      const count = Math.min(maxVisible, this.match.round.hands[seat].length);
-      for (let i = 0; i < count; i++) {
-        const { x, y } = this.getRivalCardSlotPos(seat, i);
-        if (shadowGfx) {
-          shadowGfx.roundRect(x + 1, y + 1.5, rm.w, rm.h, 2.2).fill({ color: 0x000000, alpha: 0.42 });
+      const slots = this.rivalSlotCards[seat];
+      const dealtLimit = this.egaDealtCounts ? this.egaDealtCounts[seat] : undefined;
+      if (slots.length > 0) {
+        const limit = Math.min(maxVisible, slots.length, dealtLimit ?? maxVisible);
+        for (let i = 0; i < limit; i++) {
+          if (slots[i] === null) continue;
+          const { x, y } = this.getRivalCardSlotPos(seat, i);
+          if (shadowGfx) {
+            shadowGfx.roundRect(x + 1, y + 1.5, rm.w, rm.h, 2.2).fill({ color: 0x000000, alpha: 0.42 });
+          }
+          const spr = new Sprite(tex);
+          spr.position.set(x, y);
+          if (isHd) {
+            spr.width = rm.w;
+            spr.height = rm.h;
+          }
+          this.rivalCardsLayer.addChild(spr);
         }
-        const spr = new Sprite(tex);
-        spr.position.set(x, y);
-        if (isHd) {
-          spr.width = rm.w;
-          spr.height = rm.h;
+      } else {
+        const count = Math.min(maxVisible, this.match.round.hands[seat].length, dealtLimit ?? maxVisible);
+        for (let i = 0; i < count; i++) {
+          const { x, y } = this.getRivalCardSlotPos(seat, i);
+          if (shadowGfx) {
+            shadowGfx.roundRect(x + 1, y + 1.5, rm.w, rm.h, 2.2).fill({ color: 0x000000, alpha: 0.42 });
+          }
+          const spr = new Sprite(tex);
+          spr.position.set(x, y);
+          if (isHd) {
+            spr.width = rm.w;
+            spr.height = rm.h;
+          }
+          this.rivalCardsLayer.addChild(spr);
         }
-        this.rivalCardsLayer.addChild(spr);
       }
     }
   }
@@ -1137,11 +1375,14 @@ export class GameTableScene implements Scene {
     if (!this.ctx) return;
 
     if (this.ctx.getGraphicsMode() === 'ega') {
-      this.ctx.hudFont.renderFixedNumber(this.leftCashLayer, this.match.cash[1], 73 - 45, 188, 5, 9);
-      this.ctx.hudFont.renderFixedNumber(this.rightCashLayer, this.match.cash[2], 585 - 45, 188, 5, 9);
-      this.ctx.hudFont.renderFixedNumber(this.humanCashLayer, this.match.cash[3], 332 - 45, 245, 5, 9);
+      const pendingAnte = (seat: SeatIndex): number =>
+        this.phase === 'anteIntro' && !this.egaAntePaid[seat] ? 20 : 0;
+      const pendingPot = pendingAnte(1) + pendingAnte(2) + pendingAnte(3);
+      this.ctx.hudFont.renderFixedNumber(this.leftCashLayer, this.match.cash[1] + pendingAnte(1), 73 - 45, 188, 5, 9);
+      this.ctx.hudFont.renderFixedNumber(this.rightCashLayer, this.match.cash[2] + pendingAnte(2), 585 - 45, 188, 5, 9);
+      this.ctx.hudFont.renderFixedNumber(this.humanCashLayer, this.match.cash[3] + pendingAnte(3), 332 - 45, 245, 5, 9);
 
-      const bank = this.match.round?.bank ?? 0;
+      const bank = Math.max(0, (this.match.round?.bank ?? 0) - pendingPot);
       const segIdx = Math.max(0, Math.min(32, Math.floor(bank / 10)));
       if (this.thermoSpr) {
         this.thermoSpr.texture = this.thermoTextures[segIdx];
@@ -1241,8 +1482,10 @@ export class GameTableScene implements Scene {
     this.currentHandLayouts = computeHandLayout(hand, layoutOpts);
     const round = this.match.round;
     const isHumanTurn = round && !round.roundOver && round.currentTurn === 3 && this.phase === 'waitingTurn';
+    const visibleHumanCount = this.egaDealtCounts ? this.egaDealtCounts[3] : this.currentHandLayouts.length;
 
-    for (const layout of this.currentHandLayouts) {
+    for (let hIdx = 0; hIdx < Math.min(visibleHumanCount, this.currentHandLayouts.length); hIdx++) {
+      const layout = this.currentHandLayouts[hIdx];
       const tex = this.getActiveCardTexture(layout.card);
       if (!tex) continue;
 
@@ -1380,22 +1623,67 @@ export class GameTableScene implements Scene {
     });
   }
 
+  private spawnEgaTrajectoryCoin(traj: EgaCoinTrajectory, delayMs = 0, onArrive?: () => void): void {
+    const startPt = traj.waypoints[0];
+    const endPt = traj.waypoints[traj.waypoints.length - 1];
+    const spr = new Sprite(traj.getTexture(0, 0));
+    spr.anchor.set(0.5);
+    spr.position.set(startPt.x, startPt.y);
+    spr.visible = delayMs <= 0;
+    this.fxLayer.addChild(spr);
+    this.flyingCoins.push({
+      sprite: spr,
+      startX: startPt.x,
+      startY: startPt.y,
+      endX: endPt.x,
+      endY: endPt.y,
+      elapsed: 0,
+      durationMs: traj.durationMs,
+      delayMs,
+      waypoints: traj.waypoints,
+      getTexture: traj.getTexture,
+      onArrive,
+    });
+  }
+
+  private findRivalCardSlot(seat: 1 | 2, card: Card): number {
+    const slots = this.rivalSlotCards[seat];
+    const key = cardKey(card);
+    const exact = slots.indexOf(key);
+    if (exact >= 0) return exact;
+    const fallback = slots.findIndex((entry) => entry !== null);
+    if (fallback >= 0) return fallback;
+    return Math.max(0, (this.match.round?.hands[seat].length ?? 1) - 1);
+  }
+
+  private consumePendingRivalSlot(): void {
+    if (!this.pendingRivalRemoveSlot) return;
+    const { seat, slotIdx } = this.pendingRivalRemoveSlot;
+    this.pendingRivalRemoveSlot = null;
+    if (slotIdx >= 0 && slotIdx < this.rivalSlotCards[seat].length) {
+      this.rivalSlotCards[seat][slotIdx] = null;
+    }
+    this.renderRivalCardBacks();
+  }
+
   private startCardFlight(seat: SeatIndex, card: Card, originX?: number, originY?: number): void {
     if (!this.ctx) return;
+    const isHd = this.ctx.getGraphicsMode() === 'hd';
     const miniTex = this.getActiveMiniTexture(card);
     const bm = this.getBoardMetrics();
     const { x: endX, y: endY } = this.getBoardCardSlotPos(card);
-    const maxSlotIdx = this.getMatchVariant() === 'fantan52' ? 17 : 11;
-    const rivalSlot =
-      seat === 1 || seat === 2
-        ? this.getRivalCardSlotPos(seat, Math.max(0, Math.min(maxSlotIdx, (this.match.round?.hands[seat].length ?? 1) - 1)))
-        : null;
+    const rm = this.getRivalCardMetrics();
+    const botSlotIdx = seat === 1 || seat === 2 ? this.findRivalCardSlot(seat, card) : 0;
+    const rivalSlot = seat === 1 || seat === 2 ? this.getRivalCardSlotPos(seat, botSlotIdx) : null;
     const startX = originX ?? (rivalSlot ? rivalSlot.x : 300);
     const startY = originY ?? (seat === 3 ? this.getHumanHandTopY() : rivalSlot ? rivalSlot.y : 120);
 
-    this.ctx.audio.sfx.cardSlide();
+    const delayEgaBotLaunch = !isHd && (seat === 1 || seat === 2) && Boolean(miniTex && this.egaBank);
+    if (!delayEgaBotLaunch) {
+      this.ctx.audio.sfx.cardSlide();
+    }
     this.activeFlightSeat = seat;
-    if ((seat === 1 || seat === 2) && this.ctx.getGraphicsMode() === 'hd') {
+    if ((seat === 1 || seat === 2) && isHd) {
       this.rivalPlayAnimMs[seat] = 700;
     }
     this.pendingMoveCard = card;
@@ -1425,10 +1713,9 @@ export class GameTableScene implements Scene {
     if (seat === 3) {
       this.renderHumanHand();
     } else {
-      this.renderRivalCardBacks();
-      if (this.ctx.getGraphicsMode() === 'ega') {
-        if (seat === 1 && this.leftBotSpr) this.leftBotSpr.texture = this.botFrames[2];
-        else if (seat === 2 && this.rightBotSpr) this.rightBotSpr.texture = this.botFrames[2];
+      this.pendingRivalRemoveSlot = { seat, slotIdx: botSlotIdx };
+      if (!delayEgaBotLaunch) {
+        this.consumePendingRivalSlot();
       }
     }
 
@@ -1437,7 +1724,46 @@ export class GameTableScene implements Scene {
       return;
     }
 
-    const isHd = this.ctx.getGraphicsMode() === 'hd';
+    if (!isHd && this.egaBank) {
+      const flightFrames = this.egaBank.flyingCardFrames;
+      const isBot = seat === 1 || seat === 2;
+      const botRow = isBot ? Math.floor(botSlotIdx / rm.cols) : 0;
+      const botLaunch = isBot ? getEgaBotCardLaunchPos(seat, botSlotIdx, rm.cols) : null;
+      const egaStartX = botLaunch ? botLaunch.x : startX + 14;
+      const egaStartY = botLaunch ? botLaunch.y : startY + 12;
+      const egaEndX = endX + bm.cardW * 0.5;
+      const egaEndY = endY + bm.cardH * 0.5;
+      const spr = new Sprite(flightFrames[0]);
+      spr.anchor.set(0.5);
+      spr.position.set(egaStartX, egaStartY);
+      spr.visible = !isBot;
+      this.fxLayer.addChild(spr);
+
+      if (isBot) {
+        const initPose = getEgaBotCardThrowPose(this.egaBank, seat, botSlotIdx, rm.cols, 0);
+        this.setEgaRivalOverlay(seat, initPose.overlayTex, 'vr', initPose.overlayX);
+      }
+
+      this.phase = 'movingCard';
+      this.phaseTimerMs = 0;
+      this.flyingCard = {
+        sprite: spr,
+        shadow: null,
+        startX: egaStartX,
+        startY: egaStartY,
+        endX: egaEndX,
+        endY: egaEndY,
+        elapsed: 0,
+        durationMs: isBot ? (botRow >= 1 ? EGA_BOT_THROW_FAR_MS : EGA_BOT_THROW_NEAR_MS) : 380,
+        egaFrames: flightFrames,
+        botSlotIdx: isBot ? botSlotIdx : undefined,
+        botCols: isBot ? rm.cols : undefined,
+        soundPlayed: !isBot,
+        onLand: () => this.finishCardFlight(),
+      };
+      return;
+    }
+
     let shadow: Graphics | null = null;
     if (isHd) {
       shadow = new Graphics();
@@ -1447,10 +1773,6 @@ export class GameTableScene implements Scene {
     }
 
     const spr = new Sprite(miniTex);
-    if (this.ctx.getGraphicsMode() === 'ega' && this.getMatchVariant() === 'fantan52') {
-      spr.width = bm.cardW;
-      spr.height = bm.cardH;
-    }
     spr.position.set(startX, startY);
     this.fxLayer.addChild(spr);
 
@@ -1464,13 +1786,15 @@ export class GameTableScene implements Scene {
       endX,
       endY,
       elapsed: 0,
-      durationMs: isHd ? (seat === 3 ? 380 : 520) : 165,
+      durationMs: seat === 3 ? 380 : 520,
+      soundPlayed: true,
       onLand: () => this.finishCardFlight(),
     };
   }
 
   private finishCardFlight(): void {
     this.activeFlightSeat = null;
+    this.consumePendingRivalSlot();
     if (this.flyingCard) {
       const bm = this.getBoardMetrics();
       this.spawnSparkBurst(this.flyingCard.endX + bm.cardW * 0.5, this.flyingCard.endY + bm.cardH * 0.5, 6, 0xffe48a);
@@ -1482,8 +1806,12 @@ export class GameTableScene implements Scene {
       this.placeMiniCardOnTable(this.pendingMoveCard);
       this.pendingMoveCard = null;
     }
-    if (this.leftBotSpr) this.leftBotSpr.texture = this.botFrames[0];
-    if (this.rightBotSpr) this.rightBotSpr.texture = this.botFrames[0];
+    if (this.ctx?.getGraphicsMode() === 'ega') {
+      this.clearEgaActionOverlays();
+    } else {
+      if (this.leftBotSpr) this.leftBotSpr.texture = this.botFrames[0];
+      if (this.rightBotSpr) this.rightBotSpr.texture = this.botFrames[0];
+    }
     this.renderCashAndBankHud();
 
     if (this.match.round?.roundOver) {
@@ -1505,6 +1833,7 @@ export class GameTableScene implements Scene {
         this.passExclusions[seat].add(advisorCardKey(card));
       }
     }
+    this.passingBroke = (this.match.cash[seat] ?? 0) <= 0;
     this.ctx?.audio.sfx.passAlert();
     this.match = applyPass(this.match);
     this.renderCashAndBankHud();
@@ -1521,13 +1850,23 @@ export class GameTableScene implements Scene {
 
     const sl = this.getHdSeatLayout();
     const isHd = this.ctx?.getGraphicsMode() === 'hd';
-    const bankX = isHd ? sl.candLeftX : 165;
-    if (seat === 1) {
-      this.spawnCoinFlight(sl.leftCenterX, sl.coinLeftY, bankX, 42, 380);
-    } else if (seat === 2) {
-      this.spawnCoinFlight(sl.rightCenterX, sl.coinLeftY, bankX + 10, 42, 380);
+    if (!isHd && this.egaBank) {
+      this.clearEgaActionOverlays();
+      if (!this.passingBroke) {
+        const coinDelay = seat === 3 ? 280 : 260 + EGA_BOT_PURSE_COIN_RELEASE_MS;
+        this.spawnEgaTrajectoryCoin(getEgaHatCoinTrajectory(this.egaBank, seat), coinDelay, () => {
+          this.ctx?.audio.sfx.coinHatClink();
+        });
+      }
     } else {
-      this.spawnCoinFlight(316, sl.coinHumanY, bankX + 5, 42, 380);
+      const bankX = sl.candLeftX;
+      if (seat === 1) {
+        this.spawnCoinFlight(sl.leftCenterX, sl.coinLeftY, bankX, 42, 380);
+      } else if (seat === 2) {
+        this.spawnCoinFlight(sl.rightCenterX, sl.coinLeftY, bankX + 10, 42, 380);
+      } else {
+        this.spawnCoinFlight(316, sl.coinHumanY, bankX + 5, 42, 380);
+      }
     }
 
     this.passingSeat = seat;
@@ -1559,6 +1898,16 @@ export class GameTableScene implements Scene {
       }
     } else {
       this.statusBanner = '';
+      const botLegal = getLegalMoves(
+        round.hands[round.currentTurn],
+        round.tableBounds,
+        round.isFirstTurnOfRound,
+        round.rules ?? this.match.ruleConfig,
+      );
+      // In original DOS NINE.EXE, rivals pause thoughtfully and tap their fingers before tricky turns.
+      const tapPct = botLegal.length > 1 ? 45 : 25;
+      this.egaBotThinkMode = this.rng.nextInt(100) < tapPct ? 'tap' : 'quick';
+      this.egaBotThinkDurationMs = this.egaBotThinkMode === 'tap' ? EGA_BOT_TAP_DURATION_MS : 560;
     }
     this.refreshAdvisorHint();
     this.renderHumanHand();
@@ -1634,14 +1983,24 @@ export class GameTableScene implements Scene {
     });
     const sl = this.getHdSeatLayout();
     const isHd = this.ctx?.getGraphicsMode() === 'hd';
-    const dstX = winner === 1 ? sl.leftCenterX : winner === 2 ? sl.rightCenterX : 316;
-    const dstY = winner === 3 ? sl.coinHumanY : sl.coinLeftY;
     if (this.roundWonPot > 0) {
-      const bankLeftX = isHd ? sl.candLeftX : 168;
-      const bankRightX = isHd ? sl.candRightX : 470;
-      this.spawnCoinFlight(bankLeftX, 42, dstX, dstY, 520);
-      this.spawnCoinFlight(bankRightX, 48, dstX, dstY, 560);
-      if (isHd) {
+      if (!isHd && this.egaBank) {
+        this.clearEgaActionOverlays();
+        const count = winner === 3 ? 1 : 3;
+        for (let i = 0; i < count; i++) {
+          this.spawnEgaTrajectoryCoin(
+            getEgaPayoutCoinTrajectory(this.egaBank, winner, i),
+            340 + i * 160,
+            i === 0 ? () => this.ctx?.audio.sfx.coinHatClink() : undefined,
+          );
+        }
+      } else {
+        const dstX = winner === 1 ? sl.leftCenterX : winner === 2 ? sl.rightCenterX : 316;
+        const dstY = winner === 3 ? sl.coinHumanY : sl.coinLeftY;
+        const bankLeftX = sl.candLeftX;
+        const bankRightX = sl.candRightX;
+        this.spawnCoinFlight(bankLeftX, 42, dstX, dstY, 520);
+        this.spawnCoinFlight(bankRightX, 48, dstX, dstY, 560);
         this.spawnCoinFlight(bankLeftX + 7, 44, dstX, dstY, 610);
         this.spawnSparkBurst(dstX, dstY, 14, 0xffea88);
       }
@@ -1802,6 +2161,14 @@ export class GameTableScene implements Scene {
       return;
     }
 
+    if (this.phase === 'dealingCards') {
+      if (e.key === ' ' || e.key === 'Enter' || e.key === 'Escape') {
+        e.preventDefault();
+        this.finishEgaDealingCards();
+        return;
+      }
+    }
+
     if (e.key === 'Escape') {
       e.preventDefault();
       this.ctx?.audio.music.stop();
@@ -1848,6 +2215,11 @@ export class GameTableScene implements Scene {
       return;
     }
 
+    if (this.phase === 'dealingCards') {
+      this.finishEgaDealingCards();
+      return;
+    }
+
     if (this.phase !== 'waitingTurn' || !this.match.round || this.match.round.currentTurn !== 3) {
       return;
     }
@@ -1873,20 +2245,279 @@ export class GameTableScene implements Scene {
     }
   };
 
+  private updateEgaHatTimeline(timerMs: number, openEndMs: number, holdEndMs: number, closeEndMs: number): void {
+    const bank = this.egaBank;
+    if (!bank) return;
+    const frames = bank.dealerHatOpenFrames;
+    if (timerMs < openEndMs) {
+      const idx = Math.min(frames.length - 1, Math.floor((timerMs / openEndMs) * frames.length));
+      this.setEgaDealerHatPose(frames[idx], 274, 20, true);
+    } else if (timerMs < holdEndMs) {
+      this.setEgaDealerHatPose(frames[frames.length - 1], 274, 20, true);
+    } else if (timerMs < closeEndMs) {
+      const u = (timerMs - holdEndMs) / Math.max(1, closeEndMs - holdEndMs);
+      const revIdx = Math.max(0, frames.length - 1 - Math.floor(u * frames.length));
+      this.setEgaDealerHatPose(frames[revIdx], 274, 20, true);
+    } else {
+      this.setEgaDealerHatPose(null);
+    }
+  }
+
+  private updateEgaTossRival(seat: 1 | 2, localMs: number, durationMs: number): void {
+    const bank = this.egaBank;
+    if (!bank) return;
+    const tex = getEgaBotPurseTossFrame(bank, seat, localMs, durationMs);
+    this.setEgaRivalOverlay(seat, tex, 'purse');
+  }
+
+  private startEgaDealingCards(): void {
+    const round = this.match.round;
+    if (!this.egaBank || !round) {
+      this.finishEgaDealingCards();
+      return;
+    }
+    this.egaDealtCounts = { 1: 0, 2: 0, 3: 0 };
+    this.egaDealPrevStep = -1;
+    this.phase = 'dealingCards';
+    this.phaseTimerMs = 0;
+    if (this.egaDealerDealSpr) {
+      this.egaDealerDealSpr.visible = true;
+      this.egaDealerDealSpr.position.set(293, 37);
+      this.egaDealerDealSpr.texture = this.egaBank.dealerDealFrames[0];
+    }
+    if (this.egaDealerDealElbowMask) {
+      this.egaDealerDealElbowMask.visible = true;
+    }
+    if (this.egaMiniBackTex && !this.egaDealFlySpr) {
+      const spr = new Sprite(this.egaMiniBackTex);
+      spr.anchor.set(0.5);
+      spr.position.set(308, 66);
+      this.fxLayer.addChild(spr);
+      this.egaDealFlySpr = spr;
+    }
+    this.renderRivalCardBacks();
+    this.renderHumanHand();
+  }
+
+  private updateEgaDealingCards(timerMs: number): void {
+    const bank = this.egaBank;
+    const round = this.match.round;
+    if (!bank || !round) {
+      this.finishEgaDealingCards();
+      return;
+    }
+    const maxVisible = this.getMatchVariant() === 'fantan52' ? 18 : 12;
+    const targets: Record<SeatIndex, number> = {
+      1: Math.min(maxVisible, round.hands[1].length),
+      2: Math.min(maxVisible, round.hands[2].length),
+      3: Math.min(round.hands[3].length, this.currentHandLayouts.length || round.hands[3].length),
+    };
+    // Build interleaved clockwise deal schedule (Left -> Right -> Human per card index).
+    const schedule: { seat: SeatIndex; slotIdx: number }[] = [];
+    const maxRounds = Math.max(targets[1], targets[2], targets[3]);
+    for (let r = 0; r < maxRounds; r++) {
+      for (const s of [1, 2, 3] as const) {
+        if (r < targets[s]) schedule.push({ seat: s, slotIdx: r });
+      }
+    }
+
+    const stepMs = 65;
+    const stepIdx = Math.floor(timerMs / stepMs);
+    if (stepIdx >= schedule.length) {
+      this.finishEgaDealingCards();
+      return;
+    }
+
+    // Reveal all cards from completed steps before the active flying card.
+    if (stepIdx !== this.egaDealPrevStep) {
+      const counts: Record<SeatIndex, number> = { 1: 0, 2: 0, 3: 0 };
+      for (let i = 0; i < stepIdx; i++) {
+        counts[schedule[i].seat]++;
+      }
+      this.egaDealtCounts = counts;
+      this.renderRivalCardBacks();
+      this.renderHumanHand();
+      if (stepIdx % 2 === 0) {
+        this.ctx?.audio.sfx.cardSlide();
+      }
+      this.egaDealPrevStep = stepIdx;
+    }
+
+    const cur = schedule[stepIdx];
+    const frac = (timerMs - stepIdx * stepMs) / stepMs;
+    if (this.egaDealerDealSpr) {
+      const dealPose = getEgaDealerDealPose(bank, cur.seat, frac);
+      this.egaDealerDealSpr.visible = true;
+      this.egaDealerDealSpr.position.set(dealPose.x, dealPose.y);
+      this.egaDealerDealSpr.texture = dealPose.texture;
+      if (this.egaDealerDealElbowMask) {
+        this.egaDealerDealElbowMask.visible = dealPose.coverRestingElbow;
+      }
+    }
+
+    if (this.egaDealFlySpr) {
+      let endX = 316;
+      let endY = 307;
+      if (cur.seat === 1 || cur.seat === 2) {
+        const dst = this.getRivalCardSlotPos(cur.seat, cur.slotIdx);
+        endX = dst.x + 7;
+        endY = dst.y + 8;
+      } else {
+        const hl = this.currentHandLayouts[cur.slotIdx];
+        endX = (hl ? hl.x : 191 + cur.slotIdx * 16) + 25;
+        endY = (hl ? hl.y : 290) + 28;
+      }
+      const pos = computeEgaDealCardPos(308, 66, endX, endY, frac);
+      this.egaDealFlySpr.position.set(pos.x, pos.y);
+      this.egaDealFlySpr.visible = true;
+    }
+  }
+
+  private finishEgaDealingCards(): void {
+    this.egaDealtCounts = null;
+    this.egaDealPrevStep = -1;
+    if (this.egaDealerDealElbowMask) {
+      this.egaDealerDealElbowMask.visible = false;
+    }
+    if (this.egaDealerDealSpr) {
+      this.egaDealerDealSpr.visible = false;
+    }
+    if (this.egaDealFlySpr) {
+      this.fxLayer.removeChild(this.egaDealFlySpr);
+      this.egaDealFlySpr.destroy();
+      this.egaDealFlySpr = null;
+    }
+    this.renderRivalCardBacks();
+    this.renderHumanHand();
+    this.enterNextTurn();
+  }
+
+  private updateEgaWaitingIdle(round: NonNullable<MatchState['round']>): void {
+    const bank = this.egaBank;
+    if (!bank) return;
+    if (this.dealerSpr) {
+      // DOS CS:2114 / CS:23A5 -> 0xe97: after ~10.5s waiting on human, dealer rings the brass handbell.
+      const bellActive = round.currentTurn === 3 && this.humanWaitMs >= 10500;
+      const bellCycleIdx = bellActive ? Math.floor((this.humanWaitMs - 10500) / 12000) : -1;
+      const bellCycleMs = bellActive ? (this.humanWaitMs - 10500) % 12000 : 0;
+      const glanceActive = round.currentTurn === 3 && this.humanWaitMs >= 6500 && this.humanWaitMs < 8500;
+      if (bellActive && bellCycleMs < 1800) {
+        const bellSeq = [0, 1, 2, 3, 2, 1, 2, 3, 0];
+        const bIdx = Math.min(bellSeq.length - 1, Math.floor(bellCycleMs / 200));
+        this.dealerSpr.texture = bank.dealerBellFrames[bellSeq[bIdx]] ?? bank.dealerBellFrames[0];
+        if (bellCycleIdx !== this.egaIdleBellCycleTriggered) {
+          this.egaIdleBellCycleTriggered = bellCycleIdx;
+          this.ctx?.audio.sfx.dealerBellPing();
+        }
+      } else if (glanceActive) {
+        this.dealerSpr.texture = getEgaDealerGlanceWagFrame(bank, this.humanWaitMs - 6500);
+      } else {
+        const cycle = this.idleBlinkMs % 6400;
+        if (cycle > 6150 || (cycle > 2950 && cycle < 3200)) {
+          this.dealerSpr.texture = bank.dealerBlinkTex;
+        } else if (cycle > 4500 && cycle < 4850) {
+          this.dealerSpr.texture = bank.dealerLookLeftTex;
+        } else if (cycle > 1300 && cycle < 1650) {
+          this.dealerSpr.texture = bank.dealerLookRightTex;
+        } else {
+          this.dealerSpr.texture = bank.dealerIdleTex;
+        }
+      }
+    }
+    if (round.currentTurn === 3 && this.humanWaitMs >= 4500) {
+      const waitCycleIdx = Math.floor((this.humanWaitMs - 4500) / 4200);
+      const waitCycleMs = (this.humanWaitMs - 4500) % 4200;
+      const actor: 1 | 2 = waitCycleIdx % 2 === 0 ? 1 : 2;
+      const other: 1 | 2 = actor === 1 ? 2 : 1;
+      this.setEgaRivalOverlay(other, null);
+      const otherSpr = other === 1 ? this.leftBotSpr : this.rightBotSpr;
+      if (otherSpr) otherSpr.texture = bank.botFrames[0];
+
+      // Alternate between bored yawning (DOS proc_113b timings) and DOS 21-step finger tapping/glance.
+      if (Math.floor(waitCycleIdx / 2) % 2 === 1 && waitCycleMs < EGA_BOT_TAP_DURATION_MS) {
+        this.setEgaRivalOverlay(actor, null);
+        const actorSpr = actor === 1 ? this.leftBotSpr : this.rightBotSpr;
+        if (actorSpr) actorSpr.texture = getEgaBotTapFrame(bank, waitCycleMs);
+      } else {
+        const yawnTex = getEgaBotYawnFrame(bank, waitCycleMs, Math.floor(waitCycleIdx / 2) % 2 === 0);
+        if (yawnTex) {
+          this.setEgaRivalOverlay(actor, yawnTex, 'yawn');
+        } else {
+          this.setEgaRivalOverlay(actor, null);
+          const actorSpr = actor === 1 ? this.leftBotSpr : this.rightBotSpr;
+          if (actorSpr) actorSpr.texture = bank.botFrames[0];
+        }
+      }
+    } else {
+      this.setEgaRivalOverlay(1, null);
+      this.setEgaRivalOverlay(2, null);
+    }
+  }
+
+  private updateEgaRoundEndPose(timerMs: number): void {
+    const bank = this.egaBank;
+    if (!bank) return;
+    const winner = this.roundWinner ?? 3;
+    const frames = bank.dealerHatOpenFrames;
+      if (timerMs < 360) {
+      const idx = Math.min(frames.length - 1, Math.floor((timerMs / 360) * frames.length));
+      this.setEgaDealerHatPose(frames[idx], 274, 20, true);
+    } else if (timerMs < 1400) {
+      if (winner === 1) {
+        const pf = bank.dealerPourLeftFrames;
+        const pIdx = Math.min(pf.length - 1, Math.floor(((timerMs - 360) / 1040) * pf.length));
+        this.setEgaDealerHatPose(pf[pIdx], 274, 3, true);
+      } else if (winner === 2) {
+        const pf = bank.dealerPourRightFrames;
+        const pIdx = Math.min(pf.length - 1, Math.floor(((timerMs - 360) / 1040) * pf.length));
+        this.setEgaDealerHatPose(pf[pIdx], 274, 20, true);
+      } else {
+        const pf = bank.dealerPourDownFrames;
+        const pIdx = Math.min(pf.length - 1, Math.floor(((timerMs - 360) / 640) * pf.length));
+        this.setEgaDealerHatPose(pf[pIdx], 274, 20, true);
+      }
+    } else if (timerMs < 1720) {
+      const u = (timerMs - 1400) / 320;
+      const revIdx = Math.max(0, frames.length - 1 - Math.floor(u * frames.length));
+      this.setEgaDealerHatPose(frames[revIdx], 274, 20, true);
+    } else {
+      this.setEgaDealerHatPose(null);
+      if ((winner === 1 || winner === 2) && timerMs < 1840) {
+        const purseTex = getEgaBotPurseReceiveFrame(bank, timerMs - 1720, 120);
+        this.setEgaRivalOverlay(winner, purseTex, 'purse');
+      } else {
+        this.setEgaRivalOverlay(1, null);
+        this.setEgaRivalOverlay(2, null);
+      }
+    }
+  }
+
   update(dtMs: number): void {
     const isHd = this.ctx?.getGraphicsMode() === 'hd';
 
-    // Spinning / 3D-flipping coin flights
+    // Spinning / 3D-flipping / DOS-waypoint coin flights
     for (let i = this.flyingCoins.length - 1; i >= 0; i--) {
       const c = this.flyingCoins[i];
+      if (c.delayMs && c.delayMs > 0) {
+        c.delayMs -= dtMs;
+        if (c.delayMs > 0) continue;
+        c.sprite.visible = true;
+      }
       c.elapsed += dtMs;
       const t = Math.min(1, c.elapsed / c.durationMs);
-      const ease = 1 - Math.pow(1 - t, 2);
-      c.sprite.position.set(
-        c.startX + (c.endX - c.startX) * ease,
-        c.startY + (c.endY - c.startY) * ease - Math.sin(t * Math.PI) * 22,
-      );
-      if (isHd) {
+      if (c.waypoints) {
+        const pos = evaluateWaypointPath(c.waypoints, t);
+        c.sprite.position.set(pos.x, pos.y);
+      } else {
+        const ease = 1 - Math.pow(1 - t, 2);
+        c.sprite.position.set(
+          c.startX + (c.endX - c.startX) * ease,
+          c.startY + (c.endY - c.startY) * ease - Math.sin(t * Math.PI) * 22,
+        );
+      }
+      if (c.getTexture) {
+        c.sprite.texture = c.getTexture(t, c.elapsed);
+      } else if (isHd) {
         c.sprite.scale.set(0.76 * Math.cos(c.elapsed * 0.022), 0.76);
       } else {
         const frame = Math.floor(c.elapsed / 70) % this.coinFrames.length;
@@ -1894,6 +2525,7 @@ export class GameTableScene implements Scene {
       }
       if (t >= 1) {
         this.spawnSparkBurst(c.endX, c.endY, 5, 0xffe680);
+        c.onArrive?.();
         this.fxLayer.removeChild(c.sprite);
         this.flyingCoins.splice(i, 1);
       }
@@ -1957,6 +2589,8 @@ export class GameTableScene implements Scene {
     if (this.phase === 'waitingTurn' || this.phase === 'anteIntro') {
       if (this.hdDealer) {
         this.hdDealer.setTableExpression(blinking ? 'blink' : 'idle', this.idleBlinkMs);
+      } else if (this.dealerSpr && this.phase === 'waitingTurn' && round && !round.roundOver) {
+        this.updateEgaWaitingIdle(round);
       } else if (this.dealerSpr) {
         this.dealerSpr.texture = blinking ? this.dealerBlinkTex : this.dealerIdleTex;
       }
@@ -2009,8 +2643,31 @@ export class GameTableScene implements Scene {
     this.phaseTimerMs += dtMs;
 
     if (this.phase === 'anteIntro') {
-      if (this.phaseTimerMs >= 460) {
+      if (!isHd && this.egaBank) {
+        const rightStart = 360 + EGA_BOT_PURSE_TOSS_TOTAL_MS + 40;
+        const humanStart = rightStart + EGA_BOT_PURSE_TOSS_TOTAL_MS + 40;
+        const closeStart = humanStart + 700;
+        const endMs = closeStart + 380;
+        this.updateEgaHatTimeline(this.phaseTimerMs, 360, closeStart, endMs - 60);
+        this.updateEgaTossRival(1, this.phaseTimerMs - 360, EGA_BOT_PURSE_TOSS_TOTAL_MS);
+        this.updateEgaTossRival(2, this.phaseTimerMs - rightStart, EGA_BOT_PURSE_TOSS_TOTAL_MS);
+        if (this.phaseTimerMs >= endMs) {
+          this.egaAntePaid = { 1: true, 2: true, 3: true };
+          this.renderCashAndBankHud();
+          this.clearEgaActionOverlays();
+          this.startEgaDealingCards();
+        }
+      } else if (this.phaseTimerMs >= 460) {
         this.enterNextTurn();
+      }
+      return;
+    }
+
+    if (this.phase === 'dealingCards') {
+      if (!isHd && this.egaBank) {
+        this.updateEgaDealingCards(this.phaseTimerMs);
+      } else {
+        this.finishEgaDealingCards();
       }
       return;
     }
@@ -2018,18 +2675,52 @@ export class GameTableScene implements Scene {
     if (this.phase === 'movingCard' && this.flyingCard) {
       this.flyingCard.elapsed += dtMs;
       const t = Math.min(1, this.flyingCard.elapsed / this.flyingCard.durationMs);
-      const ease = isHd ? t * t * (3 - 2 * t) : t;
-      const arcLift = isHd ? Math.sin(t * Math.PI) * 18 : 0;
-      const curX = this.flyingCard.startX + (this.flyingCard.endX - this.flyingCard.startX) * ease;
-      const curY = this.flyingCard.startY + (this.flyingCard.endY - this.flyingCard.startY) * ease;
+      if (!isHd && this.flyingCard.egaFrames) {
+        let flyT = t;
+        if (this.egaBank && (this.activeFlightSeat === 1 || this.activeFlightSeat === 2)) {
+          const seat = this.activeFlightSeat;
+          const pose = getEgaBotCardThrowPose(
+            this.egaBank,
+            seat,
+            this.flyingCard.botSlotIdx ?? 0,
+            this.flyingCard.botCols ?? 6,
+            t,
+          );
+          this.setEgaRivalOverlay(seat, pose.overlayTex, 'vr', pose.overlayX);
+          if (pose.cardPickedFromStack) {
+            this.consumePendingRivalSlot();
+          }
+          if (pose.cardReleased && !this.flyingCard.soundPlayed) {
+            this.flyingCard.soundPlayed = true;
+            this.ctx?.audio.sfx.cardSlide();
+          }
+          this.flyingCard.sprite.visible = pose.cardReleased;
+          flyT = pose.flyProgress;
+        }
+        const pos = computeEgaParabolicCardPos(
+          this.flyingCard.startX,
+          this.flyingCard.startY,
+          this.flyingCard.endX,
+          this.flyingCard.endY,
+          flyT,
+        );
+        this.flyingCard.sprite.position.set(pos.x, pos.y);
+        const fIdx = Math.floor(this.flyingCard.elapsed / 70) % this.flyingCard.egaFrames.length;
+        this.flyingCard.sprite.texture = this.flyingCard.egaFrames[fIdx];
+      } else {
+        const ease = isHd ? t * t * (3 - 2 * t) : t;
+        const arcLift = isHd ? Math.sin(t * Math.PI) * 18 : 0;
+        const curX = this.flyingCard.startX + (this.flyingCard.endX - this.flyingCard.startX) * ease;
+        const curY = this.flyingCard.startY + (this.flyingCard.endY - this.flyingCard.startY) * ease;
 
-      this.flyingCard.sprite.position.set(curX, curY - arcLift);
-      if (isHd) {
-        const s = 1 + Math.sin(t * Math.PI) * 0.16;
-        this.flyingCard.sprite.scale.set(s);
-        if (this.flyingCard.shadow) {
-          this.flyingCard.shadow.position.set(curX + arcLift * 0.25, curY + arcLift * 0.2);
-          this.flyingCard.shadow.alpha = 0.25 + (1 - t) * 0.3;
+        this.flyingCard.sprite.position.set(curX, curY - arcLift);
+        if (isHd) {
+          const s = 1 + Math.sin(t * Math.PI) * 0.16;
+          this.flyingCard.sprite.scale.set(s);
+          if (this.flyingCard.shadow) {
+            this.flyingCard.shadow.position.set(curX + arcLift * 0.25, curY + arcLift * 0.2);
+            this.flyingCard.shadow.alpha = 0.25 + (1 - t) * 0.3;
+          }
         }
       }
       if (t >= 1) {
@@ -2042,10 +2733,10 @@ export class GameTableScene implements Scene {
       if (this.hdDealer) {
         this.hdDealer.setTableExpression('wag', this.phaseTimerMs);
       } else if (this.dealerSpr) {
-        const fIdx = Math.floor(this.phaseTimerMs / 95) % this.dealerWagFrames.length;
+        const fIdx = Math.floor(this.phaseTimerMs / 115) % this.dealerWagFrames.length;
         this.dealerSpr.texture = this.dealerWagFrames[fIdx];
       }
-      if (this.phaseTimerMs >= (isHd ? 900 : 450)) {
+      if (this.phaseTimerMs >= (isHd ? 900 : 720)) {
         if (this.dealerSpr) this.dealerSpr.texture = this.dealerIdleTex;
         this.phase = 'waitingTurn';
         this.phaseTimerMs = 0;
@@ -2056,14 +2747,43 @@ export class GameTableScene implements Scene {
     if (this.phase === 'passing') {
       if (this.hdDealer) {
         this.hdDealer.setTableExpression('bell', this.phaseTimerMs);
-      } else if (this.dealerSpr) {
-        const bIdx = Math.floor(this.phaseTimerMs / 130) % this.dealerBellFrames.length;
-        this.dealerSpr.texture = this.dealerBellFrames[bIdx];
-      }
-      if (this.phaseTimerMs >= (isHd ? 1480 : 520)) {
-        this.passingSeat = null;
-        if (this.dealerSpr) this.dealerSpr.texture = this.dealerIdleTex;
-        this.enterNextTurn();
+        if (this.phaseTimerMs >= 1480) {
+          this.passingSeat = null;
+          this.enterNextTurn();
+        }
+      } else if (this.egaBank) {
+        if (this.passingBroke && (this.passingSeat === 1 || this.passingSeat === 2)) {
+          const emptyPurseTex = getEgaBotBrokeShakeFrame(
+            this.egaBank,
+            this.phaseTimerMs,
+            EGA_BOT_BROKE_SHAKE_DURATION_MS,
+          );
+          this.setEgaRivalOverlay(this.passingSeat, emptyPurseTex, 'purse');
+          if (this.phaseTimerMs >= EGA_BOT_BROKE_SHAKE_DURATION_MS + 20) {
+            this.passingSeat = null;
+            this.passingBroke = false;
+            this.clearEgaActionOverlays();
+            this.enterNextTurn();
+          }
+        } else if (this.passingSeat === 1 || this.passingSeat === 2) {
+          const botEndMs = 260 + EGA_BOT_PURSE_TOSS_TOTAL_MS;
+          this.updateEgaHatTimeline(this.phaseTimerMs, 320, botEndMs, botEndMs + 300);
+          this.updateEgaTossRival(this.passingSeat, this.phaseTimerMs - 260, EGA_BOT_PURSE_TOSS_TOTAL_MS);
+          if (this.phaseTimerMs >= botEndMs + 320) {
+            this.passingSeat = null;
+            this.passingBroke = false;
+            this.clearEgaActionOverlays();
+            this.enterNextTurn();
+          }
+        } else {
+          this.updateEgaHatTimeline(this.phaseTimerMs, 300, 960, 1280);
+          if (this.phaseTimerMs >= 1300) {
+            this.passingSeat = null;
+            this.passingBroke = false;
+            this.clearEgaActionOverlays();
+            this.enterNextTurn();
+          }
+        }
       }
       return;
     }
@@ -2072,13 +2792,18 @@ export class GameTableScene implements Scene {
       if (!round || round.roundOver) return;
 
       if (round.currentTurn === 1 || round.currentTurn === 2) {
-        if (!isHd) {
+        if (!isHd && this.egaBank) {
           const botSpr = round.currentTurn === 1 ? this.leftBotSpr : this.rightBotSpr;
-          const thinkFrame = Math.floor(this.phaseTimerMs / 140) % 2;
-          if (botSpr) botSpr.texture = this.botFrames[thinkFrame];
+          if (botSpr) {
+            botSpr.texture =
+              this.egaBotThinkMode === 'tap'
+                ? getEgaBotTapFrame(this.egaBank, this.phaseTimerMs)
+                : this.botFrames[Math.floor(this.phaseTimerMs / 180) % 2];
+          }
         }
 
-        if (this.phaseTimerMs >= 440) {
+        const waitLimitMs = isHd ? 440 : this.egaBotThinkDurationMs;
+        if (this.phaseTimerMs >= waitLimitMs) {
           const botMove = selectBotMove(round, this.match.clubTable, this.rng);
           if (botMove) {
             this.startCardFlight(round.currentTurn, botMove);
@@ -2108,12 +2833,12 @@ export class GameTableScene implements Scene {
     if (this.phase === 'roundEnd') {
       if (this.hdDealer) {
         this.hdDealer.setTableExpression('bell', this.phaseTimerMs);
-      } else if (this.dealerSpr) {
-        const bIdx = Math.floor(this.phaseTimerMs / 130) % this.dealerBellFrames.length;
-        this.dealerSpr.texture = this.dealerBellFrames[bIdx];
+      } else if (this.egaBank) {
+        this.updateEgaRoundEndPose(this.phaseTimerMs);
       }
-      if (this.phaseTimerMs >= (isHd ? 1520 : 1150)) {
-        if (this.dealerSpr) this.dealerSpr.texture = this.dealerIdleTex;
+      if (this.phaseTimerMs >= (isHd ? 1520 : 1960)) {
+        if (!isHd) this.clearEgaActionOverlays();
+        else if (this.dealerSpr) this.dealerSpr.texture = this.dealerIdleTex;
         if (this.match.matchOver) {
           this.enterMatchEnd();
         } else {

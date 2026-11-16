@@ -230,7 +230,15 @@ export class SceneManager {
           password: '',
           clubCarryover: 0,
         };
-    const initialGraphics = loadStoredGraphicsMode();
+    const storedGraphics = loadStoredGraphicsMode();
+    const initialGraphics: GraphicsMode = ruleConfig.variant === 'fantan52' ? 'hd' : storedGraphics;
+    if (initialGraphics !== storedGraphics) {
+      try {
+        localStorage.setItem(GRAPHICS_STORAGE_KEY, initialGraphics);
+      } catch {
+        // Ignore storage errors
+      }
+    }
     let currentLanguage = loadStoredLanguage();
     applyDocumentLanguage(currentLanguage);
     stage.setGraphicsMode(initialGraphics);
@@ -290,6 +298,10 @@ export class SceneManager {
           // Ignore storage errors
         }
         this.activeScene?.onGraphicsModeChanged?.(mode);
+        if (mode === 'ega' && this.ctx.ruleConfig.variant === 'fantan52') {
+          // EGA mode only ships sprites for 36-card Nine; return to Nine (36) when entering EGA.
+          this.ctx.setRuleConfig({ variant: 'nine36' });
+        }
         this.ctx.onStateChange?.();
       },
       getLanguage: () => currentLanguage,
@@ -366,6 +378,10 @@ export class SceneManager {
           } else {
             this.ctx.signInPlayer(this.ctx.sessionPlayer.name, this.ctx.sessionPlayer.password);
           }
+        }
+        if (next.variant === 'fantan52' && this.ctx.stage.getGraphicsMode() === 'ega') {
+          // Fan Tan 52 has no authentic 2..5 / 13-column EGA assets, so promote graphics to HD immediately.
+          this.ctx.setGraphicsMode('hd');
         }
         this.activeScene?.onRuleConfigChanged?.(next);
         this.ctx.onStateChange?.();

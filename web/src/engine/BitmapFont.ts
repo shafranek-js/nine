@@ -21,6 +21,8 @@ export interface MaskedSliceOptions {
   readonly baseRect?: { readonly x: number; readonly y: number; readonly w: number; readonly h: number };
   /** Optional RGB remapping applied after the exterior black flood-fill (e.g. matching destination scene EGA palette). */
   readonly remapRgb?: readonly RgbRemapRule[];
+  /** Optional minimum local Y coordinate for perimeter flood-fill seeding and traversal (keeps rows `< floodFillMinY` opaque). */
+  readonly floodFillMinY?: number;
 }
 
 /**
@@ -38,10 +40,12 @@ export function sliceMaskedTexture(
 ): Texture {
   const outW = options?.baseRect?.w ?? w;
   const outH = options?.baseRect?.h ?? h;
+  const minY = Math.max(0, Math.min(outH, options?.floodFillMinY ?? 0));
   const baseKey = options?.baseRect ? `${options.baseRect.x},${options.baseRect.y},${outW},${outH}` : '';
   const remapKey = options?.remapRgb?.map((r) => `${r.from.join(',')}->${r.to.join(',')}`).join(';') ?? '';
+  const minYKey = minY > 0 ? `minY=${minY}` : '';
   const uid = sheet.source.uid;
-  const key = `${uid}:${x},${y},${w},${h}|${baseKey}|${remapKey}`;
+  const key = `${uid}:${x},${y},${w},${h}|${baseKey}|${remapKey}|${minYKey}`;
   const existing = colorKeyCache.get(key);
   if (existing) return existing;
 
@@ -86,10 +90,10 @@ export function sliceMaskedTexture(
   };
 
   for (let px = 0; px < outW; px++) {
-    trySeed(px, 0);
-    trySeed(px, outH - 1);
+    if (minY === 0) trySeed(px, 0);
+    if (outH - 1 >= minY) trySeed(px, outH - 1);
   }
-  for (let py = 0; py < outH; py++) {
+  for (let py = minY; py < outH; py++) {
     trySeed(0, py);
     trySeed(outW - 1, py);
   }
@@ -102,7 +106,7 @@ export function sliceMaskedTexture(
     const py = (idx - px) / outW;
     if (px > 0) trySeed(px - 1, py);
     if (px + 1 < outW) trySeed(px + 1, py);
-    if (py > 0) trySeed(px, py - 1);
+    if (py > minY) trySeed(px, py - 1);
     if (py + 1 < outH) trySeed(px, py + 1);
   }
 

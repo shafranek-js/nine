@@ -24,8 +24,32 @@ const TRUMPETERS: readonly TrumpeterSlot[] = [
   { col: 3, x: 523, y: 169 },
 ];
 
-// Pong cycle raising and lowering the trumpets (`CS:43B1..46E5`)
-const TRUMPET_SEQUENCE = [0, 1, 2, 3, 4, 4, 3, 2, 1, 0];
+// Authentic DOS CS:43B1..46E5 choreography:
+// Phase 1: Raise trumpets 0 -> 1 -> 2 -> 3 (0..520ms)
+// Phase 2: Sustain fanfare blowing & puffing cheeks at peak 3 <-> 4 (520..15280ms)
+// Phase 3: Lower trumpets 3 -> 2 -> 1 -> 0 before dealer transition (15280..15800ms)
+const INTRO_RAISE_FRAMES = [0, 1, 2, 3] as const;
+const INTRO_BLOW_FRAMES = [3, 4] as const;
+const INTRO_LOWER_FRAMES = [3, 2, 1, 0] as const;
+const INTRO_STEP_MS = 130;
+const INTRO_DURATION_MS = 15800;
+
+export function getEgaIntroTrumpetFrame(elapsedMs: number): number {
+  const raiseMs = INTRO_RAISE_FRAMES.length * INTRO_STEP_MS;
+  const lowerMs = INTRO_LOWER_FRAMES.length * INTRO_STEP_MS;
+  if (elapsedMs < raiseMs) {
+    return INTRO_RAISE_FRAMES[Math.floor(elapsedMs / INTRO_STEP_MS)] ?? 0;
+  }
+  const lowerStartMs = INTRO_DURATION_MS - lowerMs;
+  if (elapsedMs >= lowerStartMs) {
+    const idx = Math.min(
+      INTRO_LOWER_FRAMES.length - 1,
+      Math.floor((elapsedMs - lowerStartMs) / INTRO_STEP_MS),
+    );
+    return INTRO_LOWER_FRAMES[idx] ?? 0;
+  }
+  return INTRO_BLOW_FRAMES[Math.floor((elapsedMs - raiseMs) / INTRO_STEP_MS) % INTRO_BLOW_FRAMES.length];
+}
 
 interface SparkleParticle {
   readonly gfx: Graphics;
@@ -219,7 +243,7 @@ export class IntroScene implements Scene {
     this.elapsedMs += dtMs;
 
     if (this.ctx.getGraphicsMode() === 'ega') {
-      const tIdx = TRUMPET_SEQUENCE[Math.floor(this.elapsedMs / 130) % TRUMPET_SEQUENCE.length];
+      const tIdx = getEgaIntroTrumpetFrame(this.elapsedMs);
       for (let i = 0; i < this.trumpetSprites.length; i++) {
         this.trumpetSprites[i].texture = this.trumpetFrames[i][tIdx];
       }
@@ -274,8 +298,8 @@ export class IntroScene implements Scene {
       }
     }
 
-    // Auto-advance after full ~15.6s fanfare (`CS:43B1` 70-beat loop -> `CS:5B14`)
-    if (this.elapsedMs >= 15800) {
+    // Auto-advance after full ~15.8s fanfare (`CS:43B1` -> `CS:5B14`)
+    if (this.elapsedMs >= INTRO_DURATION_MS) {
       this.advanceToDealer();
     }
   }

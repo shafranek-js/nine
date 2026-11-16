@@ -70,6 +70,7 @@ export interface Translations {
     readonly clubRoom: string;
     readonly modeNine36: string;
     readonly modeFanTan52: string;
+    readonly fanTanHdOnlyTip: string;
     readonly fanTanLead7D: string;
     readonly fanTanLeadAny7: string;
     readonly fanTanPenaltyOn: (penalty: number) => string;
@@ -254,6 +255,7 @@ const EN: Translations = {
     clubRoom: 'Club Room',
     modeNine36: 'Nine (36)',
     modeFanTan52: 'Fan Tan (52)',
+    fanTanHdOnlyTip: 'Fan Tan (52) uses HD graphics — selecting it switches to HD',
     fanTanLead7D: 'Open: 7♦',
     fanTanLeadAny7: 'Open: Any 7',
     fanTanPenaltyOn: (p) => `Tail fee: $${p}/card`,
@@ -447,6 +449,7 @@ const RU: Translations = {
     clubRoom: 'Клубная комната',
     modeNine36: 'Девятка (36)',
     modeFanTan52: 'Fan Tan (52)',
+    fanTanHdOnlyTip: 'Fan Tan (52) работает только в HD — при выборе графика переключится на HD',
     fanTanLead7D: 'Старт: 7♦',
     fanTanLeadAny7: 'Старт: Любая 7',
     fanTanPenaltyOn: (p) => `За карты: $${p}`,
@@ -642,6 +645,7 @@ const UK: Translations = {
     clubRoom: 'Клубна зала',
     modeNine36: 'Дев’ятка (36)',
     modeFanTan52: 'Fan Tan (52)',
+    fanTanHdOnlyTip: 'Fan Tan (52) працює лише в HD — при виборі графіка перемкнеться на HD',
     fanTanLead7D: 'Старт: 7♦',
     fanTanLeadAny7: 'Старт: Будь-яка 7',
     fanTanPenaltyOn: (p) => `За карти: $${p}`,
@@ -837,6 +841,7 @@ const DE: Translations = {
     clubRoom: 'Klubraum',
     modeNine36: 'Neuner (36)',
     modeFanTan52: 'Fan Tan (52)',
+    fanTanHdOnlyTip: 'Fan Tan (52) nutzt HD-Grafik — Auswahl wechselt zu HD',
     fanTanLead7D: 'Start: 7♦',
     fanTanLeadAny7: 'Start: Jede 7',
     fanTanPenaltyOn: (p) => `Restkarte: $${p}`,

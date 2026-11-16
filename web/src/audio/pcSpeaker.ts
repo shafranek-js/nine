@@ -310,6 +310,17 @@ export class PcSpeaker {
     );
   }
 
+  /** Triple `6000 Hz` 5ms metallic ticks on EGA hat coin drop / payout (`NINE.EXE` `$1770`) */
+  coinHatClink(): void {
+    if (this.soundProfile === 'ega') {
+      this.playTone(6000, 5, 0);
+      this.playTone(6000, 5, 0.016);
+      this.playTone(6000, 5, 0.032);
+      return;
+    }
+    this.coinChime();
+  }
+
   /** Tactile card slide / snap onto green felt */
   cardSlide(): void {
     if (this.soundProfile === 'ega') {
@@ -372,6 +383,21 @@ export class PcSpeaker {
     this.playWarmVoice(587.33, 170, 0.085, 'triangle', 2200, 0.1);
     this.playWarmVoice(739.99, 190, 0.085, 'triangle', 2200, 0.17);
     this.playWarmVoice(880.0, 260, 0.095, 'sine', 2600, 0.24);
+  }
+
+  /** EGA idle hurry-up dealer service bell (`NINE.EXE` `0xe97`: `5000 Hz` chimes) */
+  dealerBellPing(): void {
+    if (this.soundProfile === 'ega') {
+      this.playTone(5000, 10, 0);
+      this.playTone(5000, 10, 0.14);
+      this.playTone(5000, 10, 0.28);
+      return;
+    }
+    if (this.bellBuffer && this.bellBufferCtx === this.ctx) {
+      this.playSample(this.bellBuffer, 0.36);
+    } else {
+      this.playBrassHandBell(1174.66, 0.55, 340, 0);
+    }
   }
 
   /** Full match victory golden arpeggio chord */

@@ -240,4 +240,23 @@ describe('SceneManager audit regression tests', () => {
     expect(manager.ctx.sessionPlayer.clubCarryover).toBe(700);
     manager.destroy();
   });
+
+  it('automatically switches from EGA to HD when selecting Fan Tan 52 and returns to Nine 36 when entering EGA', () => {
+    const { manager } = createHarness();
+    manager.ctx.goTo('table', 0);
+
+    manager.ctx.setGraphicsMode('ega');
+    expect(manager.ctx.getGraphicsMode()).toBe('ega');
+
+    // Selecting Fan Tan while in EGA immediately switches graphics mode to HD
+    manager.ctx.setRuleConfig({ variant: 'fantan52' });
+    expect(manager.ctx.ruleConfig.variant).toBe('fantan52');
+    expect(manager.ctx.getGraphicsMode()).toBe('hd');
+
+    // Switching back to EGA automatically exits Fan Tan into Nine (36)
+    manager.ctx.setGraphicsMode('ega');
+    expect(manager.ctx.getGraphicsMode()).toBe('ega');
+    expect(manager.ctx.ruleConfig.variant).toBe('nine36');
+    manager.destroy();
+  });
 });

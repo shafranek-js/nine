@@ -869,8 +869,10 @@ export class ShellControls {
     this.resetBtn.classList.toggle('is-armed', this.resetArmed);
 
     const isFanTan = ruleConfig.variant === 'fantan52';
+    const isEga = this.manager.ctx.getGraphicsMode() === 'ega';
     this.modeNineBtn.textContent = s.modeNine36;
     this.modeFanTanBtn.textContent = s.modeFanTan52;
+    this.modeFanTanBtn.title = isEga ? s.fanTanHdOnlyTip : '';
     this.modeNineBtn.classList.toggle('is-active', !isFanTan);
     this.modeFanTanBtn.classList.toggle('is-active', isFanTan);
     this.fanTanOptsRow.classList.toggle('is-hidden', !isFanTan);
