@@ -726,11 +726,137 @@ function drawTopHat(ctx: CanvasRenderingContext2D, cx: number, cy: number, scale
   ctx.restore();
 }
 
+export type DealerTableMode =
+  | 'idle'
+  | 'blink'
+  | 'bell'
+  | 'wag'
+  | 'glanceLeft'
+  | 'glanceRight'
+  | 'hatCollect'
+  | 'dealLeft'
+  | 'dealDown'
+  | 'dealRight'
+  | 'pourLeft'
+  | 'pourRight'
+  | 'pourDown';
+
 export interface HdDealerController {
   readonly container: Container;
-  setTableExpression(mode: 'idle' | 'blink' | 'bell' | 'wag', elapsedMs: number): void;
+  setTableExpression(mode: DealerTableMode, elapsedMs: number): void;
   setHatTipProgress(progress01: number): void;
   setShuffleFrame(frameIdx: number): void;
+  getHatWorldPosition(winnerSeat?: 1 | 2 | 3): { x: number; y: number };
+}
+
+function getDealerInvertedHatTexture(): Texture {
+  return createHdTexture(60, 44, (ctx) => {
+    const cx = 30;
+    // Left/right gloved hands holding the inverted brim
+    for (const sx of [-1, 1]) {
+      ctx.fillStyle = '#b8141c';
+      ctx.strokeStyle = '#140808';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(cx + sx * 19 - 4, 15, 8, 9, 3);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#fcf8ef';
+      ctx.beginPath();
+      ctx.ellipse(cx + sx * 16, 17, 4.4, 3.2, sx * 0.25, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+
+    // Upside-down plush charcoal cylinder crown below brim
+    const crownG = ctx.createLinearGradient(cx - 15, 16, cx + 15, 40);
+    crownG.addColorStop(0, '#5a6270');
+    crownG.addColorStop(0.32, '#9ca6b8');
+    crownG.addColorStop(0.58, '#363c48');
+    crownG.addColorStop(1, '#12151c');
+    ctx.fillStyle = crownG;
+    ctx.strokeStyle = '#0c0d10';
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(cx - 13.5, 16);
+    ctx.lineTo(cx - 15.5, 37);
+    ctx.quadraticCurveTo(cx, 40, cx + 15.5, 37);
+    ctx.lineTo(cx + 13.5, 16);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Satin crimson band on inverted hat
+    ctx.fillStyle = '#8b1520';
+    ctx.fillRect(cx - 14, 17.5, 28, 4);
+
+    // Wide open brim facing up + dark hollow cavity + coin glint
+    const brimG = ctx.createLinearGradient(cx - 22, 10, cx + 22, 20);
+    brimG.addColorStop(0, '#2a2e38');
+    brimG.addColorStop(0.45, '#8b95a5');
+    brimG.addColorStop(1, '#151820');
+    ctx.fillStyle = brimG;
+    ctx.beginPath();
+    ctx.ellipse(cx, 15, 21.5, 5.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#120b0d';
+    ctx.beginPath();
+    ctx.ellipse(cx, 14.6, 13.2, 3.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Gold coin glints inside open hat
+    ctx.fillStyle = '#ffd859';
+    ctx.beginPath();
+    ctx.ellipse(cx - 3, 14.5, 4.2, 1.8, -0.15, 0, Math.PI * 2);
+    ctx.ellipse(cx + 4.5, 14.9, 3.6, 1.5, 0.2, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
+function getDealerDealArmTexture(): Texture {
+  return createHdTexture(44, 30, (ctx) => {
+    // Crimson jacket sleeve + white shirt cuff
+    const sleeveG = ctx.createLinearGradient(4, 12, 24, 20);
+    sleeveG.addColorStop(0, '#9a1017');
+    sleeveG.addColorStop(1, '#d92630');
+    ctx.fillStyle = sleeveG;
+    ctx.strokeStyle = '#140808';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(4, 11, 17, 9, 4);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#f8f5ec';
+    ctx.fillRect(19, 12, 3.5, 7);
+
+    // White glove thumb/palm holding flicked blue mini-card
+    ctx.save();
+    ctx.translate(31, 13);
+    ctx.rotate(0.24);
+    ctx.fillStyle = '#1b479e';
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.roundRect(-7, -5, 14, 10, 1.6);
+    ctx.fill();
+    ctx.stroke();
+    ctx.strokeStyle = '#d9b54d';
+    ctx.lineWidth = 0.7;
+    ctx.strokeRect(-4.8, -3, 9.6, 6);
+    ctx.restore();
+
+    ctx.fillStyle = '#fcf8ef';
+    ctx.strokeStyle = '#140808';
+    ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.ellipse(25.5, 16, 4.8, 3.4, -0.15, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  });
 }
 
 let hdDealerArtMap: Map<string, HTMLImageElement> = new Map();
@@ -796,6 +922,16 @@ export function createHdDealer(scale = 1): HdDealerController {
   const bellSheetImg = hdDealerArtMap.get('bell_sheet');
   const hatTipSheetImg = hdDealerArtMap.get('hat_tip_sheet');
   const shuffleSheetImg = hdDealerArtMap.get('shuffle_sheet');
+  const dealSheetImg = hdDealerArtMap.get('deal_sheet');
+  const hatCollectSheetImg = hdDealerArtMap.get('hat_collect_sheet');
+  const pourLeftSheetImg = hdDealerArtMap.get('pour_left_sheet');
+  const pourRightSheetImg = hdDealerArtMap.get('pour_right_sheet');
+  const pourDownSheetImg = hdDealerArtMap.get('pour_down_sheet');
+
+  const toWorldPoint = (lx: number, ly: number): { x: number; y: number } => ({
+    x: container.x + (aspectRig.x + lx * aspectRig.scale.x) * container.scale.x,
+    y: container.y + (aspectRig.y + ly * aspectRig.scale.y) * container.scale.y,
+  });
 
   if (isLoadedImage(bodyImg)) {
     const bodyPivot = new Container();
@@ -821,6 +957,7 @@ export function createHdDealer(scale = 1): HdDealerController {
     const pupilTex = createGlossyPupilTexture(2.05);
     const lidTex = createLinearEyelidTexture('#b80404', '#ea1414', '#8e0202', '#180303');
     const eyelids: { spr: Sprite; closedY: number; openY: number }[] = [];
+    const pupils: { spr: Sprite; baseX: number }[] = [];
 
     for (const eye of dealerEyes) {
       const eyeC = new Container();
@@ -833,6 +970,7 @@ export function createHdDealer(scale = 1): HdDealerController {
       pupilSpr.anchor.set(0.5);
       pupilSpr.position.set(eye.gazeX, 0.45);
       eyeC.addChild(pupilSpr);
+      pupils.push({ spr: pupilSpr, baseX: eye.gazeX });
 
       const lidSpr = new Sprite(lidTex);
       lidSpr.anchor.set(0.5, 1);
@@ -923,14 +1061,101 @@ export function createHdDealer(scale = 1): HdDealerController {
       aspectRig.addChild(shuffleSpr);
     }
 
+    let dealFrames: Texture[] = [];
+    let dealSpr: Sprite | null = null;
+    if (isLoadedImage(dealSheetImg)) {
+      const sliced = sliceSheet4x4(dealSheetImg);
+      dealFrames = sliced.frames;
+      dealSpr = new Sprite(dealFrames[0]);
+      const sc = bodyW / 206;
+      dealSpr.width = sliced.cw * sc;
+      dealSpr.height = sliced.ch * sc;
+      dealSpr.anchor.set(0.5, 1.0);
+      dealSpr.position.set(0, 0);
+      dealSpr.visible = false;
+      aspectRig.addChild(dealSpr);
+    }
+
+    let hatCollectFrames: Texture[] = [];
+    let hatCollectSpr: Sprite | null = null;
+    if (isLoadedImage(hatCollectSheetImg)) {
+      const sliced = sliceSheet4x4(hatCollectSheetImg);
+      hatCollectFrames = sliced.frames;
+      hatCollectSpr = new Sprite(hatCollectFrames[0]);
+      const sc = bodyW / 206;
+      hatCollectSpr.width = sliced.cw * sc;
+      hatCollectSpr.height = sliced.ch * sc;
+      hatCollectSpr.anchor.set(0.5, 1.0);
+      hatCollectSpr.position.set(0, 0);
+      hatCollectSpr.visible = false;
+      aspectRig.addChild(hatCollectSpr);
+    }
+
+    const loadOptionalPour = (img: HTMLImageElement | undefined): { frames: Texture[]; spr: Sprite } | null => {
+      if (!isLoadedImage(img)) return null;
+      const sliced = sliceSheet4x4(img);
+      const spr = new Sprite(sliced.frames[0]);
+      const sc = bodyW / 206;
+      spr.width = sliced.cw * sc;
+      spr.height = sliced.ch * sc;
+      spr.anchor.set(0.5, 1.0);
+      spr.position.set(0, 0);
+      spr.visible = false;
+      aspectRig.addChild(spr);
+      return { frames: sliced.frames, spr };
+    };
+    const pourLeftArt = loadOptionalPour(pourLeftSheetImg);
+    const pourRightArt = loadOptionalPour(pourRightSheetImg);
+    const pourDownArt = loadOptionalPour(pourDownSheetImg);
+
+    // Temporary vector overlays used whenever optional dealer sprite sheets aren't provided yet.
+    const vectorHatSpr = new Sprite(getDealerInvertedHatTexture());
+    vectorHatSpr.anchor.set(0.5, 0.5);
+    vectorHatSpr.position.set(0, -18);
+    vectorHatSpr.visible = false;
+    aspectRig.addChild(vectorHatSpr);
+
+    const vectorDealArmSpr = new Sprite(getDealerDealArmTexture());
+    vectorDealArmSpr.anchor.set(0.18, 0.55);
+    vectorDealArmSpr.position.set(0, -12);
+    vectorDealArmSpr.visible = false;
+    aspectRig.addChild(vectorDealArmSpr);
+
+    const hideExtraOverlays = (): void => {
+      if (dealSpr) dealSpr.visible = false;
+      if (hatCollectSpr) hatCollectSpr.visible = false;
+      if (pourLeftArt) pourLeftArt.spr.visible = false;
+      if (pourRightArt) pourRightArt.spr.visible = false;
+      if (pourDownArt) pourDownArt.spr.visible = false;
+      vectorHatSpr.visible = false;
+      vectorDealArmSpr.visible = false;
+    };
+
     return {
       container,
+      getHatWorldPosition(winnerSeat) {
+        if (winnerSeat === 1) return toWorldPoint(-17, -14);
+        if (winnerSeat === 2) return toWorldPoint(17, -14);
+        if (winnerSeat === 3) return toWorldPoint(0, -10);
+        return toWorldPoint(0, -22);
+      },
       setTableExpression(mode, elapsedMs) {
         const showWag = Boolean(wagSpr && wagFrames.length === 16 && mode === 'wag');
         const showBell = Boolean(bellSpr && bellFrames.length === 16 && mode === 'bell');
+        const isDeal = mode === 'dealLeft' || mode === 'dealDown' || mode === 'dealRight';
+        const isPour = mode === 'pourLeft' || mode === 'pourRight' || mode === 'pourDown';
+        const activePourArt =
+          mode === 'pourLeft' ? pourLeftArt : mode === 'pourRight' ? pourRightArt : mode === 'pourDown' ? pourDownArt : null;
+
         if (hatTipSpr) hatTipSpr.visible = false;
         if (shuffleSpr) shuffleSpr.visible = false;
-        bodyPivot.visible = !showWag && !showBell;
+        hideExtraOverlays();
+
+        const useDealSheet = Boolean(isDeal && dealSpr && dealFrames.length === 16);
+        const useCollectSheet = Boolean(mode === 'hatCollect' && hatCollectSpr && hatCollectFrames.length === 16);
+        const usePourSheet = Boolean(isPour && activePourArt && activePourArt.frames.length === 16);
+
+        bodyPivot.visible = !showWag && !showBell && !useDealSheet && !useCollectSheet && !usePourSheet;
 
         if (wagSpr) {
           wagSpr.visible = showWag;
@@ -946,6 +1171,20 @@ export function createHdDealer(scale = 1): HdDealerController {
             bellSpr.texture = bellFrames[idx];
           }
         }
+        if (useDealSheet && dealSpr) {
+          dealSpr.visible = true;
+          dealSpr.scale.x = mode === 'dealLeft' ? -Math.abs(dealSpr.scale.x) : Math.abs(dealSpr.scale.x);
+          const idx = Math.min(15, Math.floor((Math.max(0, elapsedMs) / 45) % 16));
+          dealSpr.texture = dealFrames[idx];
+        } else if (useCollectSheet && hatCollectSpr) {
+          hatCollectSpr.visible = true;
+          const idx = Math.min(15, Math.floor((Math.max(0, elapsedMs) / 60) % 16));
+          hatCollectSpr.texture = hatCollectFrames[idx];
+        } else if (usePourSheet && activePourArt) {
+          activePourArt.spr.visible = true;
+          const idx = Math.min(15, Math.floor((Math.max(0, elapsedMs) / 65) % 16));
+          activePourArt.spr.texture = activePourArt.frames[idx];
+        }
 
         if (bodyPivot.visible) {
           const isBlink = mode === 'blink';
@@ -953,14 +1192,64 @@ export function createHdDealer(scale = 1): HdDealerController {
             lid.spr.visible = isBlink;
             lid.spr.position.y = isBlink ? lid.closedY : lid.openY;
           }
+
+          let pupilShiftX = 0;
+          if (mode === 'glanceLeft' || mode === 'dealLeft' || mode === 'pourLeft') pupilShiftX = -1.7;
+          else if (mode === 'glanceRight' || mode === 'dealRight' || mode === 'pourRight') pupilShiftX = 1.7;
+          for (const p of pupils) {
+            p.spr.position.set(p.baseX + pupilShiftX, 0.45);
+          }
+
+          const hideHeadHat = mode === 'hatCollect' || isPour;
+          hatPivot.visible = !hideHeadHat;
           hatPivot.position.set(0, hatBaseY);
-          hatPivot.rotation = 0;
+          hatPivot.rotation = mode === 'glanceLeft' ? -0.05 : mode === 'glanceRight' ? 0.05 : 0;
+
+          if (mode === 'hatCollect') {
+            vectorHatSpr.visible = true;
+            vectorHatSpr.position.set(0, -19 + Math.sin(elapsedMs * 0.008) * 1.1);
+            vectorHatSpr.rotation = 0;
+            vectorHatSpr.scale.set(1, 1);
+          } else if (isPour) {
+            vectorHatSpr.visible = true;
+            if (mode === 'pourLeft') {
+              vectorHatSpr.position.set(-10, -21 + Math.sin(elapsedMs * 0.018) * 1.4);
+              vectorHatSpr.rotation = -2.15 + Math.sin(elapsedMs * 0.015) * 0.12;
+            } else if (mode === 'pourRight') {
+              vectorHatSpr.position.set(10, -21 + Math.sin(elapsedMs * 0.018) * 1.4);
+              vectorHatSpr.rotation = 2.15 + Math.sin(elapsedMs * 0.015) * 0.12;
+            } else {
+              vectorHatSpr.position.set(0, -16 + Math.sin(elapsedMs * 0.018) * 1.5);
+              vectorHatSpr.rotation = Math.PI + Math.sin(elapsedMs * 0.014) * 0.1;
+            }
+          } else if (isDeal) {
+            vectorDealArmSpr.visible = true;
+            const flick = Math.sin(elapsedMs * 0.05) * 0.18;
+            if (mode === 'dealLeft') {
+              vectorDealArmSpr.position.set(-8, -11);
+              vectorDealArmSpr.scale.set(-0.92, 0.92);
+              vectorDealArmSpr.rotation = 0.28 + flick;
+            } else if (mode === 'dealRight') {
+              vectorDealArmSpr.position.set(8, -11);
+              vectorDealArmSpr.scale.set(0.92, 0.92);
+              vectorDealArmSpr.rotation = -0.28 + flick;
+            } else {
+              vectorDealArmSpr.position.set(2, -9);
+              vectorDealArmSpr.scale.set(0.92, 0.92);
+              vectorDealArmSpr.rotation = 1.15 + flick;
+            }
+          }
         }
       },
       setHatTipProgress(progress01: number) {
         if (wagSpr) wagSpr.visible = false;
         if (bellSpr) bellSpr.visible = false;
         if (shuffleSpr) shuffleSpr.visible = false;
+        hideExtraOverlays();
+        hatPivot.visible = true;
+        for (const p of pupils) {
+          p.spr.position.set(p.baseX, 0.45);
+        }
         const p = Math.min(1, Math.max(0, progress01));
 
         if (hatTipSpr && hatTipFrames.length === 16) {
@@ -987,6 +1276,8 @@ export function createHdDealer(scale = 1): HdDealerController {
         if (wagSpr) wagSpr.visible = false;
         if (bellSpr) bellSpr.visible = false;
         if (hatTipSpr) hatTipSpr.visible = false;
+        hideExtraOverlays();
+        hatPivot.visible = true;
 
         if (shuffleSpr && shuffleFrames.length === 16) {
           bodyPivot.visible = false;
@@ -1180,6 +1471,12 @@ export function createHdDealer(scale = 1): HdDealerController {
 
   return {
     container,
+    getHatWorldPosition(winnerSeat) {
+      if (winnerSeat === 1) return toWorldPoint(-17, -14);
+      if (winnerSeat === 2) return toWorldPoint(17, -14);
+      if (winnerSeat === 3) return toWorldPoint(0, -10);
+      return toWorldPoint(0, -22);
+    },
     setTableExpression(mode, elapsedMs) {
       bellSpr.visible = mode === 'bell';
       fingerSpr.visible = mode === 'wag';
@@ -1212,7 +1509,115 @@ export function createHdDealer(scale = 1): HdDealerController {
   };
 }
 
-export type RivalAnimMode = 'idle' | 'impatient' | 'think' | 'play' | 'pass' | 'winRound' | 'loseRound';
+export type RivalAnimMode =
+  | 'idle'
+  | 'impatient'
+  | 'think'
+  | 'play'
+  | 'pass'
+  | 'purseReach'
+  | 'purseOpen'
+  | 'purseClose'
+  | 'purseReceive'
+  | 'brokeShake'
+  | 'brokeShrug'
+  | 'yawn'
+  | 'winRound'
+  | 'loseRound';
+
+function getRivalPurseTexture(variant: 'closed' | 'open' | 'empty'): Texture {
+  return createHdTexture(34, 34, (ctx) => {
+    const cx = 17;
+    const cy = 19;
+
+    // Plump crimson coin pouch
+    const g = ctx.createRadialGradient(cx - 3, cy - 3, 2, cx, cy, 12);
+    g.addColorStop(0, '#ff4d5a');
+    g.addColorStop(0.55, '#bd1724');
+    g.addColorStop(1, '#5e060e');
+    ctx.fillStyle = g;
+    ctx.strokeStyle = '#180508';
+    ctx.lineWidth = 1.1;
+    ctx.beginPath();
+    ctx.moveTo(cx - 5.5, 11);
+    ctx.quadraticCurveTo(cx - 12, 18, cx - 9, 27);
+    ctx.quadraticCurveTo(cx, 31, cx + 9, 27);
+    ctx.quadraticCurveTo(cx + 12, 18, cx + 5.5, 11);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Gold drawstring band & frame clasp
+    ctx.fillStyle = '#e8b638';
+    ctx.strokeStyle = '#5c3c05';
+    ctx.lineWidth = 0.85;
+    if (variant === 'open' || variant === 'empty') {
+      ctx.beginPath();
+      ctx.ellipse(cx, 10.5, 7.5, 3.2, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#1c0709';
+      ctx.beginPath();
+      ctx.ellipse(cx, 10.6, 5.4, 2.0, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      if (variant === 'open') {
+        ctx.fillStyle = '#ffe56b';
+        ctx.strokeStyle = '#754e06';
+        ctx.lineWidth = 0.7;
+        ctx.beginPath();
+        ctx.arc(cx - 1.2, 9.6, 3.1, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+    } else {
+      ctx.fillRect(cx - 5.2, 10, 10.4, 2.6);
+      ctx.strokeRect(cx - 5.2, 10, 10.4, 2.6);
+      ctx.fillStyle = '#ffdf78';
+      ctx.beginPath();
+      ctx.arc(cx - 1.8, 8.2, 1.8, 0, Math.PI * 2);
+      ctx.arc(cx + 1.8, 8.2, 1.8, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  });
+}
+
+function getRivalGloveTexture(): Texture {
+  return createHdTexture(18, 16, (ctx) => {
+    ctx.fillStyle = '#fcf8ef';
+    ctx.strokeStyle = '#18091e';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.ellipse(9, 8, 5.6, 4.0, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(130, 115, 140, 0.55)';
+    ctx.lineWidth = 0.65;
+    ctx.beginPath();
+    ctx.moveTo(6.8, 6.2);
+    ctx.lineTo(10.8, 6.6);
+    ctx.moveTo(6.8, 9.2);
+    ctx.lineTo(10.8, 9.4);
+    ctx.stroke();
+  });
+}
+
+function getRivalYawnMouthTexture(): Texture {
+  return createHdTexture(16, 14, (ctx) => {
+    ctx.fillStyle = '#290414';
+    ctx.strokeStyle = '#120209';
+    ctx.lineWidth = 0.9;
+    ctx.beginPath();
+    ctx.ellipse(8, 7, 4.6, 4.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#b5284c';
+    ctx.beginPath();
+    ctx.ellipse(8, 9.2, 2.6, 1.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
 
 export interface HdRivalController {
   readonly container: Container;
@@ -1244,6 +1649,9 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   const hatImg = hdRivalArtMap.get(`${side}_hat`);
   const impatientSheetImg = hdRivalArtMap.get(`${side}_impatient_sheet`);
   const playSheetImg = hdRivalArtMap.get(`${side}_play_sheet`);
+  const purseSheetImg = hdRivalArtMap.get(`${side}_purse_sheet`);
+  const brokeSheetImg = hdRivalArtMap.get(`${side}_broke_sheet`);
+  const yawnSheetImg = hdRivalArtMap.get(`${side}_yawn_sheet`);
   const hasCustomBody = Boolean(bodyImg && bodyImg.complete && bodyImg.naturalWidth > 0);
   const hasCustomHat = Boolean(hatImg && hatImg.complete && hatImg.naturalWidth > 0);
   const hasImpatientSheet = Boolean(impatientSheetImg && impatientSheetImg.complete && impatientSheetImg.naturalWidth > 0);
@@ -1665,6 +2073,68 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
     aspectRig.addChild(impatientSpr);
   }
 
+  const loadOptionalRivalSheet = (img: HTMLImageElement | undefined): { frames: Texture[]; spr: Sprite } | null => {
+    if (!isLoadedImage(img)) return null;
+    const sliced = sliceSheet4x4(img);
+    const spr = new Sprite(sliced.frames[0]);
+    const scaleToIdle = isLeft ? 64 / 258 : 64 / 241;
+    spr.width = sliced.cw * scaleToIdle;
+    spr.height = sliced.ch * scaleToIdle;
+    spr.anchor.set(isLeft ? 0.5 : 0.54, 0.985);
+    spr.position.set(0, 1.5);
+    spr.visible = false;
+    aspectRig.addChild(spr);
+    return { frames: sliced.frames, spr };
+  };
+  const purseSheetArt = loadOptionalRivalSheet(purseSheetImg);
+  const brokeSheetArt = loadOptionalRivalSheet(brokeSheetImg);
+  const yawnSheetArt = loadOptionalRivalSheet(yawnSheetImg);
+
+  // Temporary vector action props layered on bodyPivot so both custom raster bodies & procedural bodies animate all EGA actions.
+  const propOverlay = new Container();
+  bodyPivot.addChild(propOverlay);
+
+  const purseClosedTex = getRivalPurseTexture('closed');
+  const purseOpenTex = getRivalPurseTexture('open');
+  const purseEmptyTex = getRivalPurseTexture('empty');
+  const purseSpr = new Sprite(purseClosedTex);
+  purseSpr.anchor.set(0.5, 0.5);
+  purseSpr.position.set(dir * 10, -10);
+  purseSpr.visible = false;
+
+  const gloveTex = getRivalGloveTexture();
+  const propHandPrimary = new Sprite(gloveTex);
+  propHandPrimary.anchor.set(0.5);
+  propHandPrimary.visible = false;
+
+  const propHandSecondary = new Sprite(gloveTex);
+  propHandSecondary.anchor.set(0.5);
+  propHandSecondary.visible = false;
+
+  const yawnMouthSpr = new Sprite(getRivalYawnMouthTexture());
+  yawnMouthSpr.anchor.set(0.5);
+  yawnMouthSpr.position.set(dir * 1, hasCustomBody ? -0.34 * bodyH : -14);
+  yawnMouthSpr.visible = false;
+
+  propOverlay.addChild(yawnMouthSpr, purseSpr, propHandSecondary, propHandPrimary);
+
+  const hideVectorProps = (): void => {
+    purseSpr.visible = false;
+    purseSpr.rotation = 0;
+    purseSpr.scale.set(1, 1);
+    propHandPrimary.visible = false;
+    propHandPrimary.rotation = 0;
+    propHandSecondary.visible = false;
+    propHandSecondary.rotation = 0;
+    yawnMouthSpr.visible = false;
+    yawnMouthSpr.scale.set(1, 1);
+  };
+  const hideOptionalActionSheets = (): void => {
+    if (purseSheetArt) purseSheetArt.spr.visible = false;
+    if (brokeSheetArt) brokeSheetArt.spr.visible = false;
+    if (yawnSheetArt) yawnSheetArt.spr.visible = false;
+  };
+
   // Smooth spring state for 60fps interpolation
   let curPupilX = dir * 0.8;
   let curPupilY = 0;
@@ -1678,16 +2148,32 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   let impatientTimerMs = 0;
   let playTimerMs = 0;
 
+  let actionSheetTimerMs = 0;
+  let lastActionMode: RivalAnimMode = 'idle';
+
   return {
     container,
     setState(mode, elapsedMs, lookTarget, dtMs = 16.6) {
+      if (mode !== lastActionMode) {
+        actionSheetTimerMs = 0;
+        lastActionMode = mode;
+      } else {
+        actionSheetTimerMs += dtMs;
+      }
+
+      hideVectorProps();
+      hideOptionalActionSheets();
+
       if (playSpr && playFrames.length === 16 && mode === 'play') {
         playTimerMs += dtMs;
-        // Play frames #1..#15 smoothly at ~45ms/frame (~675ms throw + follow-through synced with 520ms card flight)
         const stepMs = 45;
         const idx = Math.min(15, 1 + Math.floor(playTimerMs / stepMs));
         playSpr.texture = playFrames[idx];
         playSpr.visible = true;
+        // Subtle forward lean toward lower mini-card row while picking card from stack.
+        const farReach = lookTarget && lookTarget.y > 154 ? 1 : 0;
+        playSpr.position.set(dir * farReach * 1.4, 1.5 + farReach * 1.4);
+        playSpr.rotation = dir * farReach * 0.04;
         if (impatientSpr) impatientSpr.visible = false;
         bodyPivot.visible = false;
         if (innerArmRig) innerArmRig.visible = false;
@@ -1698,6 +2184,35 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
       playTimerMs = 0;
       if (playSpr) {
         playSpr.visible = false;
+      }
+
+      const isPurseMode =
+        mode === 'purseReach' || mode === 'purseOpen' || mode === 'purseClose' || mode === 'purseReceive';
+      const isBrokeMode = mode === 'brokeShake' || mode === 'brokeShrug';
+
+      if (purseSheetArt && isPurseMode) {
+        const idx = Math.min(15, Math.floor(actionSheetTimerMs / 65) % 16);
+        purseSheetArt.spr.texture = purseSheetArt.frames[idx];
+        purseSheetArt.spr.visible = true;
+        if (impatientSpr) impatientSpr.visible = false;
+        bodyPivot.visible = false;
+        return;
+      }
+      if (brokeSheetArt && isBrokeMode) {
+        const idx = Math.min(15, Math.floor(actionSheetTimerMs / 85) % 16);
+        brokeSheetArt.spr.texture = brokeSheetArt.frames[idx];
+        brokeSheetArt.spr.visible = true;
+        if (impatientSpr) impatientSpr.visible = false;
+        bodyPivot.visible = false;
+        return;
+      }
+      if (yawnSheetArt && mode === 'yawn') {
+        const idx = Math.min(15, Math.floor(actionSheetTimerMs / 95) % 16);
+        yawnSheetArt.spr.texture = yawnSheetArt.frames[idx];
+        yawnSheetArt.spr.visible = true;
+        if (impatientSpr) impatientSpr.visible = false;
+        bodyPivot.visible = false;
+        return;
       }
 
       if (impatientSpr && impatientFrames.length === 16 && mode === 'impatient') {
@@ -1740,6 +2255,12 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
       } else if (mode === 'impatient') {
         targetPX = dir * (maxPupilX * 0.65);
         targetPY = maxPupilY * 0.72;
+      } else if (isPurseMode || isBrokeMode) {
+        targetPX = dir * maxPupilX * 0.55;
+        targetPY = maxPupilY * 0.65;
+      } else if (mode === 'yawn') {
+        targetPX = 0;
+        targetPY = -maxPupilY * 0.4;
       }
       curPupilX += (targetPX - curPupilX) * lerpFactor;
       curPupilY += (targetPY - curPupilY) * lerpFactor;
@@ -1769,6 +2290,18 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
         targetBodyRot = dir * 0.03;
         browTilt = 0.22;
         browLift = -0.5;
+      } else if (mode === 'yawn') {
+        const yawnOpen = 0.5 + 0.5 * Math.sin(Math.min(1, actionSheetTimerMs / 1360) * Math.PI);
+        targetSquint = 0.85;
+        targetBodyY = -1.2 * yawnOpen;
+        targetBodyRot = -dir * 0.07 * yawnOpen;
+        targetScaleY = 1 + 0.04 * yawnOpen;
+        targetHatRot = baseHatRot - dir * 0.05;
+        yawnMouthSpr.visible = true;
+        yawnMouthSpr.scale.set(0.75 + 0.45 * yawnOpen, 0.45 + 0.85 * yawnOpen);
+        propHandPrimary.visible = true;
+        propHandPrimary.position.set(dir * 5, (hasCustomBody ? -0.31 * bodyH : -12) + (1 - yawnOpen) * 4);
+        propHandPrimary.rotation = -dir * 0.35;
       } else if (mode === 'play') {
         targetBodyY = -2;
         targetBodyRot = dir * 0.09;
@@ -1777,15 +2310,60 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
         targetHatRot = baseHatRot - dir * 0.1;
         targetPlayReach = 1;
         browLift = -1.2;
-      } else if (mode === 'pass') {
-        targetSquint = 0.62;
-        targetBodyY = 2.5;
-        targetBodyRot = Math.sin(elapsedMs * 0.018) * 0.09;
-        targetScaleY = 0.94;
-        targetHatLift = -2.2;
-        targetHatRot = baseHatRot + dir * 0.08;
-        browTilt = -0.25;
-        browLift = 0.4;
+      } else if (mode === 'pass' || isPurseMode) {
+        targetSquint = mode === 'purseReceive' ? 0.15 : 0.42;
+        targetBodyY = mode === 'purseReceive' ? -1.4 : 1.6;
+        targetBodyRot = dir * (mode === 'purseOpen' ? 0.05 : 0.02);
+        targetScaleY = mode === 'purseReceive' ? 1.03 : 0.96;
+        targetHatRot = baseHatRot + dir * 0.05;
+        browTilt = mode === 'purseReceive' ? 0 : -0.18;
+
+        if (isPurseMode) {
+          purseSpr.visible = true;
+          propHandPrimary.visible = true;
+          if (mode === 'purseReach') {
+            purseSpr.texture = purseClosedTex;
+            purseSpr.position.set(dir * 13, -10);
+            propHandPrimary.position.set(dir * 17, -14);
+          } else if (mode === 'purseOpen' || mode === 'purseReceive') {
+            purseSpr.texture = purseOpenTex;
+            const bounce = mode === 'purseReceive' ? Math.sin(elapsedMs * 0.03) * 1.4 : Math.sin(elapsedMs * 0.02) * 0.8;
+            purseSpr.position.set(dir * 8, -11 + bounce);
+            propHandPrimary.position.set(dir * 14, -14 + bounce);
+            propHandSecondary.visible = true;
+            propHandSecondary.position.set(dir * 2, -14 - Math.abs(bounce));
+          } else {
+            purseSpr.texture = purseClosedTex;
+            purseSpr.position.set(dir * 11, -9);
+            propHandPrimary.position.set(dir * 15, -12);
+          }
+        }
+      } else if (isBrokeMode) {
+        targetSquint = 0.65;
+        targetBodyY = 2.0;
+        targetScaleY = 0.95;
+        targetHatLift = -1.8;
+        targetHatRot = baseHatRot + dir * 0.06;
+        browTilt = -0.26;
+        if (mode === 'brokeShake') {
+          const shake = Math.sin(elapsedMs * 0.045);
+          targetBodyRot = shake * 0.08;
+          purseSpr.visible = true;
+          purseSpr.texture = purseEmptyTex;
+          purseSpr.scale.set(1, -1);
+          purseSpr.position.set(dir * 10 + shake * 2.4, -12);
+          purseSpr.rotation = shake * 0.42;
+          propHandPrimary.visible = true;
+          propHandPrimary.position.set(dir * 13 + shake * 2.2, -20);
+        } else {
+          // brokeShrug: empty palms out & up
+          propHandPrimary.visible = true;
+          propHandPrimary.position.set(dir * 21, -15 + Math.sin(elapsedMs * 0.015) * 1.2);
+          propHandPrimary.rotation = -dir * 0.25;
+          propHandSecondary.visible = true;
+          propHandSecondary.position.set(-dir * 18, -15 + Math.sin(elapsedMs * 0.015) * 1.2);
+          propHandSecondary.rotation = dir * 0.25;
+        }
       } else if (mode === 'winRound') {
         const bounce = Math.abs(Math.sin(elapsedMs * 0.012));
         targetBodyY = -bounce * 6;
@@ -1793,12 +2371,18 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
         targetHatLift = bounce * 10;
         targetHatRot = -dir * 0.28 * bounce;
         browLift = -1.8;
+        const wave = Math.sin(elapsedMs * 0.024);
+        propHandPrimary.visible = true;
+        propHandPrimary.position.set(dir * 23, -24 + wave * 3.5);
+        propHandPrimary.rotation = dir * 0.35 * wave;
       } else if (mode === 'loseRound') {
         targetSquint = 0.45;
         targetBodyY = 1.8;
         targetBodyRot = Math.sin(elapsedMs * 0.014) * 0.07;
         targetScaleY = 0.96;
         browTilt = -0.22;
+        propHandPrimary.visible = true;
+        propHandPrimary.position.set(dir * 15, -7);
       }
 
       if (isBlinking && mode !== 'winRound') {

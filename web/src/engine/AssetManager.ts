@@ -20,7 +20,24 @@ export const HD_COURT_ART_ENTRIES: readonly { suit: Suit; rank: Rank }[] = [
   { suit: 4, rank: 13 },
 ];
 
-export const HD_RIVAL_ART_ENTRIES: readonly { key: string; file: string }[] = [
+export type HdRivalArtKey =
+  | 'left_body'
+  | 'right_body'
+  | 'left_hat'
+  | 'right_hat'
+  | 'left_impatient_sheet'
+  | 'right_impatient_sheet'
+  | 'left_play_sheet'
+  | 'right_play_sheet'
+  // Future swappable 4x4 PNG sheets (currently rendered via temporary vector overlays in hdCharacters.ts):
+  | 'left_purse_sheet'
+  | 'right_purse_sheet'
+  | 'left_broke_sheet'
+  | 'right_broke_sheet'
+  | 'left_yawn_sheet'
+  | 'right_yawn_sheet';
+
+export const HD_RIVAL_ART_ENTRIES: readonly { key: HdRivalArtKey; file: string }[] = [
   { key: 'left_body', file: 'rival_left_body.png' },
   { key: 'right_body', file: 'rival_right_body.png' },
   { key: 'left_hat', file: 'rival_left_hat.png' },
@@ -31,7 +48,21 @@ export const HD_RIVAL_ART_ENTRIES: readonly { key: string; file: string }[] = [
   { key: 'right_play_sheet', file: 'rival_right_play_sheet.png' },
 ];
 
-export const HD_DEALER_ART_ENTRIES: readonly { key: string; file: string }[] = [
+export type HdDealerArtKey =
+  | 'body'
+  | 'hat'
+  | 'wag_sheet'
+  | 'bell_sheet'
+  | 'hat_tip_sheet'
+  | 'shuffle_sheet'
+  // Future swappable 4x4 PNG sheets (currently rendered via temporary vector overlays in hdCharacters.ts):
+  | 'deal_sheet'
+  | 'hat_collect_sheet'
+  | 'pour_left_sheet'
+  | 'pour_right_sheet'
+  | 'pour_down_sheet';
+
+export const HD_DEALER_ART_ENTRIES: readonly { key: HdDealerArtKey; file: string }[] = [
   { key: 'body', file: 'dealer_body.png' },
   { key: 'hat', file: 'dealer_hat.png' },
   { key: 'wag_sheet', file: 'dealer_wag_sheet.png' },

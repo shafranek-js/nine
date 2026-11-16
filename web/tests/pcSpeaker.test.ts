@@ -126,20 +126,89 @@ describe('PcSpeaker SFX profiles', () => {
     expect(mock.getBufferSources()).toBeGreaterThanOrEqual(6);
   });
 
-  it('plays audible brass handbell modal partials on passAlert and victoryBeep in hd mode', () => {
+  it('plays brass handbell only on dealerBellPing/passAlert and keeps victoryBeep bell-free in hd mode', () => {
     const mock = createMockAudioContext();
     const sfx = new PcSpeaker();
     sfx.attachContext(mock.ctx);
     sfx.setSoundProfile('hd');
 
-    sfx.passAlert();
-    const passBellCount = mock.oscillators.filter((o) => o.freqHz >= 1000).length;
-    expect(passBellCount).toBeGreaterThanOrEqual(8);
-    expect(mock.getBufferSources()).toBe(2);
+    sfx.dealerBellPing();
+    const reminderBellCount = mock.oscillators.filter((o) => o.freqHz >= 1000).length;
+    expect(reminderBellCount).toBeGreaterThanOrEqual(4);
+    expect(mock.getBufferSources()).toBe(1);
 
     const beforeVictory = mock.oscillators.length;
     sfx.victoryBeep();
-    const victoryBellCount = mock.oscillators.slice(beforeVictory).filter((o) => o.freqHz >= 1000).length;
-    expect(victoryBellCount).toBeGreaterThanOrEqual(4);
+    const victoryOscs = mock.oscillators.slice(beforeVictory);
+    expect(victoryOscs.filter((o) => o.freqHz >= 1000).length).toBe(0);
+    expect(victoryOscs.length).toBe(3);
+  });
+
+  it('plays DOS coinHatClink in ega mode and acoustic payout fallback in hd mode on coinPourPayout', () => {
+    const mock = createMockAudioContext();
+    const sfx = new PcSpeaker();
+    sfx.attachContext(mock.ctx);
+
+    sfx.setSoundProfile('ega');
+    sfx.coinPourPayout();
+    expect(mock.oscillators.map((o) => o.freqHz)).toEqual([6000, 6000, 6000]);
+    expect(mock.getBufferSources()).toBe(0);
+
+    const beforeHd = mock.oscillators.length;
+    sfx.setSoundProfile('hd');
+    sfx.coinPourPayout();
+    expect(mock.oscillators.slice(beforeHd).length).toBeGreaterThan(0);
+    expect(mock.getBufferSources()).toBe(1);
+  });
+
+  it('plays DOS triple ticks in ega mode and fallback chime in hd mode on coinHatClink', () => {
+    const mock = createMockAudioContext();
+    const sfx = new PcSpeaker();
+    sfx.attachContext(mock.ctx);
+
+    sfx.setSoundProfile('ega');
+    sfx.coinHatClink();
+    expect(mock.oscillators.map((o) => o.freqHz)).toEqual([6000, 6000, 6000]);
+    expect(mock.getBufferSources()).toBe(0);
+
+    const beforeHd = mock.oscillators.length;
+    sfx.setSoundProfile('hd');
+    sfx.coinHatClink();
+    expect(mock.oscillators.slice(beforeHd).every((o) => o.type !== 'square')).toBe(true);
+    expect(mock.getBufferSources()).toBe(1);
+  });
+
+  it('plays DOS cardSlide in ega mode and acoustic cardSpring fallback in hd mode', () => {
+    const mock = createMockAudioContext();
+    const sfx = new PcSpeaker();
+    sfx.attachContext(mock.ctx);
+
+    sfx.setSoundProfile('ega');
+    sfx.cardSpring();
+    expect(mock.oscillators.map((o) => o.freqHz)).toEqual([65]);
+    expect(mock.getBufferSources()).toBe(0);
+
+    const beforeHd = mock.oscillators.length;
+    sfx.setSoundProfile('hd');
+    sfx.cardSpring();
+    expect(mock.oscillators.slice(beforeHd).length).toBeGreaterThan(0);
+    expect(mock.getBufferSources()).toBe(1);
+  });
+
+  it('plays DOS tick in ega mode and fallback swish in hd mode on cardDeal', () => {
+    const mock = createMockAudioContext();
+    const sfx = new PcSpeaker();
+    sfx.attachContext(mock.ctx);
+
+    sfx.setSoundProfile('ega');
+    sfx.cardDeal();
+    expect(mock.oscillators.map((o) => o.freqHz)).toEqual([65]);
+    expect(mock.getBufferSources()).toBe(0);
+
+    const beforeHd = mock.oscillators.length;
+    sfx.setSoundProfile('hd');
+    sfx.cardDeal();
+    expect(mock.oscillators.slice(beforeHd).every((o) => o.type !== 'square')).toBe(true);
+    expect(mock.getBufferSources()).toBe(1);
   });
 });

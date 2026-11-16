@@ -980,9 +980,9 @@ export class ClubMenuScene implements Scene {
       this.dealStage.timer += dtMs;
       const isEga = this.ctx?.getGraphicsMode() === 'ega';
 
-      const headWaitMs = isEga ? 200 : 180;
-      const frameStepMs = isEga ? 140 : 45;
-      const pauseWaitMs = isEga ? 800 : 320;
+      const headWaitMs = 200;
+      const frameStepMs = 140;
+      const pauseWaitMs = 800;
 
       if (this.dealStage.step === 'head') {
         if (this.dealStage.timer >= headWaitMs) {
@@ -992,6 +992,8 @@ export class ClubMenuScene implements Scene {
           if (isEga) {
             this.f1FanSpr.visible = true;
             this.f1FanSpr.texture = this.f1Col1Frames[0];
+          } else {
+            this.ctx?.audio.sfx.cardSpring();
           }
         }
       } else if (this.dealStage.step === 'col1') {
@@ -1001,15 +1003,21 @@ export class ClubMenuScene implements Scene {
           this.dealStage.timer = 0;
         } else if (nextIdx !== this.dealStage.frameIdx) {
           this.dealStage.frameIdx = nextIdx;
-          if (isEga) this.f1FanSpr.texture = this.f1Col1Frames[nextIdx];
-          if (nextIdx % 2 === 0) this.ctx?.audio.sfx.cardSlide();
+          if (isEga) {
+            this.f1FanSpr.texture = this.f1Col1Frames[nextIdx];
+            if (nextIdx % 2 === 0) this.ctx?.audio.sfx.cardSlide();
+          }
         }
       } else if (this.dealStage.step === 'pause') {
         if (this.dealStage.timer >= pauseWaitMs) {
           this.dealStage.step = 'col2';
           this.dealStage.timer = 0;
           this.dealStage.frameIdx = 0;
-          if (isEga) this.f1FanSpr.texture = this.f1Col2Frames[0];
+          if (isEga) {
+            this.f1FanSpr.texture = this.f1Col2Frames[0];
+          } else {
+            this.ctx?.audio.sfx.cardSpring();
+          }
         }
       } else if (this.dealStage.step === 'col2') {
         const nextIdx = Math.floor(this.dealStage.timer / frameStepMs);
@@ -1019,25 +1027,27 @@ export class ClubMenuScene implements Scene {
           this.ctx?.goTo('table', isEga ? 200 : 250);
         } else if (nextIdx !== this.dealStage.frameIdx) {
           this.dealStage.frameIdx = nextIdx;
-          if (isEga) this.f1FanSpr.texture = this.f1Col2Frames[nextIdx];
-          if (nextIdx % 2 === 0) this.ctx?.audio.sfx.cardSlide();
+          if (isEga) {
+            this.f1FanSpr.texture = this.f1Col2Frames[nextIdx];
+            if (nextIdx % 2 === 0) this.ctx?.audio.sfx.cardSlide();
+          }
         }
       }
 
-      // Raster 16-frame card-spring shuffle flourish for HD dealer
+      // Raster 16-frame card-spring shuffle flourish for HD dealer synchronized to EGA F1 cadence
       if (!isEga && this.hdDealer) {
         let shuffleIdx = 0;
         if (this.dealStage.step === 'head') {
-          const p = Math.min(1, this.dealStage.timer / 180);
+          const p = Math.min(1, this.dealStage.timer / headWaitMs);
           shuffleIdx = Math.min(4, Math.floor(p * 5));
         } else if (this.dealStage.step === 'col1') {
-          const p = Math.min(1, this.dealStage.timer / (11 * 45));
+          const p = Math.min(1, this.dealStage.timer / (11 * frameStepMs));
           shuffleIdx = 5 + Math.min(7, Math.floor(p * 8));
         } else if (this.dealStage.step === 'pause') {
-          const p = Math.min(1, this.dealStage.timer / 320);
+          const p = Math.min(1, this.dealStage.timer / pauseWaitMs);
           shuffleIdx = 13 + Math.min(2, Math.floor(p * 3));
         } else if (this.dealStage.step === 'col2') {
-          const p = Math.min(1, this.dealStage.timer / (11 * 45));
+          const p = Math.min(1, this.dealStage.timer / (11 * frameStepMs));
           shuffleIdx = Math.max(0, 12 - Math.floor(p * 13));
         }
         this.hdDealer.setShuffleFrame(shuffleIdx);

@@ -53,6 +53,21 @@ import {
   type RivalAnimMode,
 } from '../engine/hdCharacters';
 import {
+  getHdAnteIntroState,
+  getHdBotBrokeMode,
+  getHdBotCardThrowState,
+  getHdBotPurseTossMode,
+  getHdDealerGlanceMode,
+  getHdDealingStepState,
+  HD_BOT_BROKE_SHAKE_DURATION_MS,
+  HD_BOT_PURSE_COIN_FLIGHT_MS,
+  HD_BOT_PURSE_COIN_RELEASE_MS,
+  HD_BOT_PURSE_TOSS_TOTAL_MS,
+  HD_BOT_THROW_FAR_MS,
+  HD_BOT_THROW_NEAR_MS,
+  HD_DEAL_STEP_MS,
+} from '../engine/hdAnimations';
+import {
   EGA_BOT_BROKE_SHAKE_DURATION_MS,
   EGA_BOT_PURSE_COIN_RELEASE_MS,
   EGA_BOT_PURSE_TOSS_TOTAL_MS,
@@ -129,6 +144,7 @@ interface FlyingCard {
   egaFrames?: readonly Texture[];
   botSlotIdx?: number;
   botCols?: number;
+  hdBotSync?: boolean;
   soundPlayed?: boolean;
   onLand: () => void;
 }
@@ -521,7 +537,7 @@ export class GameTableScene implements Scene {
   private egaDealtCounts: Record<SeatIndex, number> | null = null;
   private egaDealFlySpr: Sprite | null = null;
   private egaDealPrevStep = -1;
-  private egaIdleBellCycleTriggered = -1;
+  private idleBellCycleTriggered = -1;
   private rivalSlotCards: Record<1 | 2, (string | null)[]> = { 1: [], 2: [] };
   private pendingRivalRemoveSlot: { seat: 1 | 2; slotIdx: number } | null = null;
   private egaBotThinkMode: 'quick' | 'tap' = 'quick';
@@ -621,6 +637,9 @@ export class GameTableScene implements Scene {
 
   private rebuildVisualsForModeChange(): void {
     this.buildVisuals();
+    if (this.phase === 'dealingCards') {
+      this.finishEgaDealingCards();
+    }
     this.restoreBoardFromMatch();
     this.renderRivalCardBacks();
     this.renderCashAndBankHud();
@@ -1169,12 +1188,10 @@ export class GameTableScene implements Scene {
     this.initRivalSlotCards();
 
     const isHd = this.ctx?.getGraphicsMode() === 'hd';
-    this.egaAntePaid = !isHd
-      ? { 1: false, 2: false, 3: false }
-      : { 1: true, 2: true, 3: true };
-    this.egaDealtCounts = !isHd && this.egaBank ? { 1: 0, 2: 0, 3: 0 } : null;
+    this.egaAntePaid = { 1: false, 2: false, 3: false };
+    this.egaDealtCounts = !isHd && this.egaBank ? { 1: 0, 2: 0, 3: 0 } : isHd ? { 1: 0, 2: 0, 3: 0 } : null;
     this.egaDealPrevStep = -1;
-    this.egaIdleBellCycleTriggered = -1;
+    this.idleBellCycleTriggered = -1;
     this.phase = 'anteIntro';
     this.phaseTimerMs = 0;
     this.renderRivalCardBacks();
@@ -1204,13 +1221,49 @@ export class GameTableScene implements Scene {
         this.ctx?.audio.sfx.coinHatClink();
       });
     } else {
-      // $20 ante coins fly into BANK
+      // EGA-aligned sequential HD ante: dealer opens hat, seats 1 -> 2 -> 3 sequentially toss coins into hat.
       const sl = this.getHdSeatLayout();
-      const bankX = sl.candLeftX;
-      this.spawnCoinFlight(sl.leftCenterX, sl.coinLeftY, bankX, 42, 420);
-      this.spawnCoinFlight(sl.rightCenterX, sl.coinLeftY, bankX + 10, 42, 420);
-      this.spawnCoinFlight(316, sl.coinHumanY, bankX + 5, 42, 420);
-      this.ctx?.audio.sfx.coinChime();
+      const ante = getHdAnteIntroState(0);
+      const hatPos = this.hdDealer?.getHatWorldPosition() ?? { x: 320, y: 42 };
+      this.spawnCoinFlight(
+        sl.leftCenterX,
+        sl.coinLeftY,
+        hatPos.x - 4,
+        hatPos.y,
+        HD_BOT_PURSE_COIN_FLIGHT_MS,
+        ante.leftStartMs + HD_BOT_PURSE_COIN_RELEASE_MS,
+        () => {
+          this.egaAntePaid[1] = true;
+          this.renderCashAndBankHud();
+          this.ctx?.audio.sfx.coinHatClink();
+        },
+      );
+      this.spawnCoinFlight(
+        sl.rightCenterX,
+        sl.coinLeftY,
+        hatPos.x + 4,
+        hatPos.y,
+        HD_BOT_PURSE_COIN_FLIGHT_MS,
+        ante.rightStartMs + HD_BOT_PURSE_COIN_RELEASE_MS,
+        () => {
+          this.egaAntePaid[2] = true;
+          this.renderCashAndBankHud();
+          this.ctx?.audio.sfx.coinHatClink();
+        },
+      );
+      this.spawnCoinFlight(
+        316,
+        sl.coinHumanY,
+        hatPos.x,
+        hatPos.y,
+        HD_BOT_PURSE_COIN_FLIGHT_MS,
+        ante.humanStartMs,
+        () => {
+          this.egaAntePaid[3] = true;
+          this.renderCashAndBankHud();
+          this.ctx?.audio.sfx.coinHatClink();
+        },
+      );
     }
 
     this.passExclusions = { 1: new Set(), 2: new Set() };
@@ -1395,10 +1448,13 @@ export class GameTableScene implements Scene {
     this.rightCashLayer.position.set(0, 0);
     this.humanCashLayer.position.set(0, 0);
 
-    const bank = this.match.round?.bank ?? 0;
-    this.hdLeftCashLabel?.setText(`${this.match.cash[1]}$`);
-    this.hdRightCashLabel?.setText(`${this.match.cash[2]}$`);
-    this.hdHumanCashLabel?.setText(`${this.match.cash[3]}$`);
+    const pendingAnte = (seat: SeatIndex): number =>
+      this.phase === 'anteIntro' && !this.egaAntePaid[seat] ? 20 : 0;
+    const pendingPot = pendingAnte(1) + pendingAnte(2) + pendingAnte(3);
+    const bank = Math.max(0, (this.match.round?.bank ?? 0) - pendingPot);
+    this.hdLeftCashLabel?.setText(`${this.match.cash[1] + pendingAnte(1)}$`);
+    this.hdRightCashLabel?.setText(`${this.match.cash[2] + pendingAnte(2)}$`);
+    this.hdHumanCashLabel?.setText(`${this.match.cash[3] + pendingAnte(3)}$`);
     this.hdPotPedestal?.setText(`${bank}$`);
   }
 
@@ -1602,7 +1658,15 @@ export class GameTableScene implements Scene {
     }
   }
 
-  private spawnCoinFlight(startX: number, startY: number, endX: number, endY: number, durationMs = 360): void {
+  private spawnCoinFlight(
+    startX: number,
+    startY: number,
+    endX: number,
+    endY: number,
+    durationMs = 360,
+    delayMs = 0,
+    onArrive?: () => void,
+  ): void {
     const isHd = this.ctx?.getGraphicsMode() === 'hd';
     const tex = isHd ? getHdCoinTexture() : this.coinFrames[0];
     if (!tex) return;
@@ -1611,6 +1675,7 @@ export class GameTableScene implements Scene {
     spr.anchor.set(0.5);
     if (isHd) spr.scale.set(0.76);
     spr.position.set(startX, startY);
+    spr.visible = delayMs <= 0;
     this.fxLayer.addChild(spr);
     this.flyingCoins.push({
       sprite: spr,
@@ -1620,6 +1685,8 @@ export class GameTableScene implements Scene {
       endY,
       elapsed: 0,
       durationMs,
+      delayMs,
+      onArrive,
     });
   }
 
@@ -1678,13 +1745,15 @@ export class GameTableScene implements Scene {
     const startX = originX ?? (rivalSlot ? rivalSlot.x : 300);
     const startY = originY ?? (seat === 3 ? this.getHumanHandTopY() : rivalSlot ? rivalSlot.y : 120);
 
-    const delayEgaBotLaunch = !isHd && (seat === 1 || seat === 2) && Boolean(miniTex && this.egaBank);
-    if (!delayEgaBotLaunch) {
+    const isBot = seat === 1 || seat === 2;
+    const botRow = isBot ? Math.floor(botSlotIdx / rm.cols) : 0;
+    const delayBotLaunch = isBot && Boolean(miniTex) && (isHd || Boolean(this.egaBank));
+    if (!delayBotLaunch) {
       this.ctx.audio.sfx.cardSlide();
     }
     this.activeFlightSeat = seat;
-    if ((seat === 1 || seat === 2) && isHd) {
-      this.rivalPlayAnimMs[seat] = 700;
+    if (isBot && isHd) {
+      this.rivalPlayAnimMs[seat] = botRow >= 1 ? HD_BOT_THROW_FAR_MS : HD_BOT_THROW_NEAR_MS;
     }
     this.pendingMoveCard = card;
     this.hoveredCardKey = null;
@@ -1714,7 +1783,7 @@ export class GameTableScene implements Scene {
       this.renderHumanHand();
     } else {
       this.pendingRivalRemoveSlot = { seat, slotIdx: botSlotIdx };
-      if (!delayEgaBotLaunch) {
+      if (!delayBotLaunch) {
         this.consumePendingRivalSlot();
       }
     }
@@ -1769,11 +1838,13 @@ export class GameTableScene implements Scene {
       shadow = new Graphics();
       shadow.roundRect(3, 5, bm.cardW, bm.cardH, bm.cornerRadius).fill({ color: 0x000000, alpha: 0.34 });
       shadow.position.set(startX, startY);
+      shadow.visible = !isBot;
       this.fxLayer.addChild(shadow);
     }
 
     const spr = new Sprite(miniTex);
     spr.position.set(startX, startY);
+    spr.visible = !isBot;
     this.fxLayer.addChild(spr);
 
     this.phase = 'movingCard';
@@ -1786,8 +1857,9 @@ export class GameTableScene implements Scene {
       endX,
       endY,
       elapsed: 0,
-      durationMs: seat === 3 ? 380 : 520,
-      soundPlayed: true,
+      durationMs: isBot ? (botRow >= 1 ? HD_BOT_THROW_FAR_MS : HD_BOT_THROW_NEAR_MS) : 380,
+      hdBotSync: isHd && isBot,
+      soundPlayed: !isBot,
       onLand: () => this.finishCardFlight(),
     };
   }
@@ -1808,9 +1880,6 @@ export class GameTableScene implements Scene {
     }
     if (this.ctx?.getGraphicsMode() === 'ega') {
       this.clearEgaActionOverlays();
-    } else {
-      if (this.leftBotSpr) this.leftBotSpr.texture = this.botFrames[0];
-      if (this.rightBotSpr) this.rightBotSpr.texture = this.botFrames[0];
     }
     this.renderCashAndBankHud();
 
@@ -1834,7 +1903,9 @@ export class GameTableScene implements Scene {
       }
     }
     this.passingBroke = (this.match.cash[seat] ?? 0) <= 0;
-    this.ctx?.audio.sfx.passAlert();
+    if (this.passingBroke) {
+      this.ctx?.audio.sfx.illegalMove();
+    }
     this.match = applyPass(this.match);
     this.renderCashAndBankHud();
     this.renderStatusBanner();
@@ -1858,15 +1929,14 @@ export class GameTableScene implements Scene {
           this.ctx?.audio.sfx.coinHatClink();
         });
       }
-    } else {
-      const bankX = sl.candLeftX;
-      if (seat === 1) {
-        this.spawnCoinFlight(sl.leftCenterX, sl.coinLeftY, bankX, 42, 380);
-      } else if (seat === 2) {
-        this.spawnCoinFlight(sl.rightCenterX, sl.coinLeftY, bankX + 10, 42, 380);
-      } else {
-        this.spawnCoinFlight(316, sl.coinHumanY, bankX + 5, 42, 380);
-      }
+    } else if (!this.passingBroke) {
+      const hatPos = this.hdDealer?.getHatWorldPosition() ?? { x: 320, y: 42 };
+      const startX = seat === 1 ? sl.leftCenterX : seat === 2 ? sl.rightCenterX : 316;
+      const startY = seat === 3 ? sl.coinHumanY : sl.coinLeftY;
+      const delayMs = seat === 3 ? 140 : 100 + HD_BOT_PURSE_COIN_RELEASE_MS;
+      this.spawnCoinFlight(startX, startY, hatPos.x, hatPos.y, 460, delayMs, () => {
+        this.ctx?.audio.sfx.coinHatClink();
+      });
     }
 
     this.passingSeat = seat;
@@ -1997,12 +2067,13 @@ export class GameTableScene implements Scene {
       } else {
         const dstX = winner === 1 ? sl.leftCenterX : winner === 2 ? sl.rightCenterX : 316;
         const dstY = winner === 3 ? sl.coinHumanY : sl.coinLeftY;
-        const bankLeftX = sl.candLeftX;
-        const bankRightX = sl.candRightX;
-        this.spawnCoinFlight(bankLeftX, 42, dstX, dstY, 520);
-        this.spawnCoinFlight(bankRightX, 48, dstX, dstY, 560);
-        this.spawnCoinFlight(bankLeftX + 7, 44, dstX, dstY, 610);
-        this.spawnSparkBurst(dstX, dstY, 14, 0xffea88);
+        const hatPos = this.hdDealer?.getHatWorldPosition(winner) ?? { x: 320, y: 42 };
+        this.spawnCoinFlight(hatPos.x - 4, hatPos.y, dstX, dstY, 520, 340);
+        this.spawnCoinFlight(hatPos.x + 4, hatPos.y + 3, dstX + 4, dstY, 560, 480);
+        this.spawnCoinFlight(hatPos.x, hatPos.y + 1, dstX - 4, dstY, 600, 620, () => {
+          this.spawnSparkBurst(dstX, dstY, 12, 0xffea88);
+        });
+        this.ctx?.audio.sfx.coinPourPayout(0.36);
       }
     }
     this.emitTelemetry();
@@ -2338,7 +2409,7 @@ export class GameTableScene implements Scene {
       this.renderRivalCardBacks();
       this.renderHumanHand();
       if (stepIdx % 2 === 0) {
-        this.ctx?.audio.sfx.cardSlide();
+        this.ctx?.audio.sfx.cardDeal();
       }
       this.egaDealPrevStep = stepIdx;
     }
@@ -2369,6 +2440,100 @@ export class GameTableScene implements Scene {
       }
       const pos = computeEgaDealCardPos(308, 66, endX, endY, frac);
       this.egaDealFlySpr.position.set(pos.x, pos.y);
+      this.egaDealFlySpr.visible = true;
+    }
+  }
+
+  private buildDealSchedule(): { seat: SeatIndex; slotIdx: number }[] {
+    const round = this.match.round;
+    if (!round) return [];
+    const maxVisible = this.getMatchVariant() === 'fantan52' ? 18 : 12;
+    const targets: Record<SeatIndex, number> = {
+      1: Math.min(maxVisible, round.hands[1].length),
+      2: Math.min(maxVisible, round.hands[2].length),
+      3: Math.min(round.hands[3].length, this.currentHandLayouts.length || round.hands[3].length),
+    };
+    const schedule: { seat: SeatIndex; slotIdx: number }[] = [];
+    const maxRounds = Math.max(targets[1], targets[2], targets[3]);
+    for (let r = 0; r < maxRounds; r++) {
+      for (const s of [1, 2, 3] as const) {
+        if (r < targets[s]) schedule.push({ seat: s, slotIdx: r });
+      }
+    }
+    return schedule;
+  }
+
+  private startHdDealingCards(): void {
+    if (!this.ctx) return;
+    this.phase = 'dealingCards';
+    this.phaseTimerMs = 0;
+    this.egaDealPrevStep = -1;
+    this.egaDealtCounts = { 1: 0, 2: 0, 3: 0 };
+    if (!this.egaDealFlySpr) {
+      const backTex = getHdRivalCardBackTexture(this.ctx.stage.getAspectMode());
+      const spr = new Sprite(backTex);
+      const rm = this.getRivalCardMetrics();
+      spr.width = rm.w * 1.15;
+      spr.height = rm.h * 1.15;
+      spr.anchor.set(0.5);
+      spr.position.set(320, 56);
+      this.fxLayer.addChild(spr);
+      this.egaDealFlySpr = spr;
+    }
+    this.renderRivalCardBacks();
+    this.renderHumanHand();
+  }
+
+  private updateHdDealingCards(timerMs: number): void {
+    const round = this.match.round;
+    if (!round) {
+      this.finishEgaDealingCards();
+      return;
+    }
+    const schedule = this.buildDealSchedule();
+    const state = getHdDealingStepState(timerMs, schedule.length, HD_DEAL_STEP_MS);
+    if (state.finished || state.currentStep >= schedule.length) {
+      this.hdDealer?.setTableExpression('idle', this.idleBlinkMs);
+      this.finishEgaDealingCards();
+      return;
+    }
+
+    const stepIdx = state.currentStep;
+    if (stepIdx !== this.egaDealPrevStep) {
+      const counts: Record<SeatIndex, number> = { 1: 0, 2: 0, 3: 0 };
+      for (let i = 0; i < stepIdx; i++) {
+        counts[schedule[i].seat]++;
+      }
+      this.egaDealtCounts = counts;
+      this.renderRivalCardBacks();
+      this.renderHumanHand();
+      if (stepIdx % 2 === 0) {
+        this.ctx?.audio.sfx.cardDeal();
+      }
+      this.egaDealPrevStep = stepIdx;
+    }
+
+    this.hdDealer?.setTableExpression(state.dealerPose, timerMs);
+
+    const cur = schedule[stepIdx];
+    const frac = Math.min(1, (timerMs - stepIdx * HD_DEAL_STEP_MS) / HD_DEAL_STEP_MS);
+    if (this.egaDealFlySpr) {
+      let endX = 320;
+      let endY = 296;
+      if (cur.seat === 1 || cur.seat === 2) {
+        const dst = this.getRivalCardSlotPos(cur.seat, cur.slotIdx);
+        const rm = this.getRivalCardMetrics();
+        endX = dst.x + rm.w * 0.5;
+        endY = dst.y + rm.h * 0.5;
+      } else {
+        const hl = this.currentHandLayouts[cur.slotIdx];
+        endX = (hl ? hl.x : 191 + cur.slotIdx * 16) + 25;
+        endY = (hl ? hl.y : 290) + 28;
+      }
+      const ease = frac * frac * (3 - 2 * frac);
+      const curX = 320 + (endX - 320) * ease;
+      const curY = 56 + (endY - 56) * ease - Math.sin(frac * Math.PI) * 14;
+      this.egaDealFlySpr.position.set(curX, curY);
       this.egaDealFlySpr.visible = true;
     }
   }
@@ -2405,8 +2570,8 @@ export class GameTableScene implements Scene {
         const bellSeq = [0, 1, 2, 3, 2, 1, 2, 3, 0];
         const bIdx = Math.min(bellSeq.length - 1, Math.floor(bellCycleMs / 200));
         this.dealerSpr.texture = bank.dealerBellFrames[bellSeq[bIdx]] ?? bank.dealerBellFrames[0];
-        if (bellCycleIdx !== this.egaIdleBellCycleTriggered) {
-          this.egaIdleBellCycleTriggered = bellCycleIdx;
+        if (bellCycleIdx !== this.idleBellCycleTriggered) {
+          this.idleBellCycleTriggered = bellCycleIdx;
           this.ctx?.audio.sfx.dealerBellPing();
         }
       } else if (glanceActive) {
@@ -2586,20 +2751,36 @@ export class GameTableScene implements Scene {
     }
 
     const blinking = (this.idleBlinkMs % 3200) > 2950;
-    if (this.phase === 'waitingTurn' || this.phase === 'anteIntro') {
+    if (this.phase === 'waitingTurn') {
       if (this.hdDealer) {
-        this.hdDealer.setTableExpression(blinking ? 'blink' : 'idle', this.idleBlinkMs);
-      } else if (this.dealerSpr && this.phase === 'waitingTurn' && round && !round.roundOver) {
+        const bellActive = round && !round.roundOver && round.currentTurn === 3 && this.humanWaitMs >= 10500;
+        const bellCycleIdx = bellActive ? Math.floor((this.humanWaitMs - 10500) / 12000) : -1;
+        const bellCycleMs = bellActive ? (this.humanWaitMs - 10500) % 12000 : 0;
+        const glanceActive = round && !round.roundOver && round.currentTurn === 3 && this.humanWaitMs >= 6500 && this.humanWaitMs < 8500;
+        if (bellActive && bellCycleMs < 1480) {
+          this.hdDealer.setTableExpression('bell', bellCycleMs);
+          if (bellCycleIdx !== this.idleBellCycleTriggered) {
+            this.idleBellCycleTriggered = bellCycleIdx;
+            this.ctx?.audio.sfx.dealerBellPing();
+          }
+        } else if (glanceActive) {
+          const glance = getHdDealerGlanceMode(this.humanWaitMs - 6500);
+          this.hdDealer.setTableExpression(glance === 'idle' && blinking ? 'blink' : glance, this.idleBlinkMs);
+        } else {
+          this.hdDealer.setTableExpression(blinking ? 'blink' : 'idle', this.idleBlinkMs);
+        }
+      } else if (this.dealerSpr && round && !round.roundOver) {
         this.updateEgaWaitingIdle(round);
-      } else if (this.dealerSpr) {
-        this.dealerSpr.texture = blinking ? this.dealerBlinkTex : this.dealerIdleTex;
       }
+    } else if (this.phase === 'anteIntro' && this.dealerSpr) {
+      this.dealerSpr.texture = blinking ? this.dealerBlinkTex : this.dealerIdleTex;
     }
 
     if (this.phase === 'waitingTurn' && round && !round.roundOver && round.currentTurn === 3) {
       this.humanWaitMs += dtMs;
     } else {
       this.humanWaitMs = 0;
+      this.idleBellCycleTriggered = -1;
     }
     this.rivalPlayAnimMs[1] = Math.max(0, this.rivalPlayAnimMs[1] - dtMs);
     this.rivalPlayAnimMs[2] = Math.max(0, this.rivalPlayAnimMs[2] - dtMs);
@@ -2607,7 +2788,9 @@ export class GameTableScene implements Scene {
     if (this.hdLeftRival && this.hdRightRival) {
       const lookTarget =
         this.phase === 'movingCard' && this.flyingCard
-          ? { x: this.flyingCard.sprite.x + 19, y: this.flyingCard.sprite.y + 18 }
+          ? this.flyingCard.sprite.visible
+            ? { x: this.flyingCard.sprite.x + 19, y: this.flyingCard.sprite.y + 18 }
+            : { x: this.flyingCard.startX + 7, y: this.flyingCard.startY + 8 }
           : round && !round.roundOver
             ? round.currentTurn === 1
               ? { x: 75, y: 140 }
@@ -2616,22 +2799,39 @@ export class GameTableScene implements Scene {
                 : { x: 320, y: 245 }
             : null;
 
+      const anteState = this.phase === 'anteIntro' ? getHdAnteIntroState(this.phaseTimerMs) : null;
       const resolveRivalMode = (seat: 1 | 2): RivalAnimMode => {
+        if (this.phase === 'anteIntro' && anteState) {
+          return seat === 1 ? anteState.leftMode : anteState.rightMode;
+        }
         if (this.phase === 'roundEnd') {
-          return this.roundWinner === seat ? 'winRound' : 'loseRound';
+          if (this.roundWinner === seat) {
+            return this.phaseTimerMs >= 1320 && this.phaseTimerMs < 1820 ? 'purseReceive' : 'winRound';
+          }
+          return 'loseRound';
         }
-        if (this.rivalPlayAnimMs[seat] > 0) {
-          return 'play';
-        }
-        if (this.phase === 'movingCard' && this.activeFlightSeat === seat) {
+        if (this.rivalPlayAnimMs[seat] > 0 || (this.phase === 'movingCard' && this.activeFlightSeat === seat)) {
           return 'play';
         }
         if (this.phase === 'passing' && this.passingSeat === seat) {
-          return 'pass';
+          return this.passingBroke
+            ? getHdBotBrokeMode(this.phaseTimerMs, HD_BOT_BROKE_SHAKE_DURATION_MS)
+            : getHdBotPurseTossMode(this.phaseTimerMs - 100);
         }
         if (this.phase === 'waitingTurn' && round && !round.roundOver) {
           if (round.currentTurn === seat) return 'think';
-          if (round.currentTurn === 3 && this.humanWaitMs >= 3500) return 'impatient';
+          if (round.currentTurn === 3 && this.humanWaitMs >= 3500) {
+            const waitCycleIdx = Math.floor((this.humanWaitMs - 3500) / 4200);
+            const waitCycleMs = (this.humanWaitMs - 3500) % 4200;
+            const actor: 1 | 2 = waitCycleIdx % 2 === 0 ? 1 : 2;
+            if (actor !== seat) return 'idle';
+            if (Math.floor(waitCycleIdx / 2) % 2 === 1 && waitCycleMs < 2100) {
+              return 'impatient';
+            }
+            if (waitCycleMs < 1360) {
+              return 'yawn';
+            }
+          }
         }
         return 'idle';
       };
@@ -2657,8 +2857,15 @@ export class GameTableScene implements Scene {
           this.clearEgaActionOverlays();
           this.startEgaDealingCards();
         }
-      } else if (this.phaseTimerMs >= 460) {
-        this.enterNextTurn();
+      } else {
+        const anteState = getHdAnteIntroState(this.phaseTimerMs);
+        this.hdDealer?.setTableExpression(anteState.dealerHatOpen ? 'hatCollect' : blinking ? 'blink' : 'idle', this.phaseTimerMs);
+        if (this.phaseTimerMs >= anteState.endMs) {
+          this.egaAntePaid = { 1: true, 2: true, 3: true };
+          this.renderCashAndBankHud();
+          this.hdDealer?.setTableExpression('idle', this.idleBlinkMs);
+          this.startHdDealingCards();
+        }
       }
       return;
     }
@@ -2667,7 +2874,7 @@ export class GameTableScene implements Scene {
       if (!isHd && this.egaBank) {
         this.updateEgaDealingCards(this.phaseTimerMs);
       } else {
-        this.finishEgaDealingCards();
+        this.updateHdDealingCards(this.phaseTimerMs);
       }
       return;
     }
@@ -2708,18 +2915,32 @@ export class GameTableScene implements Scene {
         const fIdx = Math.floor(this.flyingCard.elapsed / 70) % this.flyingCard.egaFrames.length;
         this.flyingCard.sprite.texture = this.flyingCard.egaFrames[fIdx];
       } else {
-        const ease = isHd ? t * t * (3 - 2 * t) : t;
-        const arcLift = isHd ? Math.sin(t * Math.PI) * 18 : 0;
+        let flyT = t;
+        if (this.flyingCard.hdBotSync) {
+          const throwState = getHdBotCardThrowState(t);
+          if (throwState.cardPickedFromStack) {
+            this.consumePendingRivalSlot();
+          }
+          if (throwState.cardReleased && !this.flyingCard.soundPlayed) {
+            this.flyingCard.soundPlayed = true;
+            this.ctx?.audio.sfx.cardSlide();
+          }
+          this.flyingCard.sprite.visible = throwState.cardReleased;
+          if (this.flyingCard.shadow) this.flyingCard.shadow.visible = throwState.cardReleased;
+          flyT = throwState.flyProgress;
+        }
+        const ease = isHd ? flyT * flyT * (3 - 2 * flyT) : flyT;
+        const arcLift = isHd ? Math.sin(flyT * Math.PI) * 18 : 0;
         const curX = this.flyingCard.startX + (this.flyingCard.endX - this.flyingCard.startX) * ease;
         const curY = this.flyingCard.startY + (this.flyingCard.endY - this.flyingCard.startY) * ease;
 
         this.flyingCard.sprite.position.set(curX, curY - arcLift);
         if (isHd) {
-          const s = 1 + Math.sin(t * Math.PI) * 0.16;
+          const s = 1 + Math.sin(flyT * Math.PI) * 0.16;
           this.flyingCard.sprite.scale.set(s);
           if (this.flyingCard.shadow) {
             this.flyingCard.shadow.position.set(curX + arcLift * 0.25, curY + arcLift * 0.2);
-            this.flyingCard.shadow.alpha = 0.25 + (1 - t) * 0.3;
+            this.flyingCard.shadow.alpha = 0.25 + (1 - flyT) * 0.3;
           }
         }
       }
@@ -2746,9 +2967,18 @@ export class GameTableScene implements Scene {
 
     if (this.phase === 'passing') {
       if (this.hdDealer) {
-        this.hdDealer.setTableExpression('bell', this.phaseTimerMs);
-        if (this.phaseTimerMs >= 1480) {
+        const isBotBroke = this.passingBroke && (this.passingSeat === 1 || this.passingSeat === 2);
+        const isBotNormal = !this.passingBroke && (this.passingSeat === 1 || this.passingSeat === 2);
+        const endMs = isBotBroke
+          ? HD_BOT_BROKE_SHAKE_DURATION_MS + 20
+          : isBotNormal
+            ? 100 + HD_BOT_PURSE_TOSS_TOTAL_MS + 180
+            : 1020;
+        const hatOpen = !this.passingBroke && this.phaseTimerMs >= 80 && this.phaseTimerMs < endMs - 140;
+        this.hdDealer.setTableExpression(hatOpen ? 'hatCollect' : blinking ? 'blink' : 'idle', this.phaseTimerMs);
+        if (this.phaseTimerMs >= endMs) {
           this.passingSeat = null;
+          this.passingBroke = false;
           this.enterNextTurn();
         }
       } else if (this.egaBank) {
@@ -2832,11 +3062,19 @@ export class GameTableScene implements Scene {
 
     if (this.phase === 'roundEnd') {
       if (this.hdDealer) {
-        this.hdDealer.setTableExpression('bell', this.phaseTimerMs);
+        if (this.roundWonPot > 0 && this.phaseTimerMs < 320) {
+          this.hdDealer.setTableExpression('hatCollect', this.phaseTimerMs);
+        } else if (this.roundWonPot > 0 && this.phaseTimerMs < 1380) {
+          const winner = this.roundWinner ?? 3;
+          const pourMode = winner === 1 ? 'pourLeft' : winner === 2 ? 'pourRight' : 'pourDown';
+          this.hdDealer.setTableExpression(pourMode, this.phaseTimerMs);
+        } else {
+          this.hdDealer.setTableExpression(blinking ? 'blink' : 'idle', this.idleBlinkMs);
+        }
       } else if (this.egaBank) {
         this.updateEgaRoundEndPose(this.phaseTimerMs);
       }
-      if (this.phaseTimerMs >= (isHd ? 1520 : 1960)) {
+      if (this.phaseTimerMs >= 1960) {
         if (!isHd) this.clearEgaActionOverlays();
         else if (this.dealerSpr) this.dealerSpr.texture = this.dealerIdleTex;
         if (this.match.matchOver) {

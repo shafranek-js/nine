@@ -7,6 +7,19 @@ export type SoundProfile = 'hd' | 'ega';
 
 const ASSET_BASE = ((import.meta as { env?: { BASE_URL?: string } }).env?.BASE_URL ?? '/').replace(/\/$/, '');
 const HD_DEALER_BELL_URL = `${ASSET_BASE}/assets/audio/07_dealer_bell.mp3`;
+const HD_COIN_POUR_URL = `${ASSET_BASE}/assets/audio/08_coin_pour.mp3`;
+const HD_COIN_HAT_URL = `${ASSET_BASE}/assets/audio/09_coin_hat.mp3`;
+const HD_CARD_SPRING_URL = `${ASSET_BASE}/assets/audio/10_card_spring.mp3`;
+const HD_CARD_DEAL_URL = `${ASSET_BASE}/assets/audio/11_card_deal.mp3`;
+const HD_CARD_SLIDE_URL = `${ASSET_BASE}/assets/audio/12_card_slide.mp3`;
+const HD_PRELOAD_SAMPLE_URLS = [
+  HD_DEALER_BELL_URL,
+  HD_COIN_POUR_URL,
+  HD_COIN_HAT_URL,
+  HD_CARD_SPRING_URL,
+  HD_CARD_DEAL_URL,
+  HD_CARD_SLIDE_URL,
+] as const;
 
 interface ModalPartial {
   readonly freqHz: number;
@@ -21,21 +34,28 @@ export class PcSpeaker {
   private soundProfile: SoundProfile = 'hd';
   private cachedNoiseCtx: AudioContext | null = null;
   private cachedNoiseBuffer: AudioBuffer | null = null;
-  private bellBufferCtx: AudioContext | null = null;
-  private bellBuffer: AudioBuffer | null = null;
-  private bellBufferLoading: Promise<AudioBuffer | null> | null = null;
+  private sampleBuffersCtx: AudioContext | null = null;
+  private sampleBuffers = new Map<string, AudioBuffer>();
+  private sampleLoading = new Map<string, Promise<AudioBuffer | null>>();
 
   attachContext(ctx: AudioContext): void {
     if (this.ctx !== ctx) {
-      this.bellBuffer = null;
-      this.bellBufferCtx = null;
-      this.bellBufferLoading = null;
+      this.sampleBuffers.clear();
+      this.sampleLoading.clear();
+      this.sampleBuffersCtx = null;
     }
     this.ctx = ctx;
-    void this.loadBellBuffer(ctx);
+    for (const url of HD_PRELOAD_SAMPLE_URLS) {
+      void this.loadSampleBuffer(ctx, url);
+    }
   }
 
-  private async loadBellBuffer(ctx: AudioContext): Promise<AudioBuffer | null> {
+  private getSampleBuffer(url: string): AudioBuffer | null {
+    if (!this.ctx || this.sampleBuffersCtx !== this.ctx) return null;
+    return this.sampleBuffers.get(url) ?? null;
+  }
+
+  private async loadSampleBuffer(ctx: AudioContext, url: string): Promise<AudioBuffer | null> {
     if (
       typeof window === 'undefined' ||
       typeof fetch !== 'function' ||
@@ -43,30 +63,36 @@ export class PcSpeaker {
     ) {
       return null;
     }
-    if (this.bellBufferCtx === ctx && this.bellBuffer) {
-      return this.bellBuffer;
+    if (this.sampleBuffersCtx === ctx) {
+      const cached = this.sampleBuffers.get(url);
+      if (cached) return cached;
     }
-    if (this.bellBufferLoading) {
-      return this.bellBufferLoading;
+    const inflight = this.sampleLoading.get(url);
+    if (inflight) {
+      return inflight;
     }
-    this.bellBufferLoading = (async () => {
+    let promise!: Promise<AudioBuffer | null>;
+    promise = (async () => {
       try {
-        const res = await fetch(HD_DEALER_BELL_URL);
+        const res = await fetch(url);
         if (!res.ok) return null;
         const arr = await res.arrayBuffer();
         const decoded = await ctx.decodeAudioData(arr);
         if (this.ctx === ctx) {
-          this.bellBuffer = decoded;
-          this.bellBufferCtx = ctx;
+          this.sampleBuffersCtx = ctx;
+          this.sampleBuffers.set(url, decoded);
         }
         return decoded;
       } catch {
         return null;
       } finally {
-        this.bellBufferLoading = null;
+        if (this.sampleLoading.get(url) === promise) {
+          this.sampleLoading.delete(url);
+        }
       }
     })();
-    return this.bellBufferLoading;
+    this.sampleLoading.set(url, promise);
+    return promise;
   }
 
   private playSample(buffer: AudioBuffer, gainValue: number, delayOffsetSec = 0): boolean {
@@ -310,26 +336,60 @@ export class PcSpeaker {
     );
   }
 
-  /** Triple `6000 Hz` 5ms metallic ticks on EGA hat coin drop / payout (`NINE.EXE` `$1770`) */
-  coinHatClink(): void {
+  /** Coin toss/clink into the dealer's hat (`09_coin_hat.mp3` in HD, triple `6000 Hz` ticks in EGA) */
+  coinHatClink(delayOffsetSec = 0): void {
     if (this.soundProfile === 'ega') {
-      this.playTone(6000, 5, 0);
-      this.playTone(6000, 5, 0.016);
-      this.playTone(6000, 5, 0.032);
+      this.playTone(6000, 5, delayOffsetSec);
+      this.playTone(6000, 5, delayOffsetSec + 0.016);
+      this.playTone(6000, 5, delayOffsetSec + 0.032);
+      return;
+    }
+    const hatBuf = this.getSampleBuffer(HD_COIN_HAT_URL);
+    if (hatBuf && this.playSample(hatBuf, 0.85, delayOffsetSec)) {
       return;
     }
     this.coinChime();
   }
 
-  /** Tactile card slide / snap onto green felt */
+  /** Tactile card throw / slide rustle onto green felt (`12_card_slide.mp3` in HD, `65 Hz` tick in EGA) */
   cardSlide(): void {
     if (this.soundProfile === 'ega') {
       this.playTone(65, 14);
       return;
     }
-    // Crisp paper swish over felt + warm low felt tap
+    const slideBuf = this.getSampleBuffer(HD_CARD_SLIDE_URL);
+    if (slideBuf && this.playSample(slideBuf, 0.56)) {
+      return;
+    }
+    // Crisp paper swish over felt + warm low felt tap (fallback while sample loads)
     this.playNoiseBurst(2100, 1.1, 'bandpass', 36, 0.075, 0, 3);
     this.playBodyThump(128, 56, 26, 360, 0.075, 0.002);
+  }
+
+  /** Dealer dealing a single card (`11_card_deal.mp3` in HD, `65 Hz` tick in EGA) */
+  cardDeal(): void {
+    if (this.soundProfile === 'ega') {
+      this.playTone(65, 14);
+      return;
+    }
+    const dealBuf = this.getSampleBuffer(HD_CARD_DEAL_URL);
+    if (dealBuf && this.playSample(dealBuf, 0.58)) {
+      return;
+    }
+    this.cardSlide();
+  }
+
+  /** Hand-to-hand dealer card spring (`10_card_spring.mp3` in HD, crisp DOS tick in EGA) */
+  cardSpring(delayOffsetSec = 0): void {
+    if (this.soundProfile === 'ega') {
+      this.cardSlide();
+      return;
+    }
+    const springBuf = this.getSampleBuffer(HD_CARD_SPRING_URL);
+    if (springBuf && this.playSample(springBuf, 0.72, delayOffsetSec)) {
+      return;
+    }
+    this.cardSlide();
   }
 
   private playBrassHandBell(baseHz: number, gainScale: number, decayMs: number, delayOffsetSec = 0): void {
@@ -345,13 +405,27 @@ export class PcSpeaker {
     );
   }
 
+  /** Coin pour cascading to the round winner (`08_coin_pour.mp3` in HD, DOS clink in EGA) */
+  coinPourPayout(delayOffsetSec = 0): void {
+    if (this.soundProfile === 'ega') {
+      this.coinHatClink();
+      return;
+    }
+    const coinBuf = this.getSampleBuffer(HD_COIN_POUR_URL);
+    if (coinBuf && this.playSample(coinBuf, 0.58, delayOffsetSec)) {
+      return;
+    }
+    this.coinChime();
+  }
+
   /** Forced pass dealer brass handbell (`220 Hz` buzz in EGA) */
   passAlert(): void {
     if (this.soundProfile === 'ega') {
       this.playTone(220, 200);
       return;
     }
-    if (this.bellBuffer && this.bellBufferCtx === this.ctx && this.playSample(this.bellBuffer, 0.55)) {
+    const bellBuf = this.getSampleBuffer(HD_DEALER_BELL_URL);
+    if (bellBuf && this.playSample(bellBuf, 0.55)) {
       return;
     }
     // Fallback while sample loads: synchronized double ring
@@ -369,23 +443,18 @@ export class PcSpeaker {
     this.playBodyThump(145, 76, 42, 300, 0.085, 0);
   }
 
-  /** Dealer brass service bell + celebratory chord on round end */
+  /** Celebratory triad on round win (dealer handbell is reserved exclusively for idle user reminders) */
   victoryBeep(): void {
     if (this.soundProfile === 'ega') {
       this.playTone(5000, 18);
       return;
     }
-    if (this.bellBuffer && this.bellBufferCtx === this.ctx) {
-      this.playSample(this.bellBuffer, 0.42);
-    } else {
-      this.playBrassHandBell(1174.66, 1.05, 480, 0);
-    }
-    this.playWarmVoice(587.33, 170, 0.085, 'triangle', 2200, 0.1);
-    this.playWarmVoice(739.99, 190, 0.085, 'triangle', 2200, 0.17);
-    this.playWarmVoice(880.0, 260, 0.095, 'sine', 2600, 0.24);
+    this.playWarmVoice(587.33, 170, 0.085, 'triangle', 2200, 0.04);
+    this.playWarmVoice(739.99, 190, 0.085, 'triangle', 2200, 0.11);
+    this.playWarmVoice(880.0, 260, 0.095, 'sine', 2600, 0.18);
   }
 
-  /** EGA idle hurry-up dealer service bell (`NINE.EXE` `0xe97`: `5000 Hz` chimes) */
+  /** Dealer brass service bell reminder when human takes a long time (`NINE.EXE` `0xe97`) */
   dealerBellPing(): void {
     if (this.soundProfile === 'ega') {
       this.playTone(5000, 10, 0);
@@ -393,8 +462,9 @@ export class PcSpeaker {
       this.playTone(5000, 10, 0.28);
       return;
     }
-    if (this.bellBuffer && this.bellBufferCtx === this.ctx) {
-      this.playSample(this.bellBuffer, 0.36);
+    const bellBuf = this.getSampleBuffer(HD_DEALER_BELL_URL);
+    if (bellBuf) {
+      this.playSample(bellBuf, 0.36);
     } else {
       this.playBrassHandBell(1174.66, 0.55, 340, 0);
     }

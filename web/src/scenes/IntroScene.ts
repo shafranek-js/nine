@@ -2,6 +2,7 @@ import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
 import { getTranslations } from '../core/i18n';
 import { SCREEN_HEIGHT, SCREEN_WIDTH } from '../core/types';
 import { sliceTexture } from '../engine/BitmapFont';
+import { getHdIntroTrumpetProgress } from '../engine/hdAnimations';
 import {
   createHdIntroLogoSprite,
   createHdTextSprite,
@@ -248,7 +249,7 @@ export class IntroScene implements Scene {
         this.trumpetSprites[i].texture = this.trumpetFrames[i][tIdx];
       }
     } else {
-      const raise01 = 0.5 - 0.5 * Math.cos((this.elapsedMs / 1300) * Math.PI * 2);
+      const raise01 = getHdIntroTrumpetProgress(this.elapsedMs);
       for (const tr of this.hdTrumpeters) {
         tr.setProgress(raise01, this.elapsedMs);
       }
