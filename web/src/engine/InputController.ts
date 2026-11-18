@@ -83,6 +83,10 @@ export class InputController {
 
     input.addEventListener('keydown', (e: KeyboardEvent) => {
       if (!this.activeTextConfig) return;
+      if (e.isComposing || e.keyCode === 229) {
+        e.stopPropagation();
+        return;
+      }
       if (e.key === 'Enter') {
         e.preventDefault();
         e.stopPropagation();

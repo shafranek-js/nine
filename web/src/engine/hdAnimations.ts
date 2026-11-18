@@ -119,6 +119,10 @@ export interface HdBotPlayPhase {
   readonly arm: 'left' | 'right';
   readonly col: number;
   readonly row: 0 | 1;
+  /** Exact 0-based shelf row index (`0..3` in Fan Tan 52, `0..1` in Nine 36) so deeper rows (> 1) add extra vertical reach. */
+  readonly rawRow: number;
+  /** Vertical reach offset in logical pixels for rows beyond row 1 (`0` for rows `0..1`, `> 0` for rows `2..3` in Fan Tan 52). */
+  readonly reachOffsetY: number;
   readonly stage: 'basePrepWave' | 'pick' | 'baseLiftThrow' | 'baseReleaseSettle';
   /** Index into `play_*_base` (`0..31`) or `pick_near`/`pick_far` (`0..5`). */
   readonly frameIndex: number;
@@ -134,26 +138,36 @@ export function getHdLeftRivalPlayPhase(slotIdx: number, cols: number, progress0
   const clampedSlot = Math.max(0, Math.floor(slotIdx));
   const rawCol = clampedSlot % safeCols;
   const col = safeCols <= 6 ? rawCol : Math.min(5, Math.round((rawCol / (safeCols - 1)) * 5));
-  const row: 0 | 1 = Math.floor(clampedSlot / safeCols) >= 1 ? 1 : 0;
+  const rawRow = Math.floor(clampedSlot / safeCols);
+  const row: 0 | 1 = rawRow >= 1 ? 1 : 0;
+  const extraRows = Math.max(0, rawRow - 1);
   const arm: 'left' | 'right' = col >= 3 ? 'right' : 'left';
   const t = Math.max(0, Math.min(1, progress01));
 
   if (t < 0.22) {
     const u = t / 0.22;
     const frameIndex = Math.min(5, Math.floor(u * 6));
-    return { arm, col, row, stage: 'basePrepWave', frameIndex };
+    return { arm, col, row, rawRow, reachOffsetY: 0, stage: 'basePrepWave', frameIndex };
   }
   if (t < 0.45) {
-    return { arm, col, row, stage: 'pick', frameIndex: col };
+    return {
+      arm,
+      col,
+      row,
+      rawRow,
+      reachOffsetY: extraRows * 12.5,
+      stage: 'pick',
+      frameIndex: col,
+    };
   }
   if (t < 0.60) {
     const u = (t - 0.45) / 0.15;
     const frameIndex = 11 + Math.min(4, Math.floor(u * 5));
-    return { arm, col, row, stage: 'baseLiftThrow', frameIndex };
+    return { arm, col, row, rawRow, reachOffsetY: 0, stage: 'baseLiftThrow', frameIndex };
   }
   const u = (t - 0.60) / 0.40;
   const frameIndex = 18 + Math.min(13, Math.floor(u * 14));
-  return { arm, col, row, stage: 'baseReleaseSettle', frameIndex };
+  return { arm, col, row, rawRow, reachOffsetY: 0, stage: 'baseReleaseSettle', frameIndex };
 }
 
 /** Computes progressive card-dealing counts and active dealer throw direction (`1 -> 2 -> 3`). */

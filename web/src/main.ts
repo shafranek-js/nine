@@ -1,6 +1,6 @@
 import { parseNineMsc } from './audio/mscParser';
 import { createAudioController } from './audio/opl2Engine';
-import { loadGameAssets } from './engine/AssetManager';
+import { loadGameAssets, preloadHdAssetsInBackground } from './engine/AssetManager';
 import { setHdCourtArt } from './engine/hdCards';
 import { setHdCandelabraArt, setHdDealerArt, setHdRivalArt, setHdTrumpeterArt } from './engine/hdCharacters';
 import { InputController } from './engine/InputController';
@@ -74,6 +74,17 @@ async function bootstrap(): Promise<void> {
   }
 
   scenes.ctx.goTo('intro', 0);
+
+  void preloadHdAssetsInBackground(assets).then(() => {
+    setHdCourtArt(assets.hdCourtArt);
+    setHdRivalArt(assets.hdRivalArt);
+    setHdDealerArt(assets.hdDealerArt);
+    setHdTrumpeterArt(assets.hdTrumpeterArt);
+    setHdCandelabraArt(assets.hdCandelabraArt);
+    if (scenes.ctx.getGraphicsMode() === 'hd') {
+      scenes.ctx.refreshActiveSceneGraphics();
+    }
+  });
 }
 
 bootstrap().catch((err) => {

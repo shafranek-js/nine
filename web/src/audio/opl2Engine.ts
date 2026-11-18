@@ -502,6 +502,7 @@ export class Opl2MusicEngine {
       return;
     }
     if (!buf || !this.ctx || !this.mp3Gain) {
+      this.stopMp3Source();
       this.startOpl2Track(trackId);
       return;
     }

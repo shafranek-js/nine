@@ -1148,10 +1148,14 @@ export class GameTableScene implements Scene {
     this.tableCardsLayer.removeChildren();
     const round = this.match.round;
     if (!round) return;
+    const inFlight = this.phase === 'movingCard' ? this.pendingMoveCard : null;
     for (const suit of [1, 2, 3, 4] as const) {
       const bounds = round.tableBounds[suit];
       if (bounds.low <= 0 || bounds.high <= 0) continue;
       for (let r = bounds.low; r <= bounds.high; r++) {
+        if (inFlight && inFlight.suit === suit && inFlight.rank === r) {
+          continue;
+        }
         this.placeMiniCardOnTable({ suit, rank: r as Rank });
       }
     }
@@ -1869,8 +1873,8 @@ export class GameTableScene implements Scene {
     const handLaunchPos =
       isHd && (seat === 1 || seat === 2) && originX === undefined && originY === undefined
         ? (seat === 1
-            ? this.hdLeftRival?.getPlayLaunchWorldPos?.()
-            : this.hdRightRival?.getPlayLaunchWorldPos?.()) ?? null
+            ? this.hdLeftRival?.getPlayLaunchWorldPos?.(botSlotIdx, rm.cols)
+            : this.hdRightRival?.getPlayLaunchWorldPos?.(botSlotIdx, rm.cols)) ?? null
         : null;
     const hdStartX = handLaunchPos ? handLaunchPos.x - bm.cardW * 0.5 : startX;
     const hdStartY = handLaunchPos ? handLaunchPos.y - bm.cardH * 0.5 : startY;

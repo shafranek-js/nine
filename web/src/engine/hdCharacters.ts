@@ -244,8 +244,8 @@ let hdCandelabraArtImg: HTMLImageElement | null = null;
 let cachedCandelabraFrames: { frames: Texture[]; cw: number; ch: number } | null = null;
 
 /** Registers the preloaded 6-frame raster candelabra sprite sheet. */
-export function setHdCandelabraArt(img: HTMLImageElement): void {
-  hdCandelabraArtImg = img;
+export function setHdCandelabraArt(img: HTMLImageElement | null | undefined): void {
+  hdCandelabraArtImg = img ?? null;
   cachedCandelabraFrames = null;
 }
 
@@ -1808,7 +1808,7 @@ export interface HdRivalController {
     dtMs?: number,
     playContext?: HdRivalPlayContext | null,
   ): void;
-  getPlayLaunchWorldPos?(): { x: number; y: number } | null;
+  getPlayLaunchWorldPos?(slotIdx?: number, cols?: number): { x: number; y: number } | null;
   getPurseLaunchWorldPos?(): { x: number; y: number } | null;
   getWinPurseCatchWorldPos?(): { x: number; y: number } | null;
   getNoseWorldPos?(): { x: number; y: number };
@@ -2401,10 +2401,20 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
 
   return {
     container,
-    getPlayLaunchWorldPos() {
+    getPlayLaunchWorldPos(slotIdx = 0, cols = 6) {
       if (!hasUnifiedLeftPlay) return null;
-      // Throwing hand release center measured in f16 (+24, -65.5 px from 180,305 anchor; mirrored automatically by mirrorX)
-      return aspectRelToWorld(24, -65.5);
+      const safeCols = Math.max(2, Math.floor(cols));
+      const clampedSlot = Math.max(0, Math.floor(slotIdx));
+      const slotRow = Math.floor(clampedSlot / safeCols);
+      const slotCol = clampedSlot % safeCols;
+      const effectiveSlotIdx = isLeft ? clampedSlot : slotRow * safeCols + (safeCols - 1 - slotCol);
+      const phase = getHdLeftRivalPlayPhase(effectiveSlotIdx, safeCols, 0.55);
+      // Throwing hand release center measured in f14..f15:
+      // - left_base (character's right arm on viewer's left): (-13.6, -76.5) px from (180,305) anchor
+      // - right_base (character's left arm outstretched on viewer's right): (+107.0, -106.9) px from (180,305) anchor
+      return phase.arm === 'right'
+        ? aspectRelToWorld(107, -107)
+        : aspectRelToWorld(-13.6, -76.5);
     },
     getPurseLaunchWorldPos() {
       if (!purseSheetArt) return null;
@@ -2536,6 +2546,8 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
             : activeBase;
         const idx = Math.max(0, Math.min(sheet.frames.length - 1, phase.frameIndex));
         sheet.spr.texture = sheet.frames[idx];
+        const scaleToIdle = useUnifiedIdle || isLeft ? 64 / 258 : 64 / 241;
+        sheet.spr.position.set(0, 1.5 + phase.reachOffsetY * scaleToIdle);
         sheet.spr.visible = true;
         if (playSpr) playSpr.visible = false;
         if (impatientSpr) impatientSpr.visible = false;

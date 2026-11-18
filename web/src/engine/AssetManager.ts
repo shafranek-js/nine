@@ -121,8 +121,8 @@ export interface LoadedAssets {
   hdCourtArt: Map<string, HTMLImageElement>;
   hdRivalArt: Map<string, HTMLImageElement>;
   hdDealerArt: Map<string, HTMLImageElement>;
-  hdTrumpeterArt: HTMLImageElement;
-  hdCandelabraArt: HTMLImageElement;
+  hdTrumpeterArt: HTMLImageElement | null;
+  hdCandelabraArt: HTMLImageElement | null;
   sheets: Record<'ZR_NINE' | 'TR_NINE' | 'GR_NINE' | 'VR_NINE', Texture>;
   cards: Map<string, Texture>;
   miniCards: Map<string, Texture>;
@@ -145,20 +145,83 @@ async function loadNearestTexture(url: string): Promise<Texture> {
   return tex;
 }
 
-async function loadLinearTexture(url: string): Promise<Texture> {
-  const tex = await Assets.load<Texture>(url);
-  tex.source.scaleMode = 'linear';
-  return tex;
-}
-
-function loadHtmlImage(url: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
+function loadOptionalHtmlImage(url: string): Promise<HTMLImageElement | null> {
+  return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error(`Failed to load HD image ${url}`));
+    img.onerror = () => resolve(null);
     img.src = url;
   });
+}
+
+function loadOptionalLinearTexture(url: string): Promise<Texture> {
+  return Assets.load<Texture>(url)
+    .then((tex) => {
+      tex.source.scaleMode = 'linear';
+      return tex;
+    })
+    .catch(() => Texture.EMPTY);
+}
+
+let hdAssetsLoadPromise: Promise<void> | null = null;
+
+/**
+ * Starts (or returns the in-flight) non-blocking load of optional HD character, court-card, and menu
+ * art so the core game boots immediately without waiting on multi-megabyte HD PNG sheets.
+ */
+export function preloadHdAssetsInBackground(
+  assets: LoadedAssets,
+  basePath = `${import.meta.env.BASE_URL}assets`,
+  onReady?: () => void,
+): Promise<void> {
+  if (hdAssetsLoadPromise) return hdAssetsLoadPromise;
+  const normalizedBase = basePath.endsWith('/') ? basePath.slice(0, -1) : basePath;
+
+  hdAssetsLoadPromise = (async () => {
+    const [hdCourtEntries, hdRivalEntries, hdDealerEntries, hdTrumpeterArt, hdCandelabraArt] = await Promise.all([
+      Promise.all(
+        HD_COURT_ART_ENTRIES.map(async ({ suit, rank }) => {
+          const key = cardKey({ suit, rank });
+          const img = await loadOptionalHtmlImage(`${normalizedBase}/hd/cards/s${suit}_${rank}.png`);
+          return img ? ([key, img] as const) : null;
+        }),
+      ),
+      Promise.all(
+        HD_RIVAL_ART_ENTRIES.map(async ({ key, file }) => {
+          const img = await loadOptionalHtmlImage(`${normalizedBase}/hd/characters/${file}`);
+          return img ? ([key, img] as const) : null;
+        }),
+      ),
+      Promise.all(
+        HD_DEALER_ART_ENTRIES.map(async ({ key, file }) => {
+          const img = await loadOptionalHtmlImage(`${normalizedBase}/hd/characters/${file}`);
+          return img ? ([key, img] as const) : null;
+        }),
+      ),
+      loadOptionalHtmlImage(`${normalizedBase}/hd/characters/${HD_TRUMPETER_ART_FILE}`),
+      loadOptionalHtmlImage(`${normalizedBase}/hd/characters/${HD_CANDELABRA_ART_FILE}`),
+    ]);
+
+    for (const entry of hdCourtEntries) {
+      if (entry) assets.hdCourtArt.set(entry[0], entry[1]);
+    }
+    for (const entry of hdRivalEntries) {
+      if (entry) assets.hdRivalArt.set(entry[0], entry[1]);
+    }
+    for (const entry of hdDealerEntries) {
+      if (entry) assets.hdDealerArt.set(entry[0], entry[1]);
+    }
+    if (hdTrumpeterArt) {
+      assets.hdTrumpeterArt = hdTrumpeterArt;
+    }
+    if (hdCandelabraArt) {
+      assets.hdCandelabraArt = hdCandelabraArt;
+    }
+    onReady?.();
+  })();
+
+  return hdAssetsLoadPromise;
 }
 
 export async function loadGameAssets(basePath = `${import.meta.env.BASE_URL}assets`): Promise<LoadedAssets> {
@@ -196,18 +259,18 @@ export async function loadGameAssets(basePath = `${import.meta.env.BASE_URL}asse
     loadNearestTexture(`${normalizedBase}/${manifest.backgrounds.ZF_NINE}`),
     loadNearestTexture(`${normalizedBase}/${manifest.backgrounds.TF_NINE}`),
     loadNearestTexture(`${normalizedBase}/${manifest.backgrounds.GF_NINE}`),
-    loadLinearTexture(`${normalizedBase}/hd/intro_bg_hd.jpg`),
-    loadLinearTexture(`${normalizedBase}/hd/menu_bg_hd.jpg`),
-    loadLinearTexture(`${normalizedBase}/hd/table_bg_hd.jpg`),
-    loadLinearTexture(`${normalizedBase}/hd/banner_nine_hd.png`),
-    loadLinearTexture(`${normalizedBase}/hd/banner_club_hd.png`),
-    loadLinearTexture(encodeURI(`${normalizedBase}/hd/Glossy Gothic Monte Carlo Logo.png`)),
-    loadLinearTexture(`${normalizedBase}/hd/menu/${HD_MENU_ART_FILES.f1}`),
-    loadLinearTexture(`${normalizedBase}/hd/menu/${HD_MENU_ART_FILES.f2}`),
-    loadLinearTexture(`${normalizedBase}/hd/menu/${HD_MENU_ART_FILES.f3}`),
-    loadLinearTexture(`${normalizedBase}/hd/menu/${HD_MENU_ART_FILES.f4}`),
-    loadLinearTexture(`${normalizedBase}/hd/menu/${HD_MENU_ART_FILES.f5}`),
-    loadLinearTexture(`${normalizedBase}/hd/menu/${HD_MENU_ART_FILES.keys}`),
+    loadOptionalLinearTexture(`${normalizedBase}/hd/intro_bg_hd.jpg`),
+    loadOptionalLinearTexture(`${normalizedBase}/hd/menu_bg_hd.jpg`),
+    loadOptionalLinearTexture(`${normalizedBase}/hd/table_bg_hd.jpg`),
+    loadOptionalLinearTexture(`${normalizedBase}/hd/banner_nine_hd.png`),
+    loadOptionalLinearTexture(`${normalizedBase}/hd/banner_club_hd.png`),
+    loadOptionalLinearTexture(encodeURI(`${normalizedBase}/hd/Glossy Gothic Monte Carlo Logo.png`)),
+    loadOptionalLinearTexture(`${normalizedBase}/hd/menu/${HD_MENU_ART_FILES.f1}`),
+    loadOptionalLinearTexture(`${normalizedBase}/hd/menu/${HD_MENU_ART_FILES.f2}`),
+    loadOptionalLinearTexture(`${normalizedBase}/hd/menu/${HD_MENU_ART_FILES.f3}`),
+    loadOptionalLinearTexture(`${normalizedBase}/hd/menu/${HD_MENU_ART_FILES.f4}`),
+    loadOptionalLinearTexture(`${normalizedBase}/hd/menu/${HD_MENU_ART_FILES.f5}`),
+    loadOptionalLinearTexture(`${normalizedBase}/hd/menu/${HD_MENU_ART_FILES.keys}`),
     loadNearestTexture(`${normalizedBase}/${manifest.sheets.ZR_NINE}`),
     loadNearestTexture(`${normalizedBase}/${manifest.sheets.TR_NINE}`),
     loadNearestTexture(`${normalizedBase}/${manifest.sheets.GR_NINE}`),
@@ -231,33 +294,14 @@ export async function loadGameAssets(basePath = `${import.meta.env.BASE_URL}asse
     }),
   );
 
-  const hdCourtEntries = await Promise.all(
-    HD_COURT_ART_ENTRIES.map(async ({ suit, rank }) => {
-      const key = cardKey({ suit, rank });
-      const img = await loadHtmlImage(`${normalizedBase}/hd/cards/s${suit}_${rank}.png`);
-      return [key, img] as const;
-    }),
-  );
-
-  const hdRivalEntries = await Promise.all(
-    HD_RIVAL_ART_ENTRIES.map(async ({ key, file }) => {
-      const img = await loadHtmlImage(`${normalizedBase}/hd/characters/${file}`);
-      return [key, img] as const;
-    }),
-  );
-
-  const [hdDealerEntries, hdTrumpeterArt, hdCandelabraArt] = await Promise.all([
-    Promise.all(
-      HD_DEALER_ART_ENTRIES.map(async ({ key, file }) => {
-        const img = await loadHtmlImage(`${normalizedBase}/hd/characters/${file}`);
-        return [key, img] as const;
-      }),
-    ),
-    loadHtmlImage(`${normalizedBase}/hd/characters/${HD_TRUMPETER_ART_FILE}`),
-    loadHtmlImage(`${normalizedBase}/hd/characters/${HD_CANDELABRA_ART_FILE}`),
+  // Start loading the lightweight Intro trumpeter & candelabra first alongside core assets,
+  // while the 25MB+ rival/dealer/court sprite sheets stream in the background via preloadHdAssetsInBackground().
+  const [hdTrumpeterArt, hdCandelabraArt] = await Promise.all([
+    loadOptionalHtmlImage(`${normalizedBase}/hd/characters/${HD_TRUMPETER_ART_FILE}`),
+    loadOptionalHtmlImage(`${normalizedBase}/hd/characters/${HD_CANDELABRA_ART_FILE}`),
   ]);
 
-  return {
+  const loadedAssets: LoadedAssets = {
     manifest,
     backgrounds: { ZF_NINE: zf, TF_NINE: tf, GF_NINE: gf },
     hdBackgrounds: { intro: hdIntro, menu: hdMenu, table: hdTable },
@@ -270,9 +314,9 @@ export async function loadGameAssets(basePath = `${import.meta.env.BASE_URL}asse
       f5: hdMenuF5,
       keys: hdMenuKeys,
     },
-    hdCourtArt: new Map(hdCourtEntries),
-    hdRivalArt: new Map(hdRivalEntries),
-    hdDealerArt: new Map(hdDealerEntries),
+    hdCourtArt: new Map(),
+    hdRivalArt: new Map(),
+    hdDealerArt: new Map(),
     hdTrumpeterArt,
     hdCandelabraArt,
     sheets: { ZR_NINE: zr, TR_NINE: tr, GR_NINE: gr, VR_NINE: vr },
@@ -282,4 +326,9 @@ export async function loadGameAssets(basePath = `${import.meta.env.BASE_URL}asse
     resBytes,
     cfgBytes,
   };
+
+  // Kick off background loading of HD rival, dealer, and court card sheets without blocking startup
+  void preloadHdAssetsInBackground(loadedAssets, normalizedBase);
+
+  return loadedAssets;
 }

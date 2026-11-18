@@ -900,6 +900,9 @@ export class ClubMenuScene implements Scene {
     if (this.inputBlocked) return;
 
     if (this.loginPhase !== 'idle') {
+      if (e.isComposing || e.keyCode === 229) {
+        return;
+      }
       if (e.key === 'Escape') {
         e.preventDefault();
         this.cancelLoginFlow();

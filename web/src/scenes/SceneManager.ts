@@ -167,6 +167,7 @@ export interface GameContext {
   signInPlayer(name: string, password: string): void;
   signOutPlayer(): void;
   getCurrentSceneId(): SceneId | null;
+  refreshActiveSceneGraphics(): void;
   goTo(scene: SceneId, fadeMs?: number): void;
   onStateChange?: () => void;
 }
@@ -453,6 +454,11 @@ export class SceneManager {
         this.ctx.onStateChange?.();
       },
       getCurrentSceneId: () => this.currentId,
+      refreshActiveSceneGraphics: () => {
+        const mode = this.ctx.stage.getGraphicsMode();
+        this.activeScene?.onGraphicsModeChanged?.(mode);
+        this.ctx.onStateChange?.();
+      },
       goTo: (scene, fadeMs = 220) => {
         this.transitionTo(scene, fadeMs);
       },

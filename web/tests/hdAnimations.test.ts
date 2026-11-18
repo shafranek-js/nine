@@ -146,5 +146,16 @@ describe('hdAnimations EGA-parity timelines', () => {
     const end = getHdLeftRivalPlayPhase(10, 6, 1.0);
     expect(end.stage).toBe('baseReleaseSettle');
     expect(end.frameIndex).toBe(31);
+
+    // Fan Tan 52 5-column shelf: rows 0..3 get distinct vertical reach offsets during 'pick'
+    const fanTanRow1 = getHdLeftRivalPlayPhase(5, 5, 0.35);
+    const fanTanRow2 = getHdLeftRivalPlayPhase(10, 5, 0.35);
+    const fanTanRow3 = getHdLeftRivalPlayPhase(15, 5, 0.35);
+    expect(fanTanRow1.rawRow).toBe(1);
+    expect(fanTanRow2.rawRow).toBe(2);
+    expect(fanTanRow3.rawRow).toBe(3);
+    expect(fanTanRow1.reachOffsetY).toBe(0);
+    expect(fanTanRow2.reachOffsetY).toBeGreaterThan(fanTanRow1.reachOffsetY);
+    expect(fanTanRow3.reachOffsetY).toBeGreaterThan(fanTanRow2.reachOffsetY);
   });
 });
