@@ -190,6 +190,7 @@ export class ClubMenuScene implements Scene {
     }
     this.renderLeaderboard();
     this.renderPromptInput();
+    this.updateNativeInputHitbox();
 
     // Restore in-progress F1 shuffle backdrop if user toggled mode mid-transition
     if (this.dealStage.step !== 'none' && this.dealStage.step !== 'done') {
@@ -676,6 +677,70 @@ export class ClubMenuScene implements Scene {
     this.renderHdButtons();
   }
 
+  private sanitizeProfileInput(raw: string): string {
+    let out = '';
+    for (const ch of raw) {
+      if (isEncodableProfileChar(ch)) {
+        out += ch;
+        if (out.length >= 8) break;
+      }
+    }
+    return out;
+  }
+
+  private updateNativeInputHitbox(): void {
+    if (!this.ctx) return;
+    if (this.inputBlocked || (this.dealStage.step !== 'none' && this.dealStage.step !== 'done')) {
+      this.ctx.input.setTextInputHitbox(null);
+      return;
+    }
+    const isEga = this.ctx.getGraphicsMode() === 'ega';
+    const virtualRect = isEga ? { x: 190, y: 226, w: 248, h: 16 } : { x: 170, y: 243, w: 298, h: 20 };
+    this.ctx.input.setTextInputHitbox({
+      virtualRect,
+      onFocusTap: () => {
+        if (this.loginPhase === 'idle') {
+          this.beginLoginFlow(false);
+        } else {
+          this.activateNativeTextInput();
+        }
+      },
+    });
+  }
+
+  private activateNativeTextInput(): void {
+    if (!this.ctx || this.loginPhase === 'idle') return;
+    this.updateNativeInputHitbox();
+    const isPassword = this.loginPhase === 'enteringPassword';
+    const currentVal = isPassword ? this.pendingPassword : this.pendingName;
+    this.ctx.input.openTextInput({
+      value: currentVal,
+      maxLength: 8,
+      isPassword,
+      onChange: (raw) => {
+        const clean = this.sanitizeProfileInput(raw);
+        if (clean !== raw) {
+          this.ctx?.input.syncTextInputValue(clean, this.loginPhase === 'enteringPassword');
+        }
+        if (this.loginPhase === 'enteringName') {
+          this.pendingName = clean;
+        } else if (this.loginPhase === 'enteringPassword') {
+          this.pendingPassword = clean;
+        }
+        this.renderPromptInput();
+      },
+      onAction: (action) => {
+        if (action === 'cancel') {
+          this.cancelLoginFlow();
+        } else if (this.loginPhase === 'enteringName') {
+          this.submitName();
+        } else if (this.loginPhase === 'enteringPassword') {
+          this.submitPassword();
+        }
+      },
+    });
+  }
+
   private beginLoginFlow(autoLaunchAfter: boolean): void {
     if (this.inputBlocked) return;
     this.loginPhase = 'enteringName';
@@ -685,6 +750,7 @@ export class ClubMenuScene implements Scene {
     this.autoLaunchAfterLogin = autoLaunchAfter;
     this.cursorBlinkMs = 0;
     this.renderPromptInput();
+    this.activateNativeTextInput();
   }
 
   private cancelLoginFlow(): void {
@@ -693,6 +759,7 @@ export class ClubMenuScene implements Scene {
     this.pendingPassword = '';
     this.existingPasswordToMatch = null;
     this.autoLaunchAfterLogin = false;
+    this.ctx?.input.closeTextInput();
     this.renderPromptInput();
   }
 
@@ -719,6 +786,7 @@ export class ClubMenuScene implements Scene {
     this.pendingPassword = '';
     this.cursorBlinkMs = 0;
     this.renderPromptInput();
+    this.activateNativeTextInput();
   }
 
   private submitPassword(): void {
@@ -736,6 +804,7 @@ export class ClubMenuScene implements Scene {
     const shouldLaunch = this.autoLaunchAfterLogin;
     this.loginPhase = 'idle';
     this.autoLaunchAfterLogin = false;
+    this.ctx.input.closeTextInput();
     this.renderPromptInput();
 
     if (shouldLaunch) {
@@ -750,6 +819,8 @@ export class ClubMenuScene implements Scene {
       return;
     }
     this.inputBlocked = true;
+    this.ctx.input.closeTextInput();
+    this.ctx.input.setTextInputHitbox(null);
     if (this.ctx.getGraphicsMode() === 'ega') {
       this.dealBackdropGfx.visible = true;
       this.f1HeadSpr.visible = true;
@@ -844,8 +915,10 @@ export class ClubMenuScene implements Scene {
         e.preventDefault();
         if (this.loginPhase === 'enteringName') {
           this.pendingName = this.pendingName.slice(0, -1);
+          this.ctx?.input.syncTextInputValue(this.pendingName, false);
         } else {
           this.pendingPassword = this.pendingPassword.slice(0, -1);
+          this.ctx?.input.syncTextInputValue(this.pendingPassword, true);
         }
         this.renderPromptInput();
         return;
@@ -854,8 +927,10 @@ export class ClubMenuScene implements Scene {
         e.preventDefault();
         if (this.loginPhase === 'enteringName' && this.pendingName.length < 8) {
           this.pendingName += e.key;
+          this.ctx?.input.syncTextInputValue(this.pendingName, false);
         } else if (this.loginPhase === 'enteringPassword' && this.pendingPassword.length < 8) {
           this.pendingPassword += e.key;
+          this.ctx?.input.syncTextInputValue(this.pendingPassword, true);
         }
         this.renderPromptInput();
       }
@@ -939,9 +1014,13 @@ export class ClubMenuScene implements Scene {
       }
     }
 
-    // Clicking the prompt area starts/focuses F4 login
+    // Clicking the prompt area starts/focuses F4 login (and re-opens Android soft keyboard if dismissed)
     if (pt.x >= 170 && pt.x <= 470 && pt.y >= 220 && pt.y <= 268) {
-      if (this.loginPhase === 'idle') this.beginLoginFlow(false);
+      if (this.loginPhase === 'idle') {
+        this.beginLoginFlow(false);
+      } else {
+        this.activateNativeTextInput();
+      }
       return;
     }
 
@@ -952,7 +1031,13 @@ export class ClubMenuScene implements Scene {
           if (btn.id === 1) this.triggerF1StartGame();
           else if (btn.id === 2) this.triggerF2ToggleSound();
           else if (btn.id === 3) this.triggerF3CycleTable();
-          else if (btn.id === 4) this.beginLoginFlow(false);
+          else if (btn.id === 4) {
+            if (this.loginPhase === 'idle') {
+              this.beginLoginFlow(false);
+            } else {
+              this.activateNativeTextInput();
+            }
+          }
           else if (btn.id === 5) this.triggerF5Exit();
           return;
         }
@@ -1073,6 +1158,8 @@ export class ClubMenuScene implements Scene {
   }
 
   unmount(): void {
+    this.ctx?.input.setTextInputHitbox(null);
+    this.ctx?.input.closeTextInput();
     this.unbindKey?.();
     this.unbindPtr?.();
     this.unbindMove?.();
