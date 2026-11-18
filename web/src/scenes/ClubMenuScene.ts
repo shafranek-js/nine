@@ -900,7 +900,7 @@ export class ClubMenuScene implements Scene {
     if (this.inputBlocked) return;
 
     if (this.loginPhase !== 'idle') {
-      if (e.isComposing || e.keyCode === 229) {
+      if (e.isComposing && e.key !== 'Enter') {
         return;
       }
       if (e.key === 'Escape') {
@@ -1031,12 +1031,26 @@ export class ClubMenuScene implements Scene {
     if (pt.y >= 288 && pt.y <= 349) {
       for (const btn of BUTTON_HITBOXES) {
         if (pt.x >= btn.x && pt.x <= btn.x + btn.w) {
-          if (btn.id === 1) this.triggerF1StartGame();
+          if (btn.id === 1) {
+            if (this.loginPhase === 'enteringName') {
+              this.autoLaunchAfterLogin = true;
+              this.submitName();
+            } else if (this.loginPhase === 'enteringPassword') {
+              this.autoLaunchAfterLogin = true;
+              this.submitPassword();
+            } else {
+              this.triggerF1StartGame();
+            }
+          }
           else if (btn.id === 2) this.triggerF2ToggleSound();
           else if (btn.id === 3) this.triggerF3CycleTable();
           else if (btn.id === 4) {
             if (this.loginPhase === 'idle') {
               this.beginLoginFlow(false);
+            } else if (this.loginPhase === 'enteringName' && this.pendingName.trim().length > 0) {
+              this.submitName();
+            } else if (this.loginPhase === 'enteringPassword') {
+              this.submitPassword();
             } else {
               this.activateNativeTextInput();
             }

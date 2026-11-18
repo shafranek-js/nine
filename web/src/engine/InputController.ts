@@ -26,9 +26,11 @@ export interface TextInputHitbox {
 
 export class InputController {
   private readonly canvas: HTMLCanvasElement;
+  private readonly hiddenForm: HTMLFormElement;
   private readonly hiddenInput: HTMLInputElement;
   private activeTextConfig: TextInputConfig | null = null;
   private activeHitbox: TextInputHitbox | null = null;
+  private imeComposing = false;
   private keyHandlers = new Set<KeyHandler>();
   private downHandlers = new Set<PointerHandler>();
   private moveHandlers = new Set<PointerHandler>();
@@ -36,14 +38,30 @@ export class InputController {
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
-    this.hiddenInput = this.createHiddenTextInput();
+    const { form, input } = this.createHiddenTextInput();
+    this.hiddenForm = form;
+    this.hiddenInput = input;
     window.addEventListener('keydown', this.handleKeyDown);
     window.addEventListener('pointerdown', this.handleWindowPointerDown, true);
     canvas.addEventListener('pointerdown', this.handlePointerDown);
     canvas.addEventListener('pointermove', this.handlePointerMove);
   }
 
-  private createHiddenTextInput(): HTMLInputElement {
+  private createHiddenTextInput(): { form: HTMLFormElement; input: HTMLInputElement } {
+    const form = document.createElement('form');
+    form.action = 'javascript:void(0)';
+    Object.assign(form.style, {
+      position: 'absolute',
+      left: '53%',
+      top: '70%',
+      width: '20%',
+      height: '5%',
+      margin: '0',
+      padding: '0',
+      pointerEvents: 'none',
+      zIndex: '10',
+    });
+
     const input = document.createElement('input');
     input.type = 'text';
     input.inputMode = 'text';
@@ -52,16 +70,12 @@ export class InputController {
     input.spellcheck = false;
     input.setAttribute('autocorrect', 'off');
     input.setAttribute('aria-label', 'Player name or password');
-    // Positioned over the prompt region inside the stage host, transparent so Android/iOS soft keyboards open reliably
+    // Positioned inside the form over the prompt region on stage, transparent so Android/iOS soft keyboards open reliably
     Object.assign(input.style, {
-      position: 'absolute',
-      left: '53%',
-      top: '70%',
-      width: '20%',
-      height: '5%',
+      width: '100%',
+      height: '100%',
       opacity: '0.001',
-      pointerEvents: 'none',
-      zIndex: '10',
+      pointerEvents: 'inherit',
       fontSize: '16px', // >= 16px prevents iOS/Android mobile viewport auto-zoom on focus
       border: 'none',
       outline: 'none',
@@ -72,8 +86,47 @@ export class InputController {
       caretColor: 'transparent',
     });
 
-    input.addEventListener('input', () => {
+    let lastSubmitMs = 0;
+    const triggerSubmit = (): void => {
       if (!this.activeTextConfig) return;
+      const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      if (now - lastSubmitMs < 60) return;
+      lastSubmitMs = now;
+      // Flush current input value before submitting in case Android IME committed text on action key press
+      const sliced = input.value.slice(0, this.activeTextConfig.maxLength);
+      this.activeTextConfig.onChange(sliced);
+      this.activeTextConfig.onAction('submit');
+    };
+
+    form.addEventListener('submit', (e: Event) => {
+      e.preventDefault();
+      e.stopPropagation();
+      triggerSubmit();
+    });
+
+    input.addEventListener('compositionstart', () => {
+      this.imeComposing = true;
+    });
+    input.addEventListener('compositionend', () => {
+      this.imeComposing = false;
+    });
+
+    input.addEventListener('beforeinput', (e: InputEvent) => {
+      if (!this.activeTextConfig) return;
+      if (e.inputType === 'insertLineBreak' || e.inputType === 'insertParagraph') {
+        e.preventDefault();
+        triggerSubmit();
+      }
+    });
+
+    input.addEventListener('input', (e: Event) => {
+      if (!this.activeTextConfig) return;
+      const ie = e as InputEvent;
+      if (ie.inputType === 'insertLineBreak' || ie.inputType === 'insertParagraph' || input.value.includes('\n')) {
+        input.value = input.value.replace(/[\r\n]+/g, '');
+        triggerSubmit();
+        return;
+      }
       const sliced = input.value.slice(0, this.activeTextConfig.maxLength);
       if (input.value !== sliced) {
         input.value = sliced;
@@ -83,14 +136,15 @@ export class InputController {
 
     input.addEventListener('keydown', (e: KeyboardEvent) => {
       if (!this.activeTextConfig) return;
-      if (e.isComposing || e.keyCode === 229) {
+      // Only block Enter when an actual multi-stage CJK composition is active and the key isn't explicitly 'Enter'
+      if (e.isComposing && this.imeComposing && e.key !== 'Enter') {
         e.stopPropagation();
         return;
       }
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' || e.keyCode === 13) {
         e.preventDefault();
         e.stopPropagation();
-        this.activeTextConfig.onAction('submit');
+        triggerSubmit();
         return;
       }
       if (e.key === 'Escape') {
@@ -116,9 +170,10 @@ export class InputController {
       }
     });
 
+    form.appendChild(input);
     const host = this.canvas.parentElement ?? document.body;
-    host.appendChild(input);
-    return input;
+    host.appendChild(form);
+    return { form, input };
   }
 
   /**
@@ -129,13 +184,13 @@ export class InputController {
     this.activeHitbox = hitbox;
     if (hitbox) {
       const r = hitbox.virtualRect;
-      this.hiddenInput.style.left = `${(r.x / SCREEN_WIDTH) * 100}%`;
-      this.hiddenInput.style.top = `${(r.y / SCREEN_HEIGHT) * 100}%`;
-      this.hiddenInput.style.width = `${(r.w / SCREEN_WIDTH) * 100}%`;
-      this.hiddenInput.style.height = `${(r.h / SCREEN_HEIGHT) * 100}%`;
-      this.hiddenInput.style.pointerEvents = 'auto';
+      this.hiddenForm.style.left = `${(r.x / SCREEN_WIDTH) * 100}%`;
+      this.hiddenForm.style.top = `${(r.y / SCREEN_HEIGHT) * 100}%`;
+      this.hiddenForm.style.width = `${(r.w / SCREEN_WIDTH) * 100}%`;
+      this.hiddenForm.style.height = `${(r.h / SCREEN_HEIGHT) * 100}%`;
+      this.hiddenForm.style.pointerEvents = 'auto';
     } else if (!this.activeTextConfig) {
-      this.hiddenInput.style.pointerEvents = 'none';
+      this.hiddenForm.style.pointerEvents = 'none';
     }
   }
 
@@ -148,7 +203,7 @@ export class InputController {
     this.hiddenInput.maxLength = config.maxLength;
     this.hiddenInput.enterKeyHint = config.isPassword ? 'done' : 'next';
     this.hiddenInput.value = config.value;
-    this.hiddenInput.style.pointerEvents = 'auto';
+    this.hiddenForm.style.pointerEvents = 'auto';
     try {
       this.hiddenInput.focus({ preventScroll: true });
       const len = this.hiddenInput.value.length;
@@ -181,7 +236,7 @@ export class InputController {
   closeTextInput(): void {
     this.activeTextConfig = null;
     this.hiddenInput.value = '';
-    this.hiddenInput.style.pointerEvents = this.activeHitbox ? 'auto' : 'none';
+    this.hiddenForm.style.pointerEvents = this.activeHitbox ? 'auto' : 'none';
     if (typeof document !== 'undefined' && document.activeElement === this.hiddenInput) {
       this.hiddenInput.blur();
       this.canvas.focus({ preventScroll: true });
@@ -262,7 +317,7 @@ export class InputController {
     window.removeEventListener('pointerdown', this.handleWindowPointerDown, true);
     this.canvas.removeEventListener('pointerdown', this.handlePointerDown);
     this.canvas.removeEventListener('pointermove', this.handlePointerMove);
-    this.hiddenInput.remove();
+    this.hiddenForm.remove();
     this.keyHandlers.clear();
     this.downHandlers.clear();
     this.moveHandlers.clear();
