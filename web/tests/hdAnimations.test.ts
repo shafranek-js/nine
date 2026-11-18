@@ -7,8 +7,10 @@ import {
   getHdDealerGlanceMode,
   getHdDealingStepState,
   getHdIntroTrumpetProgress,
+  getHdLeftRivalPlayPhase,
   HD_BOT_BROKE_SHAKE_DURATION_MS,
   HD_BOT_PURSE_COIN_RELEASE_MS,
+  HD_BOT_PURSE_REACH_MS,
   HD_BOT_PURSE_TOSS_TOTAL_MS,
   HD_DEAL_STEP_MS,
   HD_INTRO_DURATION_MS,
@@ -45,7 +47,7 @@ describe('hdAnimations EGA-parity timelines', () => {
     const leftOpen = getHdAnteIntroState(start.leftStartMs + HD_BOT_PURSE_COIN_RELEASE_MS);
     expect(leftOpen.leftMode).toBe('purseOpen');
 
-    const rightOpen = getHdAnteIntroState(start.rightStartMs + 250);
+    const rightOpen = getHdAnteIntroState(start.rightStartMs + HD_BOT_PURSE_REACH_MS + 60);
     expect(rightOpen.leftMode).toBe('idle');
     expect(rightOpen.rightMode).toBe('purseOpen');
 
@@ -67,19 +69,19 @@ describe('hdAnimations EGA-parity timelines', () => {
   });
 
   it('synchronizes card pickup before flight release for bot throws', () => {
-    const reach = getHdBotCardThrowState(0.15);
+    const reach = getHdBotCardThrowState(0.25);
     expect(reach.cardPickedFromStack).toBe(false);
     expect(reach.cardReleased).toBe(false);
     expect(reach.flyProgress).toBe(0);
 
-    const grab = getHdBotCardThrowState(0.35);
+    const grab = getHdBotCardThrowState(0.45);
     expect(grab.cardPickedFromStack).toBe(true);
     expect(grab.cardReleased).toBe(false);
 
-    const throwMid = getHdBotCardThrowState(0.72);
+    const throwMid = getHdBotCardThrowState(0.8);
     expect(throwMid.cardPickedFromStack).toBe(true);
     expect(throwMid.cardReleased).toBe(true);
-    expect(throwMid.flyProgress).toBeCloseTo((0.72 - 0.45) / 0.55, 4);
+    expect(throwMid.flyProgress).toBeCloseTo((0.8 - 0.6) / 0.4, 4);
   });
 
   it('deals 36 and 52 cards clockwise one-by-one with matching dealer direction', () => {
@@ -110,5 +112,39 @@ describe('hdAnimations EGA-parity timelines', () => {
     expect(getHdDealerGlanceMode(800)).toBe('idle');
     expect(getHdDealerGlanceMode(1200)).toBe('glanceRight');
     expect(getHdDealerGlanceMode(1800)).toBe('idle');
+  });
+
+  it('selects arm base sheet, 6 slot reaches, and release-to-settle phases for left rival', () => {
+    const waveLeft = getHdLeftRivalPlayPhase(1, 6, 0.14);
+    expect(waveLeft.arm).toBe('left');
+    expect(waveLeft.row).toBe(0);
+    expect(waveLeft.stage).toBe('basePrepWave');
+    expect(waveLeft.frameIndex).toBeLessThanOrEqual(5);
+
+    const pickNearCol2 = getHdLeftRivalPlayPhase(2, 6, 0.36);
+    expect(pickNearCol2.arm).toBe('left');
+    expect(pickNearCol2.row).toBe(0);
+    expect(pickNearCol2.stage).toBe('pick');
+    expect(pickNearCol2.frameIndex).toBe(2);
+
+    const pickFarCol4 = getHdLeftRivalPlayPhase(10, 6, 0.30);
+    expect(pickFarCol4.arm).toBe('right');
+    expect(pickFarCol4.row).toBe(1);
+    expect(pickFarCol4.stage).toBe('pick');
+    expect(pickFarCol4.frameIndex).toBe(4);
+
+    const lift = getHdLeftRivalPlayPhase(10, 6, 0.50);
+    expect(lift.arm).toBe('right');
+    expect(lift.stage).toBe('baseLiftThrow');
+    expect(lift.frameIndex).toBeGreaterThanOrEqual(11);
+    expect(lift.frameIndex).toBeLessThanOrEqual(15);
+
+    const release = getHdLeftRivalPlayPhase(10, 6, 0.60);
+    expect(release.stage).toBe('baseReleaseSettle');
+    expect(release.frameIndex).toBe(18);
+
+    const end = getHdLeftRivalPlayPhase(10, 6, 1.0);
+    expect(end.stage).toBe('baseReleaseSettle');
+    expect(end.frameIndex).toBe(31);
   });
 });

@@ -130,25 +130,25 @@ describe('egaAnimations', () => {
 
   it('reaches exact near/far row-column card slots and steps DOS prep -> wave -> pick -> aim -> throw -> settle', () => {
     const bank = makeMockBank();
-    expect(EGA_BOT_THROW_NEAR_MS).toBe(760);
-    expect(EGA_BOT_THROW_FAR_MS).toBe(840);
+    expect(EGA_BOT_THROW_NEAR_MS).toBe(1160);
+    expect(EGA_BOT_THROW_FAR_MS).toBe(1280);
 
-    // Near row outer-left slot 0 (seat 1, X=10, reach-left arm): 60ms prep, 100ms wave, 100ms pick, 160ms aim, 20ms+320ms throw+fly
-    const prepNear = getEgaBotCardThrowPose(bank, 1, 0, 6, 30 / 760);
-    const waveNear = getEgaBotCardThrowPose(bank, 1, 0, 6, 100 / 760);
-    const pickNear = getEgaBotCardThrowPose(bank, 1, 0, 6, 200 / 760);
+    // Near row outer-left slot 0 (seat 1, X=10, reach-left arm): 110ms prep, 150ms wave, 160ms pick, 220ms aim, 20ms+460ms throw+fly
+    const prepNear = getEgaBotCardThrowPose(bank, 1, 0, 6, 50 / 1160);
+    const waveNear = getEgaBotCardThrowPose(bank, 1, 0, 6, 180 / 1160);
+    const pickNear = getEgaBotCardThrowPose(bank, 1, 0, 6, 340 / 1160);
     expect(prepNear.overlayTex).toBe(bank.botArmReachLeft.prepTex);
     expect(prepNear.overlayX).toBe(10);
     expect(waveNear.overlayTex).toBe(bank.botArmReachLeft.waveTex);
     expect(pickNear.overlayTex).toBe(bank.botArmReachLeft.pickNearFrames[0]);
     expect(getEgaBotCardLaunchPos(1, 0, 6)).toEqual({ x: 64, y: 138 });
 
-    // Far row outer-right slot 11 (seat 1, col 5, row 1 -> X=33, 180ms far pick)
-    const pickFar = getEgaBotCardThrowPose(bank, 1, 11, 6, 250 / 840);
-    const aim = getEgaBotCardThrowPose(bank, 1, 11, 6, 420 / 840);
-    const thr = getEgaBotCardThrowPose(bank, 1, 11, 6, 600 / 840);
-    const settle = getEgaBotCardThrowPose(bank, 1, 11, 6, 760 / 840);
-    const idle = getEgaBotCardThrowPose(bank, 1, 11, 6, 830 / 840);
+    // Far row outer-right slot 11 (seat 1, col 5, row 1 -> X=33, 260ms far pick)
+    const pickFar = getEgaBotCardThrowPose(bank, 1, 11, 6, 380 / 1280);
+    const aim = getEgaBotCardThrowPose(bank, 1, 11, 6, 620 / 1280);
+    const thr = getEgaBotCardThrowPose(bank, 1, 11, 6, 860 / 1280);
+    const settle = getEgaBotCardThrowPose(bank, 1, 11, 6, 1080 / 1280);
+    const idle = getEgaBotCardThrowPose(bank, 1, 11, 6, 1260 / 1280);
 
     expect(pickFar.overlayTex).toBe(bank.botArmReachRight.pickFarFrames[2]);
     expect(pickFar.overlayX).toBe(33);
@@ -165,13 +165,13 @@ describe('egaAnimations', () => {
 
     expect(settle.overlayTex).toBe(bank.botArmReachRight.prepTex);
     expect(idle.overlayTex).toBeNull();
-    expect(idle.flyProgress).toBeCloseTo((830 - 520) / (840 - 520), 5);
+    expect(idle.flyProgress).toBeCloseTo((1260 - 760) / (1280 - 760), 5);
     expect(getEgaBotCardLaunchPos(1, 11, 6)).toEqual({ x: 102, y: 137 });
 
     // Right bot reaches X=522 for col <= 2, X=545 for col >= 3
-    expect(getEgaBotCardThrowPose(bank, 2, 7, 6, 250 / 840).overlayTex).toBe(bank.botArmReachLeft.pickFarFrames[1]);
-    expect(getEgaBotCardThrowPose(bank, 2, 7, 6, 250 / 840).overlayX).toBe(522);
-    expect(getEgaBotCardThrowPose(bank, 2, 5, 6, 200 / 760).overlayX).toBe(545);
+    expect(getEgaBotCardThrowPose(bank, 2, 7, 6, 380 / 1280).overlayTex).toBe(bank.botArmReachLeft.pickFarFrames[1]);
+    expect(getEgaBotCardThrowPose(bank, 2, 7, 6, 380 / 1280).overlayX).toBe(522);
+    expect(getEgaBotCardThrowPose(bank, 2, 5, 6, 340 / 1160).overlayX).toBe(545);
     expect(getEgaBotCardLaunchPos(2, 7, 6)).toEqual({ x: 509, y: 137 });
     expect(getEgaBotCardLaunchPos(2, 5, 6)).toEqual({ x: 544, y: 138 });
   });
@@ -206,19 +206,19 @@ describe('egaAnimations', () => {
     expect(humanMid.coverRestingElbow).toBe(true);
   });
 
-  it('plays DOS coin-purse toss (60ms/step), empty-purse broke shake (200ms/step), yawn, payout, and dealer glance', () => {
+  it('plays DOS coin-purse toss (single pull-and-toss pass), empty-purse broke shake (200ms/step), yawn, payout, and dealer glance', () => {
     const bank = makeMockBank();
-    expect(EGA_BOT_PURSE_COIN_RELEASE_MS).toBe(600);
-    expect(EGA_BOT_PURSE_TOSS_TOTAL_MS).toBe(1300);
+    expect(EGA_BOT_PURSE_COIN_RELEASE_MS).toBe(1380);
+    expect(EGA_BOT_PURSE_TOSS_TOTAL_MS).toBe(2500);
     expect(EGA_BOT_BROKE_SHAKE_DURATION_MS).toBe(4000);
 
     expect(getEgaBotPurseTossFrame(bank, 1, -10)).toBeNull();
     expect(getEgaBotPurseTossFrame(bank, 1, 0)).toBe(bank.botPurseReachFrames[0]);
     expect(getEgaBotPurseTossFrame(bank, 1, 180)).toBe(bank.botPurseOpenLeftFrames[0]);
-    expect(getEgaBotPurseTossFrame(bank, 1, 560)).toBe(bank.botPurseOpenLeftFrames[6]);
-    expect(getEgaBotPurseTossFrame(bank, 2, 560)).toBe(bank.botPurseOpenRightFrames[6]);
-    expect(getEgaBotPurseTossFrame(bank, 1, 1290)).toBe(bank.botPurseCloseFrames[2]);
-    expect(getEgaBotPurseTossFrame(bank, 1, 1300)).toBeNull();
+    expect(getEgaBotPurseTossFrame(bank, 1, 1300)).toBe(bank.botPurseOpenLeftFrames[6]);
+    expect(getEgaBotPurseTossFrame(bank, 2, 1300)).toBe(bank.botPurseOpenRightFrames[6]);
+    expect(getEgaBotPurseTossFrame(bank, 1, 2490)).toBe(bank.botPurseCloseFrames[2]);
+    expect(getEgaBotPurseTossFrame(bank, 1, 2500)).toBeNull();
 
     expect(getEgaBotBrokeShakeFrame(bank, 0)).toBe(bank.botPurseReachFrames[0]);
     expect(getEgaBotBrokeShakeFrame(bank, 1900)).toBe(bank.botPurseEmptyFrames[2]);

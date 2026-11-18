@@ -21,37 +21,42 @@ export const HD_COURT_ART_ENTRIES: readonly { suit: Suit; rank: Rank }[] = [
 ];
 
 export type HdRivalArtKey =
+  | 'left_idle_pose'
+  | 'left_blink_sheet'
   | 'left_body'
   | 'right_body'
   | 'left_hat'
   | 'right_hat'
   | 'left_impatient_sheet'
   | 'right_impatient_sheet'
+  | 'left_play_left_base_sheet'
+  | 'left_play_right_base_sheet'
+  | 'left_pick_near_sheet'
+  | 'left_pick_far_sheet'
   | 'left_play_sheet'
   | 'right_play_sheet'
-  // Future swappable 4x4 PNG sheets (currently rendered via temporary vector overlays in hdCharacters.ts):
   | 'left_purse_sheet'
   | 'right_purse_sheet'
   | 'left_broke_sheet'
   | 'right_broke_sheet'
   | 'left_yawn_sheet'
-  | 'right_yawn_sheet';
+  | 'right_yawn_sheet'
+  | 'left_win_sheet'
+  | 'left_lose_sheet';
 
 export const HD_RIVAL_ART_ENTRIES: readonly { key: HdRivalArtKey; file: string }[] = [
-  { key: 'left_body', file: 'rival_left_body.png' },
-  { key: 'right_body', file: 'rival_right_body.png' },
-  { key: 'left_hat', file: 'rival_left_hat.png' },
-  { key: 'right_hat', file: 'rival_right_hat.png' },
+  { key: 'left_idle_pose', file: 'rival_left_starting_pose.png' },
+  { key: 'left_blink_sheet', file: 'rival_left_blink_sheet.png' },
   { key: 'left_impatient_sheet', file: 'rival_left_impatient_sheet.png' },
-  { key: 'right_impatient_sheet', file: 'rival_right_impatient_sheet.png' },
-  { key: 'left_play_sheet', file: 'rival_left_play_sheet.png' },
-  { key: 'right_play_sheet', file: 'rival_right_play_sheet.png' },
+  { key: 'left_play_left_base_sheet', file: 'rival_left_play_left_base_sheet.png' },
+  { key: 'left_play_right_base_sheet', file: 'rival_left_play_right_base_sheet.png' },
+  { key: 'left_pick_near_sheet', file: 'rival_left_pick_near_sheet.png' },
+  { key: 'left_pick_far_sheet', file: 'rival_left_pick_far_sheet.png' },
   { key: 'left_purse_sheet', file: 'rival_left_purse_sheet.png' },
-  { key: 'right_purse_sheet', file: 'rival_right_purse_sheet.png' },
   { key: 'left_broke_sheet', file: 'rival_left_broke_sheet.png' },
-  { key: 'right_broke_sheet', file: 'rival_right_broke_sheet.png' },
   { key: 'left_yawn_sheet', file: 'rival_left_yawn_sheet.png' },
-  { key: 'right_yawn_sheet', file: 'rival_right_yawn_sheet.png' },
+  { key: 'left_win_sheet', file: 'rival_left_win_sheet.png' },
+  { key: 'left_lose_sheet', file: 'rival_left_lose_sheet.png' },
 ];
 
 export type HdDealerArtKey =

@@ -324,6 +324,7 @@ function getHdDealerSpotlightTexture(): Texture {
 }
 
 let cachedSoftTurnHaloTex: Texture | null = null;
+let cachedSoftRivalTurnHaloTex: Texture | null = null;
 
 function getHdSoftTurnHaloTexture(): Texture {
   if (cachedSoftTurnHaloTex) return cachedSoftTurnHaloTex;
@@ -345,6 +346,28 @@ function getHdSoftTurnHaloTexture(): Texture {
     ctx.restore();
   });
   return cachedSoftTurnHaloTex;
+}
+
+function getHdSoftRivalTurnHaloTexture(): Texture {
+  if (cachedSoftRivalTurnHaloTex) return cachedSoftRivalTurnHaloTex;
+  cachedSoftRivalTurnHaloTex = createHdTexture(116, 86, (ctx, w, h) => {
+    ctx.save();
+    ctx.translate(w * 0.5, h * 0.5);
+    ctx.scale(1, h / w);
+    const r = w * 0.5;
+    const g = ctx.createRadialGradient(0, 0, 0, 0, 0, r);
+    g.addColorStop(0.0, 'rgba(255, 224, 118, 0.56)');
+    g.addColorStop(0.28, 'rgba(255, 210, 96, 0.38)');
+    g.addColorStop(0.58, 'rgba(248, 186, 68, 0.14)');
+    g.addColorStop(0.84, 'rgba(240, 168, 48, 0.03)');
+    g.addColorStop(1.0, 'rgba(240, 168, 48, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  });
+  return cachedSoftRivalTurnHaloTex;
 }
 
 function getHdFeltTableTexture(aspectMode: AspectMode, variant: GameVariant): Texture {
@@ -1060,19 +1083,32 @@ export class GameTableScene implements Scene {
     tableBoard.position.set(bm.tableX, bm.tableY);
     this.bgLayer.addChild(tableBoard);
 
-    // Active turn spotlight halos
-    const leftHalo = new Graphics();
-    leftHalo
-      .ellipse(sl.leftCenterX, sl.haloY, sl.haloRx, sl.haloRy)
-      .fill({ color: 0xffe070, alpha: 0.16 })
-      .stroke({ color: 0xffd564, width: 1.3, alpha: 0.75 });
+    // Left & Right Rival Rigs (layered above rivalCardsLayer so reaching hands cleanly cover the card shelf)
+    const leftRival = createHdRival('left');
+    leftRival.container.scale.set(sl.rivalScale);
+    leftRival.container.position.set(sl.leftCenterX - 38 * sl.rivalScale, sl.rivalRigY);
+    this.hdLeftRival = leftRival;
+
+    const rightRival = createHdRival('right');
+    rightRival.container.scale.set(sl.rivalScale);
+    rightRival.container.position.set(sl.rightCenterX - 38 * sl.rivalScale, sl.rivalRigY);
+    this.hdRightRival = rightRival;
+
+    // Active turn soft radial spotlight halos (centered on each rival's nose and on the human player's cash)
+    const leftNosePos = leftRival.getNoseWorldPos?.() ?? { x: sl.leftCenterX, y: sl.haloY };
+    const leftHalo = new Sprite(getHdSoftRivalTurnHaloTexture());
+    leftHalo.anchor.set(0.5);
+    leftHalo.scale.set(sl.rivalScale);
+    leftHalo.position.set(leftNosePos.x, leftNosePos.y);
+    leftHalo.blendMode = 'add';
     leftHalo.visible = false;
 
-    const rightHalo = new Graphics();
-    rightHalo
-      .ellipse(sl.rightCenterX, sl.haloY, sl.haloRx, sl.haloRy)
-      .fill({ color: 0xffe070, alpha: 0.16 })
-      .stroke({ color: 0xffd564, width: 1.3, alpha: 0.75 });
+    const rightNosePos = rightRival.getNoseWorldPos?.() ?? { x: sl.rightCenterX, y: sl.haloY };
+    const rightHalo = new Sprite(getHdSoftRivalTurnHaloTexture());
+    rightHalo.anchor.set(0.5);
+    rightHalo.scale.set(sl.rivalScale);
+    rightHalo.position.set(rightNosePos.x, rightNosePos.y);
+    rightHalo.blendMode = 'add';
     rightHalo.visible = false;
 
     const humanHalo = new Sprite(getHdSoftTurnHaloTexture());
@@ -1083,19 +1119,6 @@ export class GameTableScene implements Scene {
 
     this.bgLayer.addChild(leftHalo, rightHalo, humanHalo);
     this.hdTurnHalos = { left: leftHalo, right: rightHalo, human: humanHalo };
-
-    // Left & Right Rival Rigs
-    const leftRival = createHdRival('left');
-    leftRival.container.scale.set(sl.rivalScale);
-    leftRival.container.position.set(sl.leftCenterX - 38 * sl.rivalScale, sl.rivalRigY);
-    this.bgLayer.addChild(leftRival.container);
-    this.hdLeftRival = leftRival;
-
-    const rightRival = createHdRival('right');
-    rightRival.container.scale.set(sl.rivalScale);
-    rightRival.container.position.set(sl.rightCenterX - 38 * sl.rivalScale, sl.rivalRigY);
-    this.bgLayer.addChild(rightRival.container);
-    this.hdRightRival = rightRival;
 
     const leftCash = createHdGoldLabel(`${this.match.cash[1]}$`, { anchorY: 0.5, textHeight: sl.oppCashTextH });
     leftCash.container.position.set(sl.leftCenterX, sl.oppCashY);
@@ -1116,6 +1139,8 @@ export class GameTableScene implements Scene {
     this.hudLayer.addChild(this.rightCashLayer);
     this.hudLayer.addChild(this.humanCashLayer);
     this.hudLayer.addChild(this.rivalCardsLayer);
+    this.hudLayer.addChild(leftRival.container);
+    this.hudLayer.addChild(rightRival.container);
     this.hudLayer.addChild(this.hdBannerLayer);
   }
 
@@ -1225,9 +1250,17 @@ export class GameTableScene implements Scene {
       const sl = this.getHdSeatLayout();
       const ante = getHdAnteIntroState(0);
       const hatPos = this.hdDealer?.getHatWorldPosition() ?? { x: 320, y: 42 };
+      const leftCoinStart = this.hdLeftRival?.getPurseLaunchWorldPos?.() ?? {
+        x: sl.leftCenterX + 28 * sl.rivalScale,
+        y: sl.rivalRigY + 24 * sl.rivalScale,
+      };
+      const rightCoinStart = this.hdRightRival?.getPurseLaunchWorldPos?.() ?? {
+        x: sl.rightCenterX - 24 * sl.rivalScale,
+        y: sl.rivalRigY + 26 * sl.rivalScale,
+      };
       this.spawnCoinFlight(
-        sl.leftCenterX,
-        sl.coinLeftY,
+        leftCoinStart.x,
+        leftCoinStart.y,
         hatPos.x - 4,
         hatPos.y,
         HD_BOT_PURSE_COIN_FLIGHT_MS,
@@ -1239,8 +1272,8 @@ export class GameTableScene implements Scene {
         },
       );
       this.spawnCoinFlight(
-        sl.rightCenterX,
-        sl.coinLeftY,
+        rightCoinStart.x,
+        rightCoinStart.y,
         hatPos.x + 4,
         hatPos.y,
         HD_BOT_PURSE_COIN_FLIGHT_MS,
@@ -1833,17 +1866,26 @@ export class GameTableScene implements Scene {
       return;
     }
 
+    const handLaunchPos =
+      isHd && (seat === 1 || seat === 2) && originX === undefined && originY === undefined
+        ? (seat === 1
+            ? this.hdLeftRival?.getPlayLaunchWorldPos?.()
+            : this.hdRightRival?.getPlayLaunchWorldPos?.()) ?? null
+        : null;
+    const hdStartX = handLaunchPos ? handLaunchPos.x - bm.cardW * 0.5 : startX;
+    const hdStartY = handLaunchPos ? handLaunchPos.y - bm.cardH * 0.5 : startY;
+
     let shadow: Graphics | null = null;
     if (isHd) {
       shadow = new Graphics();
       shadow.roundRect(3, 5, bm.cardW, bm.cardH, bm.cornerRadius).fill({ color: 0x000000, alpha: 0.34 });
-      shadow.position.set(startX, startY);
+      shadow.position.set(hdStartX, hdStartY);
       shadow.visible = !isBot;
       this.fxLayer.addChild(shadow);
     }
 
     const spr = new Sprite(miniTex);
-    spr.position.set(startX, startY);
+    spr.position.set(hdStartX, hdStartY);
     spr.visible = !isBot;
     this.fxLayer.addChild(spr);
 
@@ -1852,12 +1894,14 @@ export class GameTableScene implements Scene {
     this.flyingCard = {
       sprite: spr,
       shadow,
-      startX,
-      startY,
+      startX: hdStartX,
+      startY: hdStartY,
       endX,
       endY,
       elapsed: 0,
       durationMs: isBot ? (botRow >= 1 ? HD_BOT_THROW_FAR_MS : HD_BOT_THROW_NEAR_MS) : 380,
+      botSlotIdx: isBot ? botSlotIdx : undefined,
+      botCols: isBot ? rm.cols : undefined,
       hdBotSync: isHd && isBot,
       soundPlayed: !isBot,
       onLand: () => this.finishCardFlight(),
@@ -1931,10 +1975,20 @@ export class GameTableScene implements Scene {
       }
     } else if (!this.passingBroke) {
       const hatPos = this.hdDealer?.getHatWorldPosition() ?? { x: 320, y: 42 };
-      const startX = seat === 1 ? sl.leftCenterX : seat === 2 ? sl.rightCenterX : 316;
-      const startY = seat === 3 ? sl.coinHumanY : sl.coinLeftY;
+      const coinStart =
+        seat === 1
+          ? this.hdLeftRival?.getPurseLaunchWorldPos?.() ?? {
+              x: sl.leftCenterX + 28 * sl.rivalScale,
+              y: sl.rivalRigY + 24 * sl.rivalScale,
+            }
+          : seat === 2
+            ? this.hdRightRival?.getPurseLaunchWorldPos?.() ?? {
+                x: sl.rightCenterX - 24 * sl.rivalScale,
+                y: sl.rivalRigY + 26 * sl.rivalScale,
+              }
+            : { x: 316, y: sl.coinHumanY };
       const delayMs = seat === 3 ? 140 : 100 + HD_BOT_PURSE_COIN_RELEASE_MS;
-      this.spawnCoinFlight(startX, startY, hatPos.x, hatPos.y, 460, delayMs, () => {
+      this.spawnCoinFlight(coinStart.x, coinStart.y, hatPos.x, hatPos.y, HD_BOT_PURSE_COIN_FLIGHT_MS, delayMs, () => {
         this.ctx?.audio.sfx.coinHatClink();
       });
     }
@@ -2065,8 +2119,14 @@ export class GameTableScene implements Scene {
           );
         }
       } else {
-        const dstX = winner === 1 ? sl.leftCenterX : winner === 2 ? sl.rightCenterX : 316;
-        const dstY = winner === 3 ? sl.coinHumanY : sl.coinLeftY;
+        const winPursePos =
+          winner === 1
+            ? this.hdLeftRival?.getWinPurseCatchWorldPos?.()
+            : winner === 2
+              ? this.hdRightRival?.getWinPurseCatchWorldPos?.()
+              : null;
+        const dstX = winPursePos ? winPursePos.x : winner === 1 ? sl.leftCenterX : winner === 2 ? sl.rightCenterX : 316;
+        const dstY = winPursePos ? winPursePos.y : winner === 3 ? sl.coinHumanY : sl.coinLeftY;
         const hatPos = this.hdDealer?.getHatWorldPosition(winner) ?? { x: 320, y: 42 };
         this.spawnCoinFlight(hatPos.x - 4, hatPos.y, dstX, dstY, 520, 340);
         this.spawnCoinFlight(hatPos.x + 4, hatPos.y + 3, dstX + 4, dstY, 560, 480);
@@ -2819,7 +2879,7 @@ export class GameTableScene implements Scene {
             : getHdBotPurseTossMode(this.phaseTimerMs - 100);
         }
         if (this.phase === 'waitingTurn' && round && !round.roundOver) {
-          if (round.currentTurn === seat) return 'think';
+          if (round.currentTurn === seat) return this.egaBotThinkMode === 'tap' ? 'impatient' : 'think';
           if (round.currentTurn === 3 && this.humanWaitMs >= 3500) {
             const waitCycleIdx = Math.floor((this.humanWaitMs - 3500) / 4200);
             const waitCycleMs = (this.humanWaitMs - 3500) % 4200;
@@ -2836,8 +2896,20 @@ export class GameTableScene implements Scene {
         return 'idle';
       };
 
-      this.hdLeftRival.setState(resolveRivalMode(1), this.idleBlinkMs, lookTarget, dtMs);
-      this.hdRightRival.setState(resolveRivalMode(2), this.idleBlinkMs, lookTarget, dtMs);
+      const activeFlightProgress =
+        this.phase === 'movingCard' && this.flyingCard
+          ? Math.min(1, this.flyingCard.elapsed / Math.max(1, this.flyingCard.durationMs))
+          : 0;
+      const makePlayCtx = (seat: 1 | 2) =>
+        this.phase === 'movingCard' && this.flyingCard && this.activeFlightSeat === seat
+          ? {
+              slotIdx: this.flyingCard.botSlotIdx ?? 0,
+              cols: this.flyingCard.botCols ?? 6,
+              progress01: activeFlightProgress,
+            }
+          : null;
+      this.hdLeftRival.setState(resolveRivalMode(1), this.idleBlinkMs, lookTarget, dtMs, makePlayCtx(1));
+      this.hdRightRival.setState(resolveRivalMode(2), this.idleBlinkMs, lookTarget, dtMs, makePlayCtx(2));
     }
 
     this.phaseTimerMs += dtMs;
@@ -2973,7 +3045,7 @@ export class GameTableScene implements Scene {
         const endMs = isBotBroke
           ? HD_BOT_BROKE_SHAKE_DURATION_MS + 20
           : isBotNormal
-            ? 100 + HD_BOT_PURSE_TOSS_TOTAL_MS + 260
+            ? 100 + HD_BOT_PURSE_TOSS_TOTAL_MS + 40
             : 1100;
         const hatOpen = !this.passingBroke && this.phaseTimerMs >= 80 && this.phaseTimerMs < closeHatMs;
         this.hdDealer.setTableExpression(hatOpen ? 'hatCollect' : blinking ? 'blink' : 'idle', this.phaseTimerMs);
@@ -3033,7 +3105,7 @@ export class GameTableScene implements Scene {
           }
         }
 
-        const waitLimitMs = isHd ? 440 : this.egaBotThinkDurationMs;
+        const waitLimitMs = isHd ? (this.egaBotThinkMode === 'tap' ? 2100 : 680) : this.egaBotThinkDurationMs;
         if (this.phaseTimerMs >= waitLimitMs) {
           const botMove = selectBotMove(round, this.match.clubTable, this.rng);
           if (botMove) {

@@ -347,25 +347,25 @@ export function getEgaBotCardLaunchPos(seat: 1 | 2, slotIdx: number, cols: numbe
   return useRightArm ? { x: 544, y: 138 } : { x: 509, y: 137 };
 }
 
-/** Exact DOS `proc_037d(1 -> 2 -> 3)` & `proc_0b16` millisecond timings (`60ms`/purse step). */
+/** DOS `proc_037d(1 -> 2 -> 3)` & `proc_0b16` single-pass coin-purse timings (`180ms` reach, `1200ms` single coin pull, `520ms` flight, `600ms` close). */
 export const EGA_BOT_PURSE_REACH_MS = 180;
-export const EGA_BOT_PURSE_OPEN_MS = 420;
+export const EGA_BOT_PURSE_OPEN_MS = 1200;
 export const EGA_BOT_PURSE_COIN_RELEASE_MS = EGA_BOT_PURSE_REACH_MS + EGA_BOT_PURSE_OPEN_MS;
 export const EGA_BOT_PURSE_COIN_FLIGHT_MS = 520;
-export const EGA_BOT_PURSE_CLOSE_MS = 180;
+export const EGA_BOT_PURSE_CLOSE_MS = 600;
 export const EGA_BOT_PURSE_TOSS_TOTAL_MS =
   EGA_BOT_PURSE_COIN_RELEASE_MS + EGA_BOT_PURSE_COIN_FLIGHT_MS + EGA_BOT_PURSE_CLOSE_MS;
 
 /** Exact DOS `proc_05cb` durations: `15 × 200ms` empty-purse shake + `500ms` shrug + `500ms` settle. */
 export const EGA_BOT_BROKE_SHAKE_DURATION_MS = 4000;
 
-/** Exact DOS `proc_13d4` card-pick/throw total durations (pre-release `440/520ms` + `320ms` flight/settle). */
-export const EGA_BOT_THROW_NEAR_MS = 760;
-export const EGA_BOT_THROW_FAR_MS = 840;
+/** DOS-paced card-pick/throw durations including BIOS tick dwell, flight, and `300ms` post-land settle. */
+export const EGA_BOT_THROW_NEAR_MS = 1160;
+export const EGA_BOT_THROW_FAR_MS = 1280;
 
 /**
  * Evaluates original MS-DOS `NINE.EXE` `proc_13d4` (`CS:151A..1C1C`) card-pick and throw sequence
- * at exact DOS millisecond timing (`60ms` prep -> `100ms` wave -> `100ms`/`180ms` near/far pick -> `160ms` aim -> `20ms` release + flight/settle).
+ * paced for crisp 60fps legibility matching DOS hardware tick quantization + `MoveImageSmooth`.
  */
 export function getEgaBotCardThrowPose(
   bank: EgaSpriteBank,
@@ -383,13 +383,13 @@ export function getEgaBotCardThrowPose(
 
   const totalMs = row === 1 ? EGA_BOT_THROW_FAR_MS : EGA_BOT_THROW_NEAR_MS;
   const ms = u * totalMs;
-  const waveAt = 60;
-  const pickAt = 160;
-  const aimAt = row === 1 ? 340 : 260;
-  const releaseAt = aimAt + 160; // 420ms near / 500ms far -> launch after 20ms snap (440/520ms)
+  const waveAt = 110;
+  const pickAt = 260;
+  const aimAt = row === 1 ? 520 : 420;
+  const releaseAt = aimAt + 220; // 640ms near / 740ms far -> launch after 20ms snap (660/760ms)
   const launchAt = releaseAt + 20;
-  const settleAt = launchAt + 200;
-  const idleAt = totalMs - 20;
+  const settleAt = launchAt + 240;
+  const idleAt = totalMs - 40;
 
   let overlayTex: Texture | null = null;
   if (ms < waveAt) {
@@ -461,8 +461,8 @@ export function getEgaDealerDealPose(
 }
 
 /**
- * Original `GR_NINE` `(359/418, y, 58, 55)` red coin-purse sequence (`proc_037d(1 -> 2 -> 3)` at `(33/545, 101)`):
- * `3 × 60ms` reach -> `7 × 60ms` open & extract coin -> hold out while coin arcs -> `3 × 60ms` close & tuck away.
+ * DOS `proc_037d(1 -> 2 -> 3)` coin-purse animation (single clean coin extraction & toss):
+ * `3 × 60ms` reach -> `1200ms` open & extract coin once -> hold while coin arcs (`520ms`) -> `600ms` close & tuck away.
  */
 export function getEgaBotPurseTossFrame(
   bank: EgaSpriteBank,
@@ -478,9 +478,10 @@ export function getEgaBotPurseTossFrame(
     return bank.botPurseReachFrames[idx] ?? bank.botPurseReachFrames[0];
   }
   if (scaledMs < EGA_BOT_PURSE_COIN_RELEASE_MS) {
+    const openElapsed = scaledMs - EGA_BOT_PURSE_REACH_MS;
     const idx = Math.min(
       openFrames.length - 1,
-      Math.floor((scaledMs - EGA_BOT_PURSE_REACH_MS) / 60),
+      Math.floor((openElapsed / Math.max(1, EGA_BOT_PURSE_OPEN_MS)) * openFrames.length),
     );
     return openFrames[idx] ?? openFrames[openFrames.length - 1];
   }
@@ -488,9 +489,10 @@ export function getEgaBotPurseTossFrame(
   if (scaledMs < closeStartMs) {
     return openFrames[openFrames.length - 1] ?? null;
   }
+  const closeElapsed = scaledMs - closeStartMs;
   const closeIdx = Math.min(
     bank.botPurseCloseFrames.length - 1,
-    Math.floor((scaledMs - closeStartMs) / 60),
+    Math.floor((closeElapsed / Math.max(1, EGA_BOT_PURSE_CLOSE_MS)) * bank.botPurseCloseFrames.length),
   );
   return bank.botPurseCloseFrames[closeIdx] ?? bank.botPurseCloseFrames[0];
 }

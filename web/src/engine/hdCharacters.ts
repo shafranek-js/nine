@@ -1,5 +1,14 @@
 import { Container, Graphics, Rectangle, Sprite, Texture } from 'pixi.js';
 import { createHdTexture } from './hdCards';
+import {
+  getHdLeftRivalPlayPhase,
+  HD_BOT_PURSE_CLOSE_MS,
+  HD_BOT_PURSE_COIN_FLIGHT_MS,
+  HD_BOT_PURSE_COIN_RELEASE_MS,
+  HD_BOT_PURSE_OPEN_MS,
+  HD_BOT_PURSE_REACH_MS,
+  HD_BOT_PURSE_TOSS_TOTAL_MS,
+} from './hdAnimations';
 import { HD_RENDER_SCALE } from './StageApp';
 
 // 640x350 logical space displayed inside a 4:3 frame stretches Y relative to X by 48/35;
@@ -870,11 +879,13 @@ function isLoadedImage(img: HTMLImageElement | undefined): img is HTMLImageEleme
   return Boolean(img && img.complete && img.naturalWidth > 0);
 }
 
-function sliceSheet4x4(img: HTMLImageElement): { frames: Texture[]; cw: number; ch: number } {
+function sliceSheetGrid(
+  img: HTMLImageElement,
+  cols: number,
+  rows: number,
+): { frames: Texture[]; cw: number; ch: number } {
   const baseTex = Texture.from(img);
   baseTex.source.scaleMode = 'linear';
-  const cols = img.naturalWidth >= img.naturalHeight * 1.65 ? 8 : 4;
-  const rows = 4;
   const cw = Math.floor(img.naturalWidth / cols);
   const ch = Math.floor(img.naturalHeight / rows);
   const total = cols * rows;
@@ -885,6 +896,11 @@ function sliceSheet4x4(img: HTMLImageElement): { frames: Texture[]; cw: number; 
     frames.push(new Texture({ source: baseTex.source, frame: new Rectangle(col * cw, row * ch, cw, ch) }));
   }
   return { frames, cw, ch };
+}
+
+function sliceSheet4x4(img: HTMLImageElement): { frames: Texture[]; cw: number; ch: number } {
+  const cols = img.naturalWidth >= img.naturalHeight * 1.65 ? 8 : 4;
+  return sliceSheetGrid(img, cols, 4);
 }
 
 function createLinearEyelidTexture(topColor: string, midColor: string, botColor: string, rimColor: string): Texture {
@@ -1777,6 +1793,12 @@ function getRivalYawnMouthTexture(): Texture {
   });
 }
 
+export interface HdRivalPlayContext {
+  readonly slotIdx: number;
+  readonly cols: number;
+  readonly progress01: number;
+}
+
 export interface HdRivalController {
   readonly container: Container;
   setState(
@@ -1784,7 +1806,12 @@ export interface HdRivalController {
     elapsedMs: number,
     lookTarget?: { x: number; y: number } | null,
     dtMs?: number,
+    playContext?: HdRivalPlayContext | null,
   ): void;
+  getPlayLaunchWorldPos?(): { x: number; y: number } | null;
+  getPurseLaunchWorldPos?(): { x: number; y: number } | null;
+  getWinPurseCatchWorldPos?(): { x: number; y: number } | null;
+  getNoseWorldPos?(): { x: number; y: number };
 }
 
 let hdRivalArtMap: Map<string, HTMLImageElement> = new Map();
@@ -1803,15 +1830,23 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   const anchorScreenX = isLeft ? 57 : 569;
   const anchorScreenY = 122;
 
-  const bodyImg = hdRivalArtMap.get(`${side}_body`) ?? hdRivalArtMap.get(side);
+  const idlePoseImg = hdRivalArtMap.get(`${side}_idle_pose`) ?? hdRivalArtMap.get('left_idle_pose');
+  const blinkSheetImg = hdRivalArtMap.get(`${side}_blink_sheet`) ?? hdRivalArtMap.get('left_blink_sheet');
+  const rawBodyImg = hdRivalArtMap.get(`${side}_body`) ?? hdRivalArtMap.get(side);
+  const useUnifiedIdle = isLoadedImage(idlePoseImg);
+  const bodyImg = useUnifiedIdle ? idlePoseImg : rawBodyImg;
   const hatImg = hdRivalArtMap.get(`${side}_hat`);
-  const impatientSheetImg = hdRivalArtMap.get(`${side}_impatient_sheet`);
+  const impatientSheetImg =
+    hdRivalArtMap.get(`${side}_impatient_sheet`) ?? hdRivalArtMap.get('left_impatient_sheet');
   const playSheetImg = hdRivalArtMap.get(`${side}_play_sheet`);
-  const purseSheetImg = hdRivalArtMap.get(`${side}_purse_sheet`);
-  const brokeSheetImg = hdRivalArtMap.get(`${side}_broke_sheet`);
-  const yawnSheetImg = hdRivalArtMap.get(`${side}_yawn_sheet`);
+  const purseSheetImg = hdRivalArtMap.get(`${side}_purse_sheet`) ?? hdRivalArtMap.get('left_purse_sheet');
+  const brokeSheetImg = hdRivalArtMap.get(`${side}_broke_sheet`) ?? hdRivalArtMap.get('left_broke_sheet');
+  const yawnSheetImg = hdRivalArtMap.get(`${side}_yawn_sheet`) ?? hdRivalArtMap.get('left_yawn_sheet');
+  const winSheetImg = hdRivalArtMap.get(`${side}_win_sheet`) ?? hdRivalArtMap.get('left_win_sheet');
+  const loseSheetImg = hdRivalArtMap.get(`${side}_lose_sheet`) ?? hdRivalArtMap.get('left_lose_sheet');
+  const mirrorX = useUnifiedIdle ? dir : 1;
   const hasCustomBody = Boolean(bodyImg && bodyImg.complete && bodyImg.naturalWidth > 0);
-  const hasCustomHat = Boolean(hatImg && hatImg.complete && hatImg.naturalWidth > 0);
+  const hasCustomHat = Boolean(!useUnifiedIdle && hatImg && hatImg.complete && hatImg.naturalWidth > 0);
   const hasImpatientSheet = Boolean(impatientSheetImg && impatientSheetImg.complete && impatientSheetImg.naturalWidth > 0);
   const hasPlaySheet = Boolean(playSheetImg && playSheetImg.complete && playSheetImg.naturalWidth > 0);
 
@@ -1865,7 +1900,7 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   const bodyPivot = new Container();
   bodyPivot.position.set(0, 0);
 
-  const bodyW = hasCustomBody && bodyImg ? 64 : 80;
+  const bodyW = useUnifiedIdle ? (255 * 64) / 258 : hasCustomBody && bodyImg ? 64 : 80;
   const bodyH = hasCustomBody && bodyImg ? bodyW * (bodyImg.naturalHeight / bodyImg.naturalWidth) : 52;
 
   const torsoTex =
@@ -1993,14 +2028,15 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   }
   const torsoSpr = new Sprite(torsoTex);
   torsoSpr.anchor.set(0.5, 1);
-  torsoSpr.position.set(0, 2);
+  torsoSpr.position.set(0, useUnifiedIdle ? 1.5 : 2);
   if (hasCustomBody) {
     torsoSpr.width = bodyW;
     torsoSpr.height = bodyH;
+    torsoSpr.scale.x *= mirrorX;
   }
   bodyPivot.addChild(torsoSpr);
 
-  // Expressive Eye & Brow Rig (tracks flying cards/players, blinks & squints inside illustrated sclera)
+  // Expressive Eye & Brow Rig (only when separate hatless body or procedural art is active)
   const faceRig = new Container();
   faceRig.position.set(0, hasCustomBody ? 0 : -24);
   bodyPivot.addChild(faceRig);
@@ -2017,64 +2053,66 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   const eyelidTops: Graphics[] = [];
   const brows: Graphics[] = [];
 
-  const customLidTex = hasCustomBody
-    ? createLinearEyelidTexture('#c80396', '#e80ab4', '#9e0174', '#140318')
-    : null;
+  if (!useUnifiedIdle) {
+    const customLidTex = hasCustomBody
+      ? createLinearEyelidTexture('#c80396', '#e80ab4', '#9e0174', '#140318')
+      : null;
 
-  const scleraTex = createHdTexture(10, 10, (ctx) => {
-    ctx.fillStyle = '#ffffff';
-    ctx.strokeStyle = '#16061b';
-    ctx.lineWidth = 0.9;
-    ctx.beginPath();
-    ctx.ellipse(5, 5, 3.2, 3.5, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-  });
+    const scleraTex = createHdTexture(10, 10, (ctx) => {
+      ctx.fillStyle = '#ffffff';
+      ctx.strokeStyle = '#16061b';
+      ctx.lineWidth = 0.9;
+      ctx.beginPath();
+      ctx.ellipse(5, 5, 3.2, 3.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    });
 
-  const pupilTex = createGlossyPupilTexture(hasCustomBody ? 2.15 : 1.55);
+    const pupilTex = createGlossyPupilTexture(hasCustomBody ? 2.15 : 1.55);
 
-  for (let i = 0; i < 2; i++) {
-    const eyeC = new Container();
-    const rx = hasCustomBody ? customEyes[i].rx : eyeRadiusX;
-    const ry = hasCustomBody ? customEyes[i].ry : eyeRadiusY;
+    for (let i = 0; i < 2; i++) {
+      const eyeC = new Container();
+      const rx = hasCustomBody ? customEyes[i].rx : eyeRadiusX;
+      const ry = hasCustomBody ? customEyes[i].ry : eyeRadiusY;
 
-    if (hasCustomBody) {
-      eyeC.position.set(customEyes[i].x, customEyes[i].y);
-      const maskGfx = new Graphics().ellipse(0, 0, rx * 0.96, ry * 0.92).fill(0xffffff);
-      eyeC.addChild(maskGfx);
-      eyeC.mask = maskGfx;
-    } else {
-      eyeC.position.set(eyeOffsets[i] + dir * 0.5, 0);
-      const scleraSpr = new Sprite(scleraTex);
-      scleraSpr.anchor.set(0.5);
-      eyeC.addChild(scleraSpr);
+      if (hasCustomBody) {
+        eyeC.position.set(customEyes[i].x, customEyes[i].y);
+        const maskGfx = new Graphics().ellipse(0, 0, rx * 0.96, ry * 0.92).fill(0xffffff);
+        eyeC.addChild(maskGfx);
+        eyeC.mask = maskGfx;
+      } else {
+        eyeC.position.set(eyeOffsets[i] + dir * 0.5, 0);
+        const scleraSpr = new Sprite(scleraTex);
+        scleraSpr.anchor.set(0.5);
+        eyeC.addChild(scleraSpr);
+      }
+
+      const pupilSpr = new Sprite(pupilTex);
+      pupilSpr.anchor.set(0.5);
+      eyeC.addChild(pupilSpr);
+      pupils.push(pupilSpr);
+
+      if (hasCustomBody && customLidTex) {
+        const lidSpr = new Sprite(customLidTex);
+        lidSpr.anchor.set(0.5, 0);
+        lidSpr.width = rx * 2.2;
+        lidSpr.height = ry * 2.2;
+        lidSpr.position.set(0, -ry * 2.2);
+        eyeC.addChild(lidSpr);
+        eyelidSprites.push(lidSpr);
+      } else {
+        const lid = new Graphics();
+        eyeC.addChild(lid);
+        eyelidTops.push(lid);
+
+        const brow = new Graphics();
+        brow.moveTo(-3.2, -4.6).quadraticCurveTo(0, -5.8, 3.2, -4.4).stroke({ color: '#1a0621', width: 1.1 });
+        eyeC.addChild(brow);
+        brows.push(brow);
+      }
+
+      faceRig.addChild(eyeC);
     }
-
-    const pupilSpr = new Sprite(pupilTex);
-    pupilSpr.anchor.set(0.5);
-    eyeC.addChild(pupilSpr);
-    pupils.push(pupilSpr);
-
-    if (hasCustomBody && customLidTex) {
-      const lidSpr = new Sprite(customLidTex);
-      lidSpr.anchor.set(0.5, 0);
-      lidSpr.width = rx * 2.2;
-      lidSpr.height = ry * 2.2;
-      lidSpr.position.set(0, -ry * 2.2);
-      eyeC.addChild(lidSpr);
-      eyelidSprites.push(lidSpr);
-    } else {
-      const lid = new Graphics();
-      eyeC.addChild(lid);
-      eyelidTops.push(lid);
-
-      const brow = new Graphics();
-      brow.moveTo(-3.2, -4.6).quadraticCurveTo(0, -5.8, 3.2, -4.4).stroke({ color: '#1a0621', width: 1.1 });
-      eyeC.addChild(brow);
-      brows.push(brow);
-    }
-
-    faceRig.addChild(eyeC);
   }
 
   // Procedural monocle only when falling back to procedural torso
@@ -2132,6 +2170,7 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
     hatSpr.height = hatW * (hatImg.naturalHeight / hatImg.naturalWidth);
   }
   hatPivot.addChild(hatSpr);
+  hatPivot.visible = !useUnifiedIdle;
   bodyPivot.addChild(hatPivot);
 
   // Procedural arms & drumming fingers only used when falling back without custom illustrated rival sprites
@@ -2222,31 +2261,60 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
     const sliced = sliceSheet4x4(impatientSheetImg);
     impatientFrames.push(...sliced.frames);
     impatientSpr = new Sprite(impatientFrames[0]);
-    const scaleToIdle = isLeft ? 64 / 258 : 64 / 241;
+    const scaleToIdle = useUnifiedIdle || isLeft ? 64 / 258 : 64 / 241;
     impatientSpr.width = sliced.cw * scaleToIdle;
     impatientSpr.height = sliced.ch * scaleToIdle;
-    impatientSpr.anchor.set(isLeft ? 0.5034 : 0.5375, isLeft ? 0.9824 : 0.996);
+    impatientSpr.scale.x *= mirrorX;
+    impatientSpr.anchor.set(useUnifiedIdle || isLeft ? 0.5 : 0.5375, useUnifiedIdle || isLeft ? 306 / 310 : 0.996);
     impatientSpr.position.set(0, 1.5);
     impatientSpr.visible = false;
     aspectRig.addChild(impatientSpr);
   }
 
-  const loadOptionalRivalSheet = (img: HTMLImageElement | undefined): { frames: Texture[]; spr: Sprite } | null => {
+  const loadOptionalRivalSheet = (
+    img: HTMLImageElement | undefined,
+    anchorY = 0.985,
+    cols?: number,
+    rows = 4,
+    anchorX?: number,
+  ): { frames: Texture[]; spr: Sprite } | null => {
     if (!isLoadedImage(img)) return null;
-    const sliced = sliceSheet4x4(img);
+    const sliced = cols !== undefined ? sliceSheetGrid(img, cols, rows) : sliceSheet4x4(img);
     const spr = new Sprite(sliced.frames[0]);
-    const scaleToIdle = isLeft ? 64 / 258 : 64 / 241;
+    const scaleToIdle = useUnifiedIdle || isLeft ? 64 / 258 : 64 / 241;
     spr.width = sliced.cw * scaleToIdle;
     spr.height = sliced.ch * scaleToIdle;
-    spr.anchor.set(isLeft ? 0.5 : 0.54, 0.985);
+    spr.scale.x *= mirrorX;
+    spr.anchor.set(anchorX ?? (useUnifiedIdle || isLeft ? 0.5 : 0.54), anchorY);
     spr.position.set(0, 1.5);
     spr.visible = false;
     aspectRig.addChild(spr);
     return { frames: sliced.frames, spr };
   };
-  const purseSheetArt = loadOptionalRivalSheet(purseSheetImg);
-  const brokeSheetArt = loadOptionalRivalSheet(brokeSheetImg);
-  const yawnSheetArt = loadOptionalRivalSheet(yawnSheetImg);
+  const unifiedSheetAnchorY = 306 / 310;
+  const blinkSheetArt = loadOptionalRivalSheet(blinkSheetImg, unifiedSheetAnchorY);
+  const purseSheetArt = loadOptionalRivalSheet(purseSheetImg, unifiedSheetAnchorY);
+  const brokeSheetArt = loadOptionalRivalSheet(brokeSheetImg, unifiedSheetAnchorY);
+  const yawnSheetArt = loadOptionalRivalSheet(yawnSheetImg, unifiedSheetAnchorY);
+  const winSheetArt = loadOptionalRivalSheet(winSheetImg, unifiedSheetAnchorY);
+  const loseSheetArt = loadOptionalRivalSheet(loseSheetImg, unifiedSheetAnchorY);
+  const leftPlayBaseLeft = loadOptionalRivalSheet(
+    hdRivalArtMap.get('left_play_left_base_sheet'),
+    305 / 360,
+    8,
+    4,
+    0.5,
+  );
+  const leftPlayBaseRight = loadOptionalRivalSheet(
+    hdRivalArtMap.get('left_play_right_base_sheet'),
+    305 / 360,
+    8,
+    4,
+    0.5,
+  );
+  const leftPickNear = loadOptionalRivalSheet(hdRivalArtMap.get('left_pick_near_sheet'), 305 / 360, 3, 2, 0.5);
+  const leftPickFar = loadOptionalRivalSheet(hdRivalArtMap.get('left_pick_far_sheet'), 305 / 400, 3, 2, 0.5);
+  const hasUnifiedLeftPlay = Boolean(leftPlayBaseLeft && leftPlayBaseRight && leftPickNear && leftPickFar);
 
   // Temporary vector action props layered on bodyPivot so both custom raster bodies & procedural bodies animate all EGA actions.
   const propOverlay = new Container();
@@ -2288,9 +2356,16 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
     yawnMouthSpr.scale.set(1, 1);
   };
   const hideOptionalActionSheets = (): void => {
+    if (blinkSheetArt) blinkSheetArt.spr.visible = false;
     if (purseSheetArt) purseSheetArt.spr.visible = false;
     if (brokeSheetArt) brokeSheetArt.spr.visible = false;
     if (yawnSheetArt) yawnSheetArt.spr.visible = false;
+    if (winSheetArt) winSheetArt.spr.visible = false;
+    if (loseSheetArt) loseSheetArt.spr.visible = false;
+    if (leftPlayBaseLeft) leftPlayBaseLeft.spr.visible = false;
+    if (leftPlayBaseRight) leftPlayBaseRight.spr.visible = false;
+    if (leftPickNear) leftPickNear.spr.visible = false;
+    if (leftPickFar) leftPickFar.spr.visible = false;
   };
 
   // Smooth spring state for 60fps interpolation
@@ -2305,29 +2380,71 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
   let curPlayReach = 0;
   let impatientTimerMs = 0;
   let playTimerMs = 0;
+  let lastPlayProgress = 0;
+  let lastPlayArm: 'left' | 'right' = 'left';
+  let rivalBlinkTimeMs = -1;
+  let brokeShrugTimerMs = -1;
 
   let actionSheetTimerMs = 0;
-  let lastActionGroup: 'none' | 'play' | 'purse' | 'broke' | 'yawn' | 'impatient' = 'none';
+  let lastActionGroup: 'none' | 'play' | 'purse' | 'broke' | 'yawn' | 'impatient' | 'win' | 'lose' = 'none';
   let rivalOutroMs = -1;
+
+  const aspectRelToWorld = (relPxX: number, relPxY: number): { x: number; y: number } => {
+    const scaleToIdle = useUnifiedIdle || isLeft ? 64 / 258 : 64 / 241;
+    const ax = relPxX * mirrorX * scaleToIdle;
+    const ay = 1.5 + relPxY * scaleToIdle;
+    return {
+      x: container.position.x + (aspectRig.position.x + ax * aspectRig.scale.x) * container.scale.x,
+      y: container.position.y + (aspectRig.position.y + ay * aspectRig.scale.y) * container.scale.y,
+    };
+  };
 
   return {
     container,
-    setState(mode, elapsedMs, lookTarget, dtMs = 16.6) {
+    getPlayLaunchWorldPos() {
+      if (!hasUnifiedLeftPlay) return null;
+      // Throwing hand release center measured in f16 (+24, -65.5 px from 180,305 anchor; mirrored automatically by mirrorX)
+      return aspectRelToWorld(24, -65.5);
+    },
+    getPurseLaunchWorldPos() {
+      if (!purseSheetArt) return null;
+      // Open upturned coin-tossing palm measured in f15 (+126, -98 px from 180,306 anchor; mirrored automatically by mirrorX)
+      return aspectRelToWorld(126, -98);
+    },
+    getWinPurseCatchWorldPos() {
+      if (!winSheetArt) return null;
+      // Wide-open crimson coin purse mouth held centered in front of chest in f12..f19 (0, -45 px from 180,306 anchor)
+      return aspectRelToWorld(0, -45);
+    },
+    getNoseWorldPos() {
+      // Button nose center measured in starting pose / blink cell 0 (0, -124 px from 180,306 anchor)
+      return aspectRelToWorld(0, -124);
+    },
+    setState(mode, elapsedMs, lookTarget, dtMs = 16.6, playContext = null) {
+      const isWinMode = mode === 'winRound' || (Boolean(winSheetArt) && mode === 'purseReceive');
+      const isLoseMode = mode === 'loseRound' && Boolean(loseSheetArt);
       const isPurseMode =
-        mode === 'purseReach' || mode === 'purseOpen' || mode === 'purseClose' || mode === 'purseReceive';
+        mode === 'purseReach' ||
+        mode === 'purseOpen' ||
+        mode === 'purseClose' ||
+        (mode === 'purseReceive' && !winSheetArt);
       const isBrokeMode = mode === 'brokeShake' || mode === 'brokeShrug';
       const targetGroup: typeof lastActionGroup =
         mode === 'play'
           ? 'play'
-          : isPurseMode
-            ? 'purse'
-            : isBrokeMode
-              ? 'broke'
-              : mode === 'yawn'
-                ? 'yawn'
-                : mode === 'impatient'
-                  ? 'impatient'
-                  : 'none';
+          : isWinMode
+            ? 'win'
+            : isLoseMode
+              ? 'lose'
+              : isPurseMode
+                ? 'purse'
+                : isBrokeMode
+                  ? 'broke'
+                  : mode === 'yawn'
+                    ? 'yawn'
+                    : mode === 'impatient'
+                      ? 'impatient'
+                      : 'none';
 
       if (targetGroup !== 'none') {
         if (lastActionGroup !== targetGroup) {
@@ -2349,18 +2466,95 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
         }
       }
 
-      const activeGroup = lastActionGroup;
+      const finishedUnifiedPlay =
+        hasUnifiedLeftPlay && lastActionGroup === 'play' && rivalOutroMs >= 0 && lastPlayProgress >= 0.85;
+      const finishedUnifiedPurse =
+        purseSheetArt &&
+        lastActionGroup === 'purse' &&
+        rivalOutroMs >= 0 &&
+        actionSheetTimerMs >= HD_BOT_PURSE_TOSS_TOTAL_MS * 0.85;
+      const finishedUnifiedYawn =
+        yawnSheetArt && lastActionGroup === 'yawn' && rivalOutroMs >= 0 && actionSheetTimerMs >= 2050 * 0.85;
+      const finishedUnifiedImpatient =
+        impatientSpr && lastActionGroup === 'impatient' && rivalOutroMs >= 0 && actionSheetTimerMs >= 2100 * 0.85;
+      const finishedUnifiedWin =
+        winSheetArt && lastActionGroup === 'win' && rivalOutroMs >= 0 && actionSheetTimerMs >= 2100 * 0.85;
+      const finishedUnifiedLose =
+        loseSheetArt && lastActionGroup === 'lose' && rivalOutroMs >= 0 && actionSheetTimerMs >= 2100 * 0.85;
+      const activeGroup =
+        finishedUnifiedPlay ||
+        finishedUnifiedPurse ||
+        finishedUnifiedYawn ||
+        finishedUnifiedImpatient ||
+        finishedUnifiedWin ||
+        finishedUnifiedLose
+          ? 'none'
+          : lastActionGroup;
+      if (
+        activeGroup === 'none' &&
+        (finishedUnifiedPlay ||
+          finishedUnifiedPurse ||
+          finishedUnifiedYawn ||
+          finishedUnifiedImpatient ||
+          finishedUnifiedWin ||
+          finishedUnifiedLose)
+      ) {
+        lastActionGroup = 'none';
+        rivalOutroMs = -1;
+      }
       hideVectorProps();
       hideOptionalActionSheets();
+      if (activeGroup !== 'none') {
+        rivalBlinkTimeMs = -1;
+      }
+
+      if (hasUnifiedLeftPlay && leftPlayBaseLeft && leftPlayBaseRight && leftPickNear && leftPickFar && activeGroup === 'play') {
+        playTimerMs += dtMs;
+        const progress =
+          rivalOutroMs >= 0
+            ? Math.min(1, 0.85 + (rivalOutroMs / 260) * 0.15)
+            : playContext
+              ? Math.max(0, Math.min(1, playContext.progress01))
+              : Math.min(1, playTimerMs / 760);
+        lastPlayProgress = progress;
+        const rawSlotIdx = playContext?.slotIdx ?? 0;
+        const cols = playContext?.cols ?? 6;
+        // For the mirrored right rival, column 0 (leftmost on his rack, closest to table center) corresponds to column cols-1 on the left rival's rack
+        const slotRow = Math.floor(rawSlotIdx / cols);
+        const slotCol = rawSlotIdx % cols;
+        const effectiveSlotIdx = isLeft ? rawSlotIdx : slotRow * cols + (cols - 1 - slotCol);
+        const phase = getHdLeftRivalPlayPhase(effectiveSlotIdx, cols, progress);
+        if (rivalOutroMs < 0) {
+          lastPlayArm = phase.arm;
+        }
+        const activeBase = (rivalOutroMs >= 0 ? lastPlayArm : phase.arm) === 'right' ? leftPlayBaseRight : leftPlayBaseLeft;
+        const sheet =
+          phase.stage === 'pick' && rivalOutroMs < 0
+            ? phase.row === 1
+              ? leftPickFar
+              : leftPickNear
+            : activeBase;
+        const idx = Math.max(0, Math.min(sheet.frames.length - 1, phase.frameIndex));
+        sheet.spr.texture = sheet.frames[idx];
+        sheet.spr.visible = true;
+        if (playSpr) playSpr.visible = false;
+        if (impatientSpr) impatientSpr.visible = false;
+        bodyPivot.visible = false;
+        if (innerArmRig) innerArmRig.visible = false;
+        impatientTimerMs = 0;
+        return;
+      }
 
       if (playSpr && playFrames.length >= 16 && activeGroup === 'play') {
         playTimerMs += dtMs;
         const n = playFrames.length;
-        const stepMs = n >= 32 ? 26 : 52;
+        const stepMs = n >= 32 ? 46 : 92;
         const idx =
           rivalOutroMs >= 0
             ? Math.min(n - 1, Math.floor((n * 0.72) + (rivalOutroMs / 260) * (n * 0.28)))
-            : Math.min(n - 1, Math.floor(playTimerMs / stepMs));
+            : playContext
+              ? Math.min(n - 1, Math.floor(Math.max(0, Math.min(1, playContext.progress01)) * n))
+              : Math.min(n - 1, Math.floor(playTimerMs / stepMs));
         playSpr.texture = playFrames[idx];
         playSpr.visible = true;
         const farReach = lookTarget && lookTarget.y > 154 ? 1 : 0;
@@ -2374,26 +2568,41 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
       }
 
       playTimerMs = 0;
+      lastPlayProgress = 0;
       if (playSpr) {
         playSpr.visible = false;
       }
 
       if (purseSheetArt && activeGroup === 'purse') {
         const n = purseSheetArt.frames.length;
-        const k = n >= 32 ? 2 : 1;
         let idx = 0;
         if (rivalOutroMs >= 0) {
-          const startF = 11 * k;
+          const startF = Math.round(0.65 * (n - 1));
           idx = Math.min(n - 1, startF + Math.floor((rivalOutroMs / 260) * (n - 1 - startF)));
         } else if (mode === 'purseReceive') {
-          const lo = 4 * k;
-          const hi = 7 * k;
-          const period = (hi - lo) * 2;
-          const pos = Math.floor(actionSheetTimerMs / (65 / k)) % period;
-          idx = pos <= hi - lo ? lo + pos : hi - (pos - (hi - lo));
+          const startF = Math.round(0.65 * (n - 1));
+          const u = Math.min(1, actionSheetTimerMs / 500);
+          idx = Math.min(n - 1, startF + Math.floor(u * (n - startF)));
         } else {
-          // Continuous full purse sequence across purseReach -> purseOpen -> purseClose (~1300ms total)
-          idx = Math.min(n - 1, Math.floor((actionSheetTimerMs / 1300) * n));
+          // Single continuous purse pass: reach (0..15%) -> open & dig coin once (15%..46%) -> toss at release (46%..66%) -> close (66%..100%)
+          const fOpenStart = Math.round(0.15 * (n - 1));
+          const fTossStart = Math.round(0.46 * (n - 1));
+          const fCloseStart = Math.round(0.66 * (n - 1));
+          if (actionSheetTimerMs < HD_BOT_PURSE_REACH_MS) {
+            const u = actionSheetTimerMs / Math.max(1, HD_BOT_PURSE_REACH_MS);
+            idx = Math.min(fOpenStart, Math.floor(u * fOpenStart));
+          } else if (actionSheetTimerMs < HD_BOT_PURSE_COIN_RELEASE_MS) {
+            const u = (actionSheetTimerMs - HD_BOT_PURSE_REACH_MS) / Math.max(1, HD_BOT_PURSE_OPEN_MS);
+            idx = Math.min(fTossStart, fOpenStart + Math.floor(u * (fTossStart - fOpenStart)));
+          } else if (actionSheetTimerMs < HD_BOT_PURSE_COIN_RELEASE_MS + HD_BOT_PURSE_COIN_FLIGHT_MS) {
+            const u = (actionSheetTimerMs - HD_BOT_PURSE_COIN_RELEASE_MS) / Math.max(1, HD_BOT_PURSE_COIN_FLIGHT_MS);
+            idx = Math.min(fCloseStart, fTossStart + Math.floor(u * (fCloseStart - fTossStart)));
+          } else {
+            const u =
+              (actionSheetTimerMs - HD_BOT_PURSE_COIN_RELEASE_MS - HD_BOT_PURSE_COIN_FLIGHT_MS) /
+              Math.max(1, HD_BOT_PURSE_CLOSE_MS);
+            idx = Math.min(n - 1, fCloseStart + Math.floor(Math.max(0, u) * (n - fCloseStart)));
+          }
         }
         purseSheetArt.spr.texture = purseSheetArt.frames[idx];
         purseSheetArt.spr.visible = true;
@@ -2406,21 +2615,27 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
         const k = n >= 32 ? 2 : 1;
         let idx = 0;
         if (rivalOutroMs >= 0) {
-          const startF = 12 * k;
+          brokeShrugTimerMs = -1;
+          const startF = 13 * k;
           idx = Math.min(n - 1, startF + Math.floor((rivalOutroMs / 260) * (n - 1 - startF)));
         } else if (mode === 'brokeShake') {
-          if (actionSheetTimerMs < 480) {
-            idx = Math.min(5 * k - 1, Math.floor((actionSheetTimerMs / 480) * (5 * k)));
+          brokeShrugTimerMs = -1;
+          // 0..440ms: pull out purse & flip upside-down (0..4*k-1); 440..1344ms: single calm pass through the 2 shakes in 4*k..8*k-1
+          if (actionSheetTimerMs < 440) {
+            idx = Math.min(4 * k - 1, Math.floor((actionSheetTimerMs / 440) * (4 * k)));
           } else {
-            const lo = 5 * k;
-            const hi = 8 * k;
-            const period = (hi - lo) * 2;
-            const pos = Math.floor((actionSheetTimerMs - 480) / (60 / k)) % period;
-            idx = pos <= hi - lo ? lo + pos : hi - (pos - (hi - lo));
+            const shakeU = Math.min(1, (actionSheetTimerMs - 440) / 904);
+            const startF = 4 * k;
+            const endF = 8 * k - 1;
+            idx = Math.min(endF, startF + Math.floor(shakeU * (endF - startF + 1)));
           }
         } else {
+          // Calm, unhurried empty-hand shrug (8*k..13*k over ~1176ms)
+          brokeShrugTimerMs = brokeShrugTimerMs < 0 ? 0 : brokeShrugTimerMs + dtMs;
           const startF = 8 * k;
-          idx = Math.min(n - 1, startF + Math.floor((actionSheetTimerMs / 950) * (n - startF)));
+          const endF = 13 * k;
+          const shrugU = Math.min(1, brokeShrugTimerMs / 1176);
+          idx = Math.min(endF, startF + Math.floor(shrugU * (endF - startF + 1)));
         }
         brokeSheetArt.spr.texture = brokeSheetArt.frames[idx];
         brokeSheetArt.spr.visible = true;
@@ -2428,6 +2643,7 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
         bodyPivot.visible = false;
         return;
       }
+      brokeShrugTimerMs = -1;
       if (yawnSheetArt && activeGroup === 'yawn') {
         const n = yawnSheetArt.frames.length;
         const idx =
@@ -2441,23 +2657,60 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
         return;
       }
 
+      if (winSheetArt && activeGroup === 'win') {
+        const n = winSheetArt.frames.length;
+        const k = n >= 32 ? 2 : 1;
+        let idx = 0;
+        if (rivalOutroMs >= 0) {
+          const startF = 13 * k;
+          idx = Math.min(n - 1, startF + Math.floor((rivalOutroMs / 260) * (n - startF)));
+        } else if (actionSheetTimerMs < 550) {
+          // 0..550ms: smile, pull out crimson purse & open wide (f0..f11)
+          const endF = 6 * k - 1;
+          idx = Math.min(endF, Math.floor((actionSheetTimerMs / 550) * (endF + 1)));
+        } else if (actionSheetTimerMs < 1300) {
+          // 550..1300ms: hold open purse catching the 3 poured gold coins (f12..f19)
+          const startF = 6 * k;
+          const endF = 10 * k - 1;
+          const u = (actionSheetTimerMs - 550) / 750;
+          idx = Math.min(endF, startF + Math.floor(u * (endF - startF + 1)));
+        } else {
+          // 1300..2150ms: snap purse clasp shut, tuck purse away & return to idle (f20..f31)
+          const startF = 10 * k;
+          const u = Math.min(1, (actionSheetTimerMs - 1300) / 850);
+          idx = Math.min(n - 1, startF + Math.floor(u * (n - startF)));
+        }
+        winSheetArt.spr.texture = winSheetArt.frames[idx];
+        winSheetArt.spr.visible = true;
+        if (impatientSpr) impatientSpr.visible = false;
+        bodyPivot.visible = false;
+        return;
+      }
+
+      if (loseSheetArt && activeGroup === 'lose') {
+        const n = loseSheetArt.frames.length;
+        const idx =
+          rivalOutroMs >= 0
+            ? Math.min(n - 1, Math.floor(n * 0.78 + (rivalOutroMs / 260) * (n * 0.22)))
+            : Math.min(n - 1, Math.floor((actionSheetTimerMs / 2150) * n));
+        loseSheetArt.spr.texture = loseSheetArt.frames[idx];
+        loseSheetArt.spr.visible = true;
+        if (impatientSpr) impatientSpr.visible = false;
+        bodyPivot.visible = false;
+        return;
+      }
+
       if (impatientSpr && impatientFrames.length >= 16 && activeGroup === 'impatient') {
         const n = impatientFrames.length;
         const k = n >= 32 ? 2 : 1;
         impatientTimerMs += dtMs;
         let frameIdx: number;
         if (rivalOutroMs >= 0) {
-          const introMax = 5 * k - 1;
-          frameIdx = Math.max(0, Math.round(introMax * (1 - rivalOutroMs / 260)));
+          const startF = 13 * k;
+          frameIdx = Math.min(n - 1, startF + Math.floor((rivalOutroMs / 260) * (n - startF)));
         } else {
-          const introFrameMs = 120 / k;
-          const loopFrameMs = 140 / k;
-          const introCount = 5 * k;
-          const introTotalMs = introCount * introFrameMs;
-          frameIdx =
-            impatientTimerMs < introTotalMs
-              ? Math.min(introCount - 1, Math.floor(impatientTimerMs / introFrameMs))
-              : introCount + (Math.floor((impatientTimerMs - introTotalMs) / loopFrameMs) % (n - introCount));
+          // Continuous 2100ms chin-prop & 4-finger drumming sequence (f0..f5 intro, f6..f25 drumming, f26..f31 settle)
+          frameIdx = Math.min(n - 1, Math.floor((impatientTimerMs / 2100) * n));
         }
         impatientSpr.texture = impatientFrames[frameIdx];
         impatientSpr.visible = true;
@@ -2501,25 +2754,37 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
       curPupilY += (targetPY - curPupilY) * lerpFactor;
 
       // Natural blinking (~every 3.4s) + emotion eye squint
+      const BLINK_WINDOW_MS = 340;
       const blinkPhase = (elapsedMs + (isLeft ? 0 : 1450)) % 3400;
-      const isBlinking = blinkPhase > 3230;
+      const isBlinking = blinkPhase > (useUnifiedIdle ? 3400 - BLINK_WINDOW_MS : 3230);
+      if (blinkSheetArt && activeGroup === 'none' && isBlinking && mode !== 'winRound' && mode !== 'loseRound') {
+        rivalBlinkTimeMs = rivalBlinkTimeMs < 0 ? 0 : rivalBlinkTimeMs + dtMs;
+        const n = blinkSheetArt.frames.length;
+        const idx = Math.min(n - 1, Math.floor((rivalBlinkTimeMs / BLINK_WINDOW_MS) * n));
+        blinkSheetArt.spr.texture = blinkSheetArt.frames[idx];
+        blinkSheetArt.spr.visible = true;
+        bodyPivot.visible = false;
+        return;
+      }
+      rivalBlinkTimeMs = -1;
+
       let targetSquint = 0;
-      let targetBodyY = Math.sin(elapsedMs * 0.0028 + (isLeft ? 0 : 1.9)) * 0.6;
+      let targetBodyY = useUnifiedIdle ? 0 : Math.sin(elapsedMs * 0.0028 + (isLeft ? 0 : 1.9)) * 0.6;
       let targetBodyRot = 0;
-      let targetScaleY = 1 + Math.sin(elapsedMs * 0.0028 + (isLeft ? 0 : 1.9)) * 0.015;
+      let targetScaleY = useUnifiedIdle ? 1 : 1 + Math.sin(elapsedMs * 0.0028 + (isLeft ? 0 : 1.9)) * 0.015;
       let targetHatLift = 0;
       let targetHatRot = baseHatRot;
       let targetPlayReach = 0;
       let browTilt = 0;
       let browLift = 0;
 
-      if (mode === 'think') {
+      if (mode === 'think' && !useUnifiedIdle) {
         targetSquint = 0.34;
         targetBodyRot = dir * 0.04;
         targetHatRot = baseHatRot - dir * 0.07 + Math.sin(elapsedMs * 0.012) * 0.04;
         browTilt = 0.16;
         browLift = -0.3;
-      } else if (mode === 'impatient') {
+      } else if (mode === 'impatient' && !useUnifiedIdle) {
         targetSquint = 0.22;
         targetBodyY = Math.sin(elapsedMs * 0.005) * 0.5;
         targetBodyRot = dir * 0.03;
@@ -2599,7 +2864,7 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
           propHandSecondary.position.set(-dir * 18, -15 + Math.sin(elapsedMs * 0.015) * 1.2);
           propHandSecondary.rotation = dir * 0.25;
         }
-      } else if (mode === 'winRound') {
+      } else if (mode === 'winRound' && !useUnifiedIdle) {
         const bounce = Math.abs(Math.sin(elapsedMs * 0.012));
         targetBodyY = -bounce * 6;
         targetScaleY = 0.96 + bounce * 0.08;
@@ -2610,7 +2875,7 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
         propHandPrimary.visible = true;
         propHandPrimary.position.set(dir * 23, -24 + wave * 3.5);
         propHandPrimary.rotation = dir * 0.35 * wave;
-      } else if (mode === 'loseRound') {
+      } else if (mode === 'loseRound' && !useUnifiedIdle) {
         targetSquint = 0.45;
         targetBodyY = 1.8;
         targetBodyRot = Math.sin(elapsedMs * 0.014) * 0.07;
@@ -2640,7 +2905,7 @@ export function createHdRival(side: 'left' | 'right'): HdRivalController {
       hatPivot.rotation = curHatRot;
 
       for (let i = 0; i < 2; i++) {
-        pupils[i].position.set(curPupilX, curPupilY);
+        if (pupils[i]) pupils[i].position.set(curPupilX, curPupilY);
         if (brows[i]) {
           const browSign = i === 0 ? 1 : -1;
           brows[i].rotation = browSign * browTilt;
