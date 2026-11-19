@@ -1273,6 +1273,7 @@ export class GameTableScene implements Scene {
           this.egaAntePaid[1] = true;
           this.renderCashAndBankHud();
           this.ctx?.audio.sfx.coinHatClink();
+          this.hdDealer?.triggerHatCoinNod?.();
         },
       );
       this.spawnCoinFlight(
@@ -1286,6 +1287,7 @@ export class GameTableScene implements Scene {
           this.egaAntePaid[2] = true;
           this.renderCashAndBankHud();
           this.ctx?.audio.sfx.coinHatClink();
+          this.hdDealer?.triggerHatCoinNod?.();
         },
       );
       this.spawnCoinFlight(
@@ -1299,6 +1301,7 @@ export class GameTableScene implements Scene {
           this.egaAntePaid[3] = true;
           this.renderCashAndBankHud();
           this.ctx?.audio.sfx.coinHatClink();
+          this.hdDealer?.triggerHatCoinNod?.();
         },
       );
     }
@@ -1994,6 +1997,7 @@ export class GameTableScene implements Scene {
       const delayMs = seat === 3 ? 140 : 100 + HD_BOT_PURSE_COIN_RELEASE_MS;
       this.spawnCoinFlight(coinStart.x, coinStart.y, hatPos.x, hatPos.y, HD_BOT_PURSE_COIN_FLIGHT_MS, delayMs, () => {
         this.ctx?.audio.sfx.coinHatClink();
+        this.hdDealer?.triggerHatCoinNod?.();
       });
     }
 
@@ -3046,12 +3050,15 @@ export class GameTableScene implements Scene {
       if (this.hdDealer) {
         const isBotBroke = this.passingBroke && (this.passingSeat === 1 || this.passingSeat === 2);
         const isBotNormal = !this.passingBroke && (this.passingSeat === 1 || this.passingSeat === 2);
-        const closeHatMs = isBotNormal ? 100 + HD_BOT_PURSE_COIN_RELEASE_MS + HD_BOT_PURSE_COIN_FLIGHT_MS - 20 : 640;
+        // Keep hat open until coin lands + dealer finishes his confirming nod (340ms), then put hat back on (400ms).
+        const closeHatMs = isBotNormal
+          ? 100 + HD_BOT_PURSE_COIN_RELEASE_MS + HD_BOT_PURSE_COIN_FLIGHT_MS + 340
+          : 140 + HD_BOT_PURSE_COIN_FLIGHT_MS + 340;
         const endMs = isBotBroke
           ? HD_BOT_BROKE_SHAKE_DURATION_MS + 20
           : isBotNormal
-            ? 100 + HD_BOT_PURSE_TOSS_TOTAL_MS + 40
-            : 1100;
+            ? Math.max(100 + HD_BOT_PURSE_TOSS_TOTAL_MS + 40, closeHatMs + 420)
+            : closeHatMs + 440;
         const hatOpen = !this.passingBroke && this.phaseTimerMs >= 80 && this.phaseTimerMs < closeHatMs;
         this.hdDealer.setTableExpression(hatOpen ? 'hatCollect' : blinking ? 'blink' : 'idle', this.phaseTimerMs);
         if (this.phaseTimerMs >= endMs) {
@@ -3133,6 +3140,20 @@ export class GameTableScene implements Scene {
           this.phaseTimerMs >= 420
         ) {
           this.executeAdvisorAutoMove();
+        } else if (
+          !this.statusBanner &&
+          this.ctx?.autoPlayForcedMove &&
+          this.phaseTimerMs >= 420
+        ) {
+          const legal = getLegalMoves(
+            round.hands[3],
+            round.tableBounds,
+            round.isFirstTurnOfRound,
+            round.rules ?? this.match.ruleConfig,
+          );
+          if (legal.length === 1) {
+            this.startCardFlight(3, legal[0]);
+          }
         }
       }
       return;

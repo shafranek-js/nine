@@ -64,7 +64,8 @@ export function getHdAnteIntroState(elapsedMs: number): HdAnteTimelineState {
   const leftStartMs = 280;
   const rightStartMs = leftStartMs + HD_BOT_PURSE_TOSS_TOTAL_MS + 40;
   const humanStartMs = rightStartMs + HD_BOT_PURSE_TOSS_TOTAL_MS + 40;
-  const closeStartMs = humanStartMs + 560;
+  // Wait for the human's coin to land (560ms) + dealer's confirming nod (340ms) before closing the hat.
+  const closeStartMs = humanStartMs + HD_BOT_PURSE_COIN_FLIGHT_MS + 340;
   const endMs = closeStartMs + 520;
 
   let dealerHatProgress = 0;

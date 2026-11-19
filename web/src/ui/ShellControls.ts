@@ -105,6 +105,7 @@ export class ShellControls {
   private graphicsBtn!: HTMLButtonElement;
   private aspectBtn!: HTMLButtonElement;
   private scanlineBtn!: HTMLButtonElement;
+  private autoForcedBtn!: HTMLButtonElement;
   private introBtn!: HTMLButtonElement;
   private exportBtn!: HTMLButtonElement;
   private importBtn!: HTMLButtonElement;
@@ -451,6 +452,10 @@ export class ShellControls {
       this.manager.ctx.stage.setScanlines(next);
       this.sync();
     });
+    this.autoForcedBtn = this.makeButton('', () => {
+      this.manager.ctx.setAutoPlayForcedMove(!this.manager.ctx.autoPlayForcedMove);
+      this.sync();
+    });
     this.introBtn = this.makeButton('', () => {
       this.setSettingsOpen(false);
       this.manager.ctx.goTo('intro', 180);
@@ -459,6 +464,7 @@ export class ShellControls {
       this.musicModeBtn,
       this.aspectBtn,
       this.scanlineBtn,
+      this.autoForcedBtn,
       this.introBtn,
     );
     displaySection.append(this.settingsDisplayTitleEl, displayGrid);
@@ -1033,6 +1039,8 @@ export class ShellControls {
     this.musicModeBtn.textContent = audio.music.getMusicMode() === 'mp3' ? s.musicMp3 : s.musicOpl2;
     this.aspectBtn.textContent = this.manager.ctx.stage.getAspectMode() === '1:1' ? s.aspect1to1 : s.aspect4to3;
     this.scanlineBtn.textContent = this.manager.ctx.stage.isScanlinesEnabled() ? s.crtOn : s.crtOff;
+    this.autoForcedBtn.textContent = this.manager.ctx.autoPlayForcedMove ? s.autoForcedOn : s.autoForcedOff;
+    this.autoForcedBtn.classList.toggle('is-active', this.manager.ctx.autoPlayForcedMove);
     this.resetBtn.textContent = this.resetArmed ? s.resetSaveConfirm : s.resetSave;
     this.resetBtn.classList.toggle('is-armed', this.resetArmed);
 

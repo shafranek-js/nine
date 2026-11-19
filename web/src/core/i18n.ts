@@ -95,6 +95,8 @@ export interface Translations {
     readonly aspect4to3: string;
     readonly crtOn: string;
     readonly crtOff: string;
+    readonly autoForcedOn: string;
+    readonly autoForcedOff: string;
     readonly hideSidebars: string;
     readonly showPanels: string;
     readonly focusView: string;
@@ -283,6 +285,8 @@ const EN: Translations = {
     aspect4to3: 'Aspect: 4:3',
     crtOn: 'CRT: ON',
     crtOff: 'CRT: OFF',
+    autoForcedOn: 'Forced move: AUTO',
+    autoForcedOff: 'Forced move: MANUAL',
     hideSidebars: 'Hide Sidebars',
     showPanels: 'Show Club Panels',
     focusView: 'Focus View',
@@ -477,6 +481,8 @@ const RU: Translations = {
     aspect4to3: 'Формат: 4:3',
     crtOn: 'CRT: ВКЛ',
     crtOff: 'CRT: ВЫКЛ',
+    autoForcedOn: '1 карта: АВТО',
+    autoForcedOff: '1 карта: ВРУЧНУЮ',
     hideSidebars: 'Скрыть панели',
     showPanels: 'Показать панели',
     focusView: 'На весь экран',
@@ -673,6 +679,8 @@ const UK: Translations = {
     aspect4to3: 'Формат: 4:3',
     crtOn: 'CRT: УВІМК',
     crtOff: 'CRT: ВИМК',
+    autoForcedOn: '1 карта: АВТО',
+    autoForcedOff: '1 карта: ВРУЧНУ',
     hideSidebars: 'Сховати панелі',
     showPanels: 'Показати панелі',
     focusView: 'На весь екран',
@@ -869,6 +877,8 @@ const DE: Translations = {
     aspect4to3: 'Format: 4:3',
     crtOn: 'CRT: EIN',
     crtOff: 'CRT: AUS',
+    autoForcedOn: 'Zwangszug: AUTO',
+    autoForcedOff: 'Zwangszug: MANUELL',
     hideSidebars: 'Leisten aus',
     showPanels: 'Leisten zeigen',
     focusView: 'Fokus-Ansicht',

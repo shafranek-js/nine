@@ -45,6 +45,7 @@ const GRAPHICS_STORAGE_KEY = 'nine_graphics_mode_v1';
 const COACH_STORAGE_KEY = 'nine_coach_mode_v1';
 const XRAY_STORAGE_KEY = 'nine_advisor_xray_v1';
 const AUTO_PLAY_STORAGE_KEY = 'nine_advisor_autoplay_v1';
+const AUTO_FORCED_MOVE_STORAGE_KEY = 'nine_auto_forced_move_v1';
 const LANGUAGE_STORAGE_KEY = 'nine_language_v1';
 
 function loadStoredLanguage(): Language {
@@ -93,6 +94,14 @@ function loadStoredAutoPlayMode(): boolean {
     return localStorage.getItem(AUTO_PLAY_STORAGE_KEY) === '1';
   } catch {
     return false;
+  }
+}
+
+function loadStoredAutoForcedMove(): boolean {
+  try {
+    return localStorage.getItem(AUTO_FORCED_MOVE_STORAGE_KEY) !== '0';
+  } catch {
+    return true;
   }
 }
 
@@ -147,6 +156,7 @@ export interface GameContext {
   coachMode: boolean;
   advisorXrayMode: boolean;
   advisorAutoPlayMode: boolean;
+  autoPlayForcedMove: boolean;
   advisorHint: AdvisorRecommendation | null;
   persistConfig(): void;
   persistRuleConfig(): void;
@@ -161,6 +171,7 @@ export interface GameContext {
   setCoachMode(enabled: boolean): void;
   setAdvisorXrayMode(enabled: boolean): void;
   setAdvisorAutoPlayMode(enabled: boolean): void;
+  setAutoPlayForcedMove(enabled: boolean): void;
   setRuleConfig(patch: Partial<GameRulesConfig>): void;
   setClubTable(tableId: ClubTableId): void;
   getHighScoresRevision(): number;
@@ -269,6 +280,7 @@ export class SceneManager {
       coachMode: loadStoredCoachMode(),
       advisorXrayMode: loadStoredXrayMode(),
       advisorAutoPlayMode: loadStoredAutoPlayMode(),
+      autoPlayForcedMove: loadStoredAutoForcedMove(),
       advisorHint: null,
       persistConfig: () => {
         saveStoredConfig(this.ctx.config);
@@ -359,6 +371,16 @@ export class SceneManager {
           // Ignore storage errors
         }
         this.activeScene?.onAdvisorAutoPlayModeChanged?.(enabled);
+        this.ctx.onStateChange?.();
+      },
+      setAutoPlayForcedMove: (enabled: boolean) => {
+        if (this.ctx.autoPlayForcedMove === enabled) return;
+        this.ctx.autoPlayForcedMove = enabled;
+        try {
+          localStorage.setItem(AUTO_FORCED_MOVE_STORAGE_KEY, enabled ? '1' : '0');
+        } catch {
+          // Ignore storage errors
+        }
         this.ctx.onStateChange?.();
       },
       setRuleConfig: (patch: Partial<GameRulesConfig>) => {

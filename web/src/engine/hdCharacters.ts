@@ -758,6 +758,7 @@ export interface HdDealerController {
   setShuffleFrame(frameIdx: number): void;
   getHatWorldPosition(winnerSeat?: 1 | 2 | 3): { x: number; y: number };
   getDealLaunchWorldPosition?(seat: 1 | 2 | 3): { x: number; y: number };
+  triggerHatCoinNod?(): void;
 }
 
 function getDealerInvertedHatTexture(): Texture {
@@ -1171,6 +1172,7 @@ export function createHdDealer(scale = 1): HdDealerController {
     let activeSheetGroup: 'none' | 'deal' | 'collect' | 'pourLeft' | 'pourRight' | 'pourDown' = 'none';
     let sheetGroupTimeMs = 0;
     let sheetOutroStartMs = -1;
+    let hatNodElapsedMs = -1;
     let lastDealMode: 'dealLeft' | 'dealDown' | 'dealRight' = 'dealLeft';
     let blinkTimeMs = -1;
     let lastDealerCallMs = 0;
@@ -1188,6 +1190,9 @@ export function createHdDealer(scale = 1): HdDealerController {
         if (seat === 1) return toWorldPoint(-38, -6);
         if (seat === 2) return toWorldPoint(30, -14);
         return toWorldPoint(-1, 5);
+      },
+      triggerHatCoinNod() {
+        hatNodElapsedMs = 0;
       },
       setTableExpression(mode, elapsedMs) {
         const nowMs = Math.max(0, elapsedMs);
@@ -1350,20 +1355,31 @@ export function createHdDealer(scale = 1): HdDealerController {
           hatCollectSpr.visible = true;
           const n = hatCollectFrames.length;
           const k = n >= 32 ? 2 : 1;
-          const holdStepMs = n >= 32 ? 90 : 180;
+          const HAT_NOD_DURATION_MS = 320;
           let idx: number;
           if (sheetOutroStartMs >= 0) {
+            hatNodElapsedMs = -1;
             const startF = 11 * k;
             const span = Math.max(1, n - 1 - startF);
             idx = Math.min(n - 1, startF + Math.floor((sheetOutroStartMs / COLLECT_OUTRO_DURATION_MS) * span));
-          } else if (sheetGroupTimeMs < 560) {
-            idx = Math.min(6 * k - 1, Math.floor((sheetGroupTimeMs / 560) * (6 * k)));
-          } else {
+          } else if (sheetGroupTimeMs < 520) {
+            idx = Math.min(6 * k - 1, Math.floor((sheetGroupTimeMs / 520) * (6 * k)));
+          } else if (hatNodElapsedMs >= 0) {
+            // Single confirming nod/dip only when a coin lands in the hat, then return to steady hold.
             const lo = 6 * k;
             const hi = 10 * k;
-            const period = (hi - lo) * 2;
-            const pos = Math.floor((sheetGroupTimeMs - 560) / holdStepMs) % period;
-            idx = pos <= hi - lo ? lo + pos : hi - (pos - (hi - lo));
+            const u = hatNodElapsedMs / HAT_NOD_DURATION_MS;
+            hatNodElapsedMs += dt;
+            if (u >= 1) {
+              hatNodElapsedMs = -1;
+              idx = lo;
+            } else {
+              const tri = u < 0.5 ? u * 2 : (1 - u) * 2;
+              idx = lo + Math.round(tri * (hi - lo));
+            }
+          } else {
+            // Hold upside-down hat steady while waiting for the next coin.
+            idx = 6 * k;
           }
           hatCollectSpr.texture = hatCollectFrames[idx];
         } else if (usePourSheet && activePourArt) {
