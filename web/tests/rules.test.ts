@@ -145,8 +145,8 @@ describe('rules engine (1:1 DOS NINE.EXE)', () => {
     let sevenDiamondsOwner = 0;
     for (const seat of [1, 2, 3] as const) {
       for (const c of r0.hands[seat]) {
-        expect(c.rank).toBeGreaterThanOrEqual(1);
-        expect(c.rank).toBeLessThanOrEqual(13);
+        expect(c.rank).toBeGreaterThanOrEqual(2);
+        expect(c.rank).toBeLessThanOrEqual(14);
         const key = `${c.suit}-${c.rank}`;
         expect(seen.has(key)).toBe(false);
         seen.add(key);
@@ -191,7 +191,7 @@ describe('rules engine (1:1 DOS NINE.EXE)', () => {
       matchOver: false,
       round: {
         hands: {
-          1: [{ suit: Suit.Spades, rank: 1 }], // Low Ace (A♠), cannot open!
+          1: [{ suit: Suit.Spades, rank: 14 }], // High Ace (A♠), cannot open!
           2: [{ suit: Suit.Hearts, rank: 7 }],
           3: [{ suit: Suit.Clubs, rank: 7 }],
         },

@@ -37,8 +37,8 @@ export function resolveRoundRules(
   if (cfg?.variant === 'fantan52') {
     return {
       variant: 'fantan52',
-      minRank: 1,
-      maxRank: 13,
+      minRank: 2,
+      maxRank: 14,
       centerRank: 7,
       openingMode: cfg.fanTanOpening === 'anySeven' ? 'anySeven' : 'sevenDiamonds',
       handCardPenalty: Math.max(0, cfg.fanTanHandPenalty ?? 5),

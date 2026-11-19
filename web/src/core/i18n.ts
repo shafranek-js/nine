@@ -241,12 +241,12 @@ const EN: Translations = {
       'Playable cards glow gold in hand',
       `No move: Pass (-$${PASS_PENALTY}), Ante $${ANTE_AMOUNT}`,
     ],
-    fanTanRulesTitle: 'Rules of Fan Tan (52)',
+    fanTanRulesTitle: 'Rules of Sevens (52)',
     fanTanRules: (opening, handPenalty) => [
       opening === 'anySeven'
-        ? '52 cards (A low..K): Any 7 opens (or pass)'
-        : '52 cards (A low..K): 7♦ opens every round',
-      '7 opens a suit; build down to A & up to K',
+        ? '52 cards (2..A): Any 7 opens (or pass)'
+        : '52 cards (2..A): 7♦ opens every round',
+      '7 opens a suit; build down to 2 & up to A',
       handPenalty > 0
         ? `End of round: +$${handPenalty} per opponent card left`
         : 'End of round: winner takes pot (no card penalty)',
@@ -254,13 +254,13 @@ const EN: Translations = {
     ],
     clubRoom: 'Club Room',
     modeNine36: 'Nine (36)',
-    modeFanTan52: 'Fan Tan (52)',
-    fanTanHdOnlyTip: 'Fan Tan (52) uses HD graphics — selecting it switches to HD',
+    modeFanTan52: 'Sevens (52)',
+    fanTanHdOnlyTip: 'Sevens (52) uses HD graphics — selecting it switches to HD',
     fanTanLead7D: 'Open: 7♦',
     fanTanLeadAny7: 'Open: Any 7',
     fanTanPenaltyOn: (p) => `Tail fee: $${p}/card`,
     fanTanPenaltyOff: 'Tail fee: OFF',
-    fanTanLeadersTag: 'Fan Tan 52',
+    fanTanLeadersTag: 'Sevens 52',
     nextMatchRulesNote: (opening, handPenalty) =>
       `For next match · active now: ${opening === 'anySeven' ? 'Any 7' : '7♦'}, ${
         handPenalty > 0 ? `$${handPenalty}/card` : 'no fee'
@@ -435,12 +435,12 @@ const RU: Translations = {
       'Доступные карты подсвечены золотым',
       `Нет хода: пас (-$${PASS_PENALTY}), анте $${ANTE_AMOUNT}`,
     ],
-    fanTanRulesTitle: 'Правила Fan Tan (52)',
+    fanTanRulesTitle: 'Правила «Семёрки» (52)',
     fanTanRules: (opening, handPenalty) => [
       opening === 'anySeven'
-        ? '52 карты (A младше 2): старт с любой 7'
-        : '52 карты (A младше 2): старт с 7♦',
-      '7 открывает масть; вниз до A и вверх до K',
+        ? '52 карты (2..A): старт с любой 7'
+        : '52 карты (2..A): старт с 7♦',
+      '7 открывает масть; вниз до 2 и вверх до A',
       handPenalty > 0
         ? `Конец раунда: +$${handPenalty} за карту на руках у врагов`
         : 'Конец раунда: банк победителю (без штрафа за карты)',
@@ -448,13 +448,13 @@ const RU: Translations = {
     ],
     clubRoom: 'Клубная комната',
     modeNine36: 'Девятка (36)',
-    modeFanTan52: 'Fan Tan (52)',
-    fanTanHdOnlyTip: 'Fan Tan (52) работает только в HD — при выборе графика переключится на HD',
+    modeFanTan52: 'Семёрка (52)',
+    fanTanHdOnlyTip: 'Семёрка (52) работает только в HD — при выборе графика переключится на HD',
     fanTanLead7D: 'Старт: 7♦',
     fanTanLeadAny7: 'Старт: Любая 7',
     fanTanPenaltyOn: (p) => `За карты: $${p}`,
     fanTanPenaltyOff: 'За карты: ВЫКЛ',
-    fanTanLeadersTag: 'Fan Tan 52',
+    fanTanLeadersTag: 'Семёрка 52',
     nextMatchRulesNote: (opening, handPenalty) =>
       `Для след. матча · сейчас: ${opening === 'anySeven' ? 'Любая 7' : '7♦'}, ${
         handPenalty > 0 ? `$${handPenalty}/карта` : 'без штрафа'
@@ -631,12 +631,12 @@ const UK: Translations = {
       'Доступні карти підсвічені золотим',
       `Немає ходу: пас (-$${PASS_PENALTY}), анте $${ANTE_AMOUNT}`,
     ],
-    fanTanRulesTitle: 'Правила Fan Tan (52)',
+    fanTanRulesTitle: 'Правила «Сімки» (52)',
     fanTanRules: (opening, handPenalty) => [
       opening === 'anySeven'
-        ? '52 карти (A молодше 2): старт з будь-якої 7'
-        : '52 карти (A молодше 2): старт з 7♦',
-      '7 відкриває масть; вниз до A та вгору до K',
+        ? '52 карти (2..A): старт з будь-якої 7'
+        : '52 карти (2..A): старт з 7♦',
+      '7 відкриває масть; вниз до 2 та вгору до A',
       handPenalty > 0
         ? `Кінець раунду: +$${handPenalty} за карту на руках суперників`
         : 'Кінець раунду: банк переможцю (без штрафу за карти)',
@@ -644,13 +644,13 @@ const UK: Translations = {
     ],
     clubRoom: 'Клубна зала',
     modeNine36: 'Дев’ятка (36)',
-    modeFanTan52: 'Fan Tan (52)',
-    fanTanHdOnlyTip: 'Fan Tan (52) працює лише в HD — при виборі графіка перемкнеться на HD',
+    modeFanTan52: 'Сімка (52)',
+    fanTanHdOnlyTip: 'Сімка (52) працює лише в HD — при виборі графіка перемкнеться на HD',
     fanTanLead7D: 'Старт: 7♦',
     fanTanLeadAny7: 'Старт: Будь-яка 7',
     fanTanPenaltyOn: (p) => `За карти: $${p}`,
     fanTanPenaltyOff: 'За карти: ВИМК',
-    fanTanLeadersTag: 'Fan Tan 52',
+    fanTanLeadersTag: 'Сімка 52',
     nextMatchRulesNote: (opening, handPenalty) =>
       `Для наст. матчу · зараз: ${opening === 'anySeven' ? 'Будь-яка 7' : '7♦'}, ${
         handPenalty > 0 ? `$${handPenalty}/карта` : 'без штрафу'
@@ -827,12 +827,12 @@ const DE: Translations = {
       'Spielbare Karten leuchten golden',
       `Kein Zug: Pass (-$${PASS_PENALTY}), Ante $${ANTE_AMOUNT}`,
     ],
-    fanTanRulesTitle: 'Regeln von Fan Tan (52)',
+    fanTanRulesTitle: 'Regeln von Siebener (52)',
     fanTanRules: (opening, handPenalty) => [
       opening === 'anySeven'
-        ? '52 Karten (A niedrig..K): Beliebige 7 startet'
-        : '52 Karten (A niedrig..K): 7♦ eröffnet jede Runde',
-      '7 startet Farbe; runter bis A & rauf bis K',
+        ? '52 Karten (2..A): Beliebige 7 startet'
+        : '52 Karten (2..A): 7♦ eröffnet jede Runde',
+      '7 startet Farbe; runter bis 2 & rauf bis A',
       handPenalty > 0
         ? `Rundenende: +$${handPenalty} pro Restkarte der Gegner`
         : 'Rundenende: Pott für Sieger (ohne Restkartenstrafe)',
@@ -840,13 +840,13 @@ const DE: Translations = {
     ],
     clubRoom: 'Klubraum',
     modeNine36: 'Neuner (36)',
-    modeFanTan52: 'Fan Tan (52)',
-    fanTanHdOnlyTip: 'Fan Tan (52) nutzt HD-Grafik — Auswahl wechselt zu HD',
+    modeFanTan52: 'Siebener (52)',
+    fanTanHdOnlyTip: 'Siebener (52) nutzt HD-Grafik — Auswahl wechselt zu HD',
     fanTanLead7D: 'Start: 7♦',
     fanTanLeadAny7: 'Start: Jede 7',
     fanTanPenaltyOn: (p) => `Restkarte: $${p}`,
     fanTanPenaltyOff: 'Restkarte: AUS',
-    fanTanLeadersTag: 'Fan Tan 52',
+    fanTanLeadersTag: 'Siebener 52',
     nextMatchRulesNote: (opening, handPenalty) =>
       `Für nächstes Spiel · aktiv: ${opening === 'anySeven' ? 'Jede 7' : '7♦'}, ${
         handPenalty > 0 ? `$${handPenalty}/Karte` : 'ohne Strafe'
