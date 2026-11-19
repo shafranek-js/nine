@@ -8,6 +8,7 @@ import {
   HD_BOT_PURSE_OPEN_MS,
   HD_BOT_PURSE_REACH_MS,
   HD_BOT_PURSE_TOSS_TOTAL_MS,
+  HD_DEAL_STEP_MS,
 } from './hdAnimations';
 import { HD_RENDER_SCALE } from './StageApp';
 
@@ -756,6 +757,7 @@ export interface HdDealerController {
   setHatTipProgress(progress01: number): void;
   setShuffleFrame(frameIdx: number): void;
   getHatWorldPosition(winnerSeat?: 1 | 2 | 3): { x: number; y: number };
+  getDealLaunchWorldPosition?(seat: 1 | 2 | 3): { x: number; y: number };
 }
 
 function getDealerInvertedHatTexture(): Texture {
@@ -1101,7 +1103,9 @@ export function createHdDealer(scale = 1): HdDealerController {
       const sc = bodyW / 206;
       dealSpr.width = sliced.cw * sc;
       dealSpr.height = sliced.ch * sc;
-      dealSpr.anchor.set(0.5, 1.0);
+      // Normalized 4x4 dealer_deal_sheet.png has 360x350 cells with jacket baseline at y=308 so downward-dealt cards clear the rail.
+      const dealAnchorY = sliced.ch === 350 ? 308 / 350 : 1.0;
+      dealSpr.anchor.set(0.5, dealAnchorY);
       dealSpr.position.set(0, 0);
       dealSpr.visible = false;
       aspectRig.addChild(dealSpr);
@@ -1167,6 +1171,7 @@ export function createHdDealer(scale = 1): HdDealerController {
     let activeSheetGroup: 'none' | 'deal' | 'collect' | 'pourLeft' | 'pourRight' | 'pourDown' = 'none';
     let sheetGroupTimeMs = 0;
     let sheetOutroStartMs = -1;
+    let lastDealMode: 'dealLeft' | 'dealDown' | 'dealRight' = 'dealLeft';
     let blinkTimeMs = -1;
     let lastDealerCallMs = 0;
     let lastPerfNowMs = typeof performance !== 'undefined' ? performance.now() : 0;
@@ -1179,6 +1184,11 @@ export function createHdDealer(scale = 1): HdDealerController {
         if (winnerSeat === 3) return toWorldPoint(0, -10);
         return toWorldPoint(0, -22);
       },
+      getDealLaunchWorldPosition(seat) {
+        if (seat === 1) return toWorldPoint(-38, -6);
+        if (seat === 2) return toWorldPoint(30, -14);
+        return toWorldPoint(-1, 5);
+      },
       setTableExpression(mode, elapsedMs) {
         const nowMs = Math.max(0, elapsedMs);
         const perfNow = typeof performance !== 'undefined' ? performance.now() : nowMs;
@@ -1188,7 +1198,7 @@ export function createHdDealer(scale = 1): HdDealerController {
         const dt = perfDt > 1 && perfDt < 120 ? perfDt : argDt;
         lastDealerCallMs = nowMs;
 
-        const DEAL_OUTRO_DURATION_MS = 720;
+        const DEAL_OUTRO_DURATION_MS = dealFrames.length === 16 ? 360 : 720;
         const COLLECT_OUTRO_DURATION_MS = 400;
         const getOutroDurationMs = (grp: typeof activeSheetGroup): number =>
           grp === 'collect' ? COLLECT_OUTRO_DURATION_MS : DEAL_OUTRO_DURATION_MS;
@@ -1298,22 +1308,42 @@ export function createHdDealer(scale = 1): HdDealerController {
         if (useDealSheet && dealSpr) {
           dealSpr.visible = true;
           dealSpr.scale.x = Math.abs(dealSpr.scale.x);
+          if (mode === 'dealLeft' || mode === 'dealDown' || mode === 'dealRight') {
+            lastDealMode = mode;
+          }
           const n = dealFrames.length;
-          const k = n >= 32 ? 2 : 1;
-          const stepMs = n >= 32 ? 68 : 136;
           let idx: number;
-          if (sheetOutroStartMs >= 0) {
-            const startF = 10 * k;
-            const span = Math.max(1, n - 1 - startF);
-            idx = Math.min(n - 1, startF + Math.floor((sheetOutroStartMs / DEAL_OUTRO_DURATION_MS) * span));
-          } else if (sheetGroupTimeMs < 540) {
-            idx = Math.min(4 * k - 1, Math.floor((sheetGroupTimeMs / 540) * (4 * k)));
+          if (n === 16) {
+            // 16-frame 3-direction EGA-faithful deal sheet:
+            // F0..F2 bring up deck, F3..F5 dealRight (seat 2), F6..F8 dealDown (seat 3),
+            // F9..F11 dealLeft (seat 1), F12..F15 tuck deck away.
+            if (sheetOutroStartMs >= 0) {
+              const outroDur = 360;
+              const u = Math.min(0.999, sheetOutroStartMs / outroDur);
+              idx = 12 + Math.floor(u * 4);
+            } else {
+              const cardFrac = Math.max(0, Math.min(0.999, (nowMs % HD_DEAL_STEP_MS) / HD_DEAL_STEP_MS));
+              const sub = Math.floor(cardFrac * 3);
+              if (lastDealMode === 'dealRight') idx = 3 + sub;
+              else if (lastDealMode === 'dealDown') idx = 6 + sub;
+              else idx = 9 + sub;
+            }
           } else {
-            const lo = 4 * k;
-            const hi = 10 * k - 1;
-            const period = (hi - lo) * 2;
-            const pos = Math.floor((sheetGroupTimeMs - 540) / stepMs) % period;
-            idx = pos <= hi - lo ? lo + pos : hi - (pos - (hi - lo));
+            const k = n >= 32 ? 2 : 1;
+            const stepMs = n >= 32 ? 68 : 136;
+            if (sheetOutroStartMs >= 0) {
+              const startF = 10 * k;
+              const span = Math.max(1, n - 1 - startF);
+              idx = Math.min(n - 1, startF + Math.floor((sheetOutroStartMs / DEAL_OUTRO_DURATION_MS) * span));
+            } else if (sheetGroupTimeMs < 540) {
+              idx = Math.min(4 * k - 1, Math.floor((sheetGroupTimeMs / 540) * (4 * k)));
+            } else {
+              const lo = 4 * k;
+              const hi = 10 * k - 1;
+              const period = (hi - lo) * 2;
+              const pos = Math.floor((sheetGroupTimeMs - 540) / stepMs) % period;
+              idx = pos <= hi - lo ? lo + pos : hi - (pos - (hi - lo));
+            }
           }
           dealSpr.texture = dealFrames[idx];
         } else if (useCollectSheet && hatCollectSpr) {

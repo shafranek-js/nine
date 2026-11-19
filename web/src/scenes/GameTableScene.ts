@@ -2594,9 +2594,10 @@ export class GameTableScene implements Scene {
         endX = (hl ? hl.x : 191 + cur.slotIdx * 16) + 25;
         endY = (hl ? hl.y : 290) + 28;
       }
+      const launch = this.hdDealer?.getDealLaunchWorldPosition?.(cur.seat) ?? { x: 320, y: 56 };
       const ease = frac * frac * (3 - 2 * frac);
-      const curX = 320 + (endX - 320) * ease;
-      const curY = 56 + (endY - 56) * ease - Math.sin(frac * Math.PI) * 14;
+      const curX = launch.x + (endX - launch.x) * ease;
+      const curY = launch.y + (endY - launch.y) * ease - Math.sin(frac * Math.PI) * 14;
       this.egaDealFlySpr.position.set(curX, curY);
       this.egaDealFlySpr.visible = true;
     }
